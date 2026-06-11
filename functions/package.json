@@ -1,0 +1,35 @@
+{
+  "name": "functions",
+  "scripts": {
+    "lint": "ESLINT_USE_FLAT_CONFIG=false eslint --ext .js,.ts .",
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "dev": "npm run build && node lib/dev-server.js",
+    "serve": "npm run build && firebase emulators:start",
+    "deploy": "npm run build && firebase deploy --only functions,firestore:rules,firestore:indexes",
+    "logs": "firebase functions:log"
+  },
+  "engines": {
+    "node": "22"
+  },
+  "main": "lib/index.js",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.2.5",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.23.0",
+    "@typescript-eslint/parser": "^8.23.0",
+    "eslint": "^9.0.0",
+    "eslint-config-google": "^0.14.0",
+    "eslint-plugin-import": "^2.31.0",
+    "firebase-functions-test": "^3.4.0",
+    "typescript": "^5.7.3"
+  },
+  "private": true
+}

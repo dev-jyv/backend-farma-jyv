@@ -1,0 +1,6 @@
+.eslintrc.js
+dist/*
+node_modules/*
+out-tsc/*ƒ
+tsconfig.json
+tsconfig.dev.json

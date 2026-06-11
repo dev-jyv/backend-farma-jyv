@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && request.auth.token.role == role;
+    }
+
+    function isStaff() {
+      return isAuthenticated() &&
+        request.auth.token.role in ['admin', 'inventory', 'cashier'];
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /categories/{categoryId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    match /products/{productId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    match /batches/{batchId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    match /stockMovements/{movementId} {
+      allow read: if hasRole('admin') || hasRole('inventory');
+      allow write: if false;
+    }
+
+    match /inventoryEntries/{entryId} {
+      allow read: if hasRole('admin') || hasRole('inventory');
+      allow write: if false;
+    }
+
+    match /sales/{saleId} {
+      allow read: if hasRole('admin') || hasRole('cashier');
+      allow write: if false;
+    }
+  }
+}
