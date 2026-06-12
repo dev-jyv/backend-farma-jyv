@@ -5,6 +5,8 @@ const collection = () => db().collection('inventoryEntries');
 
 export const listInventoryEntries = async (filters: {
     supplierId?: string;
+    invoiceId?: string;
+    productId?: string;
     from?: string;
     to?: string;
 }): Promise<InventoryEntry[]> => {
@@ -20,6 +22,16 @@ export const listInventoryEntries = async (filters: {
     let entries = snapshot.docs.map(
         (doc) => ({ id: doc.id, ...doc.data() } as InventoryEntry),
     );
+
+    if (filters.invoiceId) {
+        entries = entries.filter((entry) => entry.invoiceId === filters.invoiceId);
+    }
+
+    if (filters.productId) {
+        entries = entries.filter((entry) =>
+            entry.items.some((item) => item.productId === filters.productId),
+        );
+    }
 
     if (filters.from) {
         const fromMs = new Date(filters.from).getTime();

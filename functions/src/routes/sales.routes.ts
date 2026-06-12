@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
     createSaleSchema,
@@ -11,10 +11,10 @@ import * as salesService from '../services/sales.service';
 const router = Router();
 
 router.use(authenticate);
+router.use(requirePermission('sales'));
 
 router.post(
     '/',
-    requireRole('admin', 'cashier'),
     validate({ body: createSaleSchema }),
     async (req, res, next) => {
         try {
@@ -31,7 +31,6 @@ router.post(
 
 router.get(
     '/',
-    requireRole('admin', 'cashier'),
     validate({ query: listSalesQuerySchema }),
     async (req, res, next) => {
         try {
@@ -51,7 +50,6 @@ router.get(
 
 router.get(
     '/:id',
-    requireRole('admin', 'cashier'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {

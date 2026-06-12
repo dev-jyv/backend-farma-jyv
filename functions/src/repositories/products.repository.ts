@@ -1,4 +1,5 @@
 import { Product } from '../types';
+import { matchesProductSearch } from '../utils/product-search';
 import { paginate } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
 
@@ -27,14 +28,8 @@ export const listProducts = async (filters: {
     }
 
     if (filters.search) {
-        const term = filters.search.toLowerCase();
-        products = products.filter(
-            (product) =>
-                product.name.toLowerCase().includes(term) ||
-                product.sku.toLowerCase().includes(term) ||
-                (product.barcode?.toLowerCase().includes(term) ?? false) ||
-                (product.activeIngredient?.toLowerCase().includes(term) ?? false),
-        );
+        const search = filters.search;
+        products = products.filter((product) => matchesProductSearch(product, search));
     }
 
     products.sort((a, b) => a.name.localeCompare(b.name));

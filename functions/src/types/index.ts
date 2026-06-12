@@ -1,6 +1,37 @@
 import { Timestamp } from 'firebase-admin/firestore';
 
-export type UserRole = 'admin' | 'inventory' | 'cashier';
+export type PermissionArea =
+    | 'dashboard'
+    | 'users'
+    | 'sales'
+    | 'categories'
+    | 'products'
+    | 'suppliers'
+    | 'inventory'
+    | 'invoices'
+    | 'uploads'
+    | 'doctor';
+
+export type PermissionLevel = 'read' | 'write';
+
+export interface RolePermission {
+    area: PermissionArea;
+    level: PermissionLevel;
+}
+
+export interface Role {
+    id: string;
+    name: string;
+    slug: string;
+    description?: string;
+    permissions: RolePermission[];
+    isSystem: boolean;
+    isActive: boolean;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+export type RoleSummary = Pick<Role, 'id' | 'name' | 'slug'>;
 
 export type StockMovementType =
     | 'entry'
@@ -70,6 +101,10 @@ export interface StockMovement {
     createdAt: Timestamp;
 }
 
+export interface StockMovementWithDetails extends StockMovement {
+    product: ProductWithCategory;
+}
+
 export interface InventoryEntryItem {
     productId: string;
     lotNumber: string;
@@ -92,9 +127,67 @@ export interface Supplier {
     updatedAt: Timestamp;
 }
 
+export interface Invoice {
+    id: string;
+    supplierId: string;
+    invoiceNumber: string;
+    invoiceDate: Timestamp;
+    totalAmount: number;
+    hasInvoice: boolean;
+    storagePath?: string;
+    fileName?: string;
+    mimeType?: string;
+    createdAt: Timestamp;
+    createdBy: string;
+    updatedAt: Timestamp;
+    updatedBy: string;
+}
+
+export interface InvoiceWithDetails extends Invoice {
+    supplier: Supplier;
+    fileUrl?: string;
+}
+
+export type InvoiceSummary = Pick<Invoice, 'id' | 'invoiceNumber' | 'invoiceDate'> & {
+    supplier: SupplierSummary;
+};
+
 export type SupplierSummary = Pick<Supplier, 'id' | 'name'> & {
     lastCostPrice?: number;
 };
+
+export interface ProductPurchaseHistoryItem {
+    entryId: string;
+    supplier: Pick<Supplier, 'id' | 'name'>;
+    invoice: InvoiceSummary | null;
+    lotNumber: string;
+    expiryDate: Timestamp;
+    quantity: number;
+    costPrice?: number;
+    batchId: string;
+    createdAt: Timestamp;
+}
+
+export interface ProductSaleHistoryItem {
+    saleId: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+    paymentMethod: PaymentMethod;
+    createdAt: Timestamp;
+}
+
+export interface ProductInvoiceHistoryItem {
+    id: string;
+    invoiceNumber: string;
+    invoiceDate: Timestamp;
+    totalAmount: number;
+    hasInvoice: boolean;
+    fileUrl?: string;
+    supplier: Pick<Supplier, 'id' | 'name'>;
+    quantityReceived: number;
+    lastReceivedAt: Timestamp;
+}
 
 export interface ProductDetail extends Omit<ProductWithCategory, 'suppliers' | 'lastCostPriceBySupplier'> {
     stock: number;
@@ -103,6 +196,7 @@ export interface ProductDetail extends Omit<ProductWithCategory, 'suppliers' | '
 
 export interface InventoryEntry {
     id: string;
+    invoiceId?: string;
     supplierId: string;
     items: InventoryEntryItem[];
     createdAt: Timestamp;
@@ -117,6 +211,7 @@ export interface InventoryEntryItemWithProduct extends InventoryEntryItem {
 
 export interface InventoryEntryWithDetails extends Omit<InventoryEntry, 'items'> {
     supplier: Supplier;
+    invoice: InvoiceSummary | null;
     items: InventoryEntryItemWithProduct[];
 }
 
@@ -146,14 +241,20 @@ export interface UserProfile {
     id: string;
     email: string;
     displayName: string;
-    role: UserRole;
+    roleId: string;
     isActive: boolean;
     createdAt: Timestamp;
+}
+
+export interface UserWithRole extends UserProfile {
+    role: RoleSummary;
 }
 
 export interface AuthUser {
     uid: string;
     email: string;
-    role: UserRole;
     displayName: string;
+    roleId: string;
+    role: RoleSummary;
+    permissions: RolePermission[];
 }

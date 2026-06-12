@@ -1,9 +1,10 @@
 import { Router } from 'express';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
     createProductSchema,
     idParamSchema,
+    listProductHistoryQuerySchema,
     listProductsQuerySchema,
     updateProductSchema,
 } from '../schemas';
@@ -15,6 +16,7 @@ router.use(authenticate);
 
 router.get(
     '/',
+    requirePermission('products', 'read'),
     validate({ query: listProductsQuerySchema }),
     async (req, res, next) => {
         try {
@@ -33,7 +35,71 @@ router.get(
 );
 
 router.get(
+    '/:id/purchase-history',
+    requirePermission('products', 'read'),
+    validate({ params: idParamSchema, query: listProductHistoryQuerySchema }),
+    async (req, res, next) => {
+        try {
+            const result = await productsService.getProductPurchaseHistory(
+                String(req.params.id),
+                {
+                    search: req.query.search as string | undefined,
+                    page: req.query.page ? Number(req.query.page) : undefined,
+                    limit: req.query.limit ? Number(req.query.limit) : undefined,
+                },
+            );
+            res.json({ data: result.items, meta: result.meta });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.get(
+    '/:id/sales-history',
+    requirePermission('products', 'read'),
+    validate({ params: idParamSchema, query: listProductHistoryQuerySchema }),
+    async (req, res, next) => {
+        try {
+            const result = await productsService.getProductSalesHistory(
+                String(req.params.id),
+                {
+                    search: req.query.search as string | undefined,
+                    page: req.query.page ? Number(req.query.page) : undefined,
+                    limit: req.query.limit ? Number(req.query.limit) : undefined,
+                },
+            );
+            res.json({ data: result.items, meta: result.meta });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.get(
+    '/:id/invoice-history',
+    requirePermission('products', 'read'),
+    validate({ params: idParamSchema, query: listProductHistoryQuerySchema }),
+    async (req, res, next) => {
+        try {
+            const result = await productsService.getProductInvoiceHistory(
+                String(req.params.id),
+                {
+                    search: req.query.search as string | undefined,
+                    page: req.query.page ? Number(req.query.page) : undefined,
+                    limit: req.query.limit ? Number(req.query.limit) : undefined,
+                },
+            );
+            res.json({ data: result.items, meta: result.meta });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.get(
     '/:id',
+    requirePermission('products', 'read'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {
@@ -47,7 +113,7 @@ router.get(
 
 router.post(
     '/',
-    requireRole('admin', 'inventory'),
+    requirePermission('products'),
     validate({ body: createProductSchema }),
     async (req, res, next) => {
         try {
@@ -61,7 +127,7 @@ router.post(
 
 router.patch(
     '/:id',
-    requireRole('admin', 'inventory'),
+    requirePermission('products'),
     validate({ params: idParamSchema, body: updateProductSchema }),
     async (req, res, next) => {
         try {
@@ -78,7 +144,7 @@ router.patch(
 
 router.delete(
     '/:id',
-    requireRole('admin', 'inventory'),
+    requirePermission('products'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {

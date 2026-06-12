@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { UserProfile, UserRole } from '../types';
+import { RoleSummary, UserProfile, UserWithRole } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
 import {
@@ -8,6 +8,42 @@ import {
     listUserProfiles,
     updateUserProfile,
 } from '../repositories/users.repository';
+import * as rolesRepo from '../repositories/roles.repository';
+import { getActiveRoleById, getAdminRoleId, syncUserClaims } from './roles.service';
+
+const toRoleSummary = (role: { id: string; name: string; slug: string }): RoleSummary => ({
+    id: role.id,
+    name: role.name,
+    slug: role.slug,
+});
+
+const buildRoleMap = (roles: Array<{ id: string; name: string; slug: string }>) =>
+    new Map(roles.map((role) => [role.id, toRoleSummary(role)]));
+
+const enrichUser = (user: UserProfile, roleMap: Map<string, RoleSummary>): UserWithRole => ({
+    ...user,
+    role: roleMap.get(user.roleId) ?? {
+        id: user.roleId,
+        name: 'Rol no encontrado',
+        slug: '',
+    },
+});
+
+const enrichUsers = async (users: UserProfile[]): Promise<UserWithRole[]> => {
+    const roles = await rolesRepo.getAllRoles();
+    const roleMap = buildRoleMap(roles);
+    return users.map((user) => enrichUser(user, roleMap));
+};
+
+const enrichSingleUser = async (user: UserProfile): Promise<UserWithRole> => {
+    const role = await rolesRepo.getRoleById(user.roleId);
+    return {
+        ...user,
+        role: role
+            ? toRoleSummary(role)
+            : { id: user.roleId, name: 'Rol no encontrado', slug: '' },
+    };
+};
 
 const assertNotSelf = (id: string, actorUid: string, message: string): void => {
     if (id === actorUid) {
@@ -16,7 +52,8 @@ const assertNotSelf = (id: string, actorUid: string, message: string): void => {
 };
 
 const assertLastAdmin = async (id: string, existing: UserProfile): Promise<void> => {
-    if (existing.role !== 'admin' || !existing.isActive) {
+    const adminRoleId = await getAdminRoleId();
+    if (!adminRoleId || existing.roleId !== adminRoleId || !existing.isActive) {
         return;
     }
     const remaining = await countActiveAdmins(id);
@@ -27,32 +64,36 @@ const assertLastAdmin = async (id: string, existing: UserProfile): Promise<void>
 
 export const listUsers = async (filters: {
     activeOnly?: boolean;
+    roleId?: string;
     search?: string;
     page?: number;
     limit?: number;
-}): Promise<{ items: UserProfile[]; meta: ListMeta }> => {
+}): Promise<{ items: UserWithRole[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const { items, total } = await listUserProfiles({ ...filters, page, limit });
-    return { items, meta: buildListMeta(page, limit, total) };
+    return {
+        items: await enrichUsers(items),
+        meta: buildListMeta(page, limit, total),
+    };
 };
 
-export const getUser = async (id: string): Promise<UserProfile> => {
+export const getUser = async (id: string): Promise<UserWithRole> => {
     const user = await getUserProfile(id);
     if (!user) {
         throw notFound('Usuario');
     }
-    return user;
+    return enrichSingleUser(user);
 };
 
 export const updateUser = async (
     id: string,
     input: {
         displayName?: string;
-        role?: UserRole;
+        roleId?: string;
         isActive?: boolean;
     },
     actorUid: string,
-): Promise<UserProfile> => {
+): Promise<UserWithRole> => {
     const existing = await getUserProfile(id);
     if (!existing) {
         throw notFound('Usuario');
@@ -63,7 +104,14 @@ export const updateUser = async (
         await assertLastAdmin(id, existing);
     }
 
-    if (input.role !== undefined && input.role !== 'admin' && id === actorUid) {
+    const adminRoleId = await getAdminRoleId();
+    if (
+        input.roleId !== undefined &&
+        adminRoleId &&
+        input.roleId !== adminRoleId &&
+        id === actorUid &&
+        existing.roleId === adminRoleId
+    ) {
         throw badRequest('No puedes quitarte tu propio rol de administrador');
     }
 
@@ -81,16 +129,19 @@ export const updateUser = async (
         await admin.auth().updateUser(id, authUpdate);
     }
 
-    if (input.role !== undefined && input.role !== existing.role) {
-        await admin.auth().setCustomUserClaims(id, { role: input.role });
+    let roleToSync = existing.roleId;
+    if (input.roleId !== undefined && input.roleId !== existing.roleId) {
+        const role = await getActiveRoleById(input.roleId);
+        roleToSync = role.id;
+        await syncUserClaims(id, role.id, role.slug, role.permissions);
     }
 
-    const profileUpdate: Partial<Pick<UserProfile, 'displayName' | 'role' | 'isActive'>> = {};
+    const profileUpdate: Partial<Pick<UserProfile, 'displayName' | 'roleId' | 'isActive'>> = {};
     if (input.displayName !== undefined) {
         profileUpdate.displayName = input.displayName;
     }
-    if (input.role !== undefined) {
-        profileUpdate.role = input.role;
+    if (input.roleId !== undefined) {
+        profileUpdate.roleId = roleToSync;
     }
     if (input.isActive !== undefined) {
         profileUpdate.isActive = input.isActive;
@@ -104,8 +155,8 @@ export const updateUser = async (
     if (!updated) {
         throw notFound('Usuario');
     }
-    return updated;
+    return enrichSingleUser(updated);
 };
 
-export const deactivateUser = async (id: string, actorUid: string): Promise<UserProfile> =>
+export const deactivateUser = async (id: string, actorUid: string): Promise<UserWithRole> =>
     updateUser(id, { isActive: false }, actorUid);

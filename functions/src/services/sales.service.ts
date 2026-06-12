@@ -1,6 +1,7 @@
 import { PaymentMethod, Sale, SaleItem } from '../types';
 import { badRequest, notFound } from '../utils/errors';
-import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
+import { matchesProductSearch } from '../utils/product-search';
+import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { allocateFefo } from '../utils/fefo';
 import { db, now } from '../utils/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -139,6 +140,42 @@ export const listSales = async (filters: {
     limit?: number;
 }): Promise<{ items: Sale[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    const { items, total } = await salesRepo.listSales({ ...filters, page, limit });
-    return { items, meta: buildListMeta(page, limit, total) };
+    const { items: sales } = await salesRepo.listSales({
+        from: filters.from,
+        to: filters.to,
+    });
+
+    let filtered = sales;
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        const productIds = [
+            ...new Set(filtered.flatMap((sale) => sale.items.map((item) => item.productId))),
+        ];
+        const productCache = new Map<
+            string,
+            Awaited<ReturnType<typeof productsRepo.getProductById>>
+        >();
+        await Promise.all(
+            productIds.map(async (id) => {
+                productCache.set(id, await productsRepo.getProductById(id));
+            }),
+        );
+
+        filtered = filtered.filter((sale) =>
+            sale.items.some((item) => {
+                const product = productCache.get(item.productId);
+                return (
+                    (product && matchesProductSearch(product, term)) ||
+                    item.productName.toLowerCase().includes(term)
+                );
+            }),
+        );
+    }
+
+    const paginated = paginate(filtered, page, limit);
+    return {
+        items: paginated.items,
+        meta: buildListMeta(page, limit, paginated.total),
+    };
 };

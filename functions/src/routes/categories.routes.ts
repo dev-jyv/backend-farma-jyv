@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
     createCategorySchema,
@@ -15,6 +15,7 @@ router.use(authenticate);
 
 router.get(
     '/',
+    requirePermission('categories', 'read'),
     validate({ query: listCategoriesQuerySchema }),
     async (req, res, next) => {
         try {
@@ -33,6 +34,7 @@ router.get(
 
 router.get(
     '/:id',
+    requirePermission('categories', 'read'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {
@@ -46,7 +48,7 @@ router.get(
 
 router.post(
     '/',
-    requireRole('admin', 'inventory'),
+    requirePermission('categories'),
     validate({ body: createCategorySchema }),
     async (req, res, next) => {
         try {
@@ -60,7 +62,7 @@ router.post(
 
 router.patch(
     '/:id',
-    requireRole('admin', 'inventory'),
+    requirePermission('categories'),
     validate({ params: idParamSchema, body: updateCategorySchema }),
     async (req, res, next) => {
         try {
@@ -77,7 +79,7 @@ router.patch(
 
 router.delete(
     '/:id',
-    requireRole('admin', 'inventory'),
+    requirePermission('categories'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {

@@ -6,21 +6,60 @@ const paginationFields = {
     search: z.string().optional(),
 };
 
+const permissionAreaSchema = z.enum([
+    'dashboard',
+    'users',
+    'sales',
+    'categories',
+    'products',
+    'suppliers',
+    'inventory',
+    'invoices',
+    'uploads',
+    'doctor',
+]);
+
+const rolePermissionSchema = z.object({
+    area: permissionAreaSchema,
+    level: z.enum(['read', 'write']),
+});
+
 export const registerStaffSchema = z.object({
     email: z.string().email(),
     password: z.string().min(8),
     displayName: z.string().min(2),
-    role: z.enum(['admin', 'inventory', 'cashier']),
+    roleId: z.string().min(1),
 });
 
 export const updateUserSchema = z.object({
     displayName: z.string().min(2).optional(),
-    role: z.enum(['admin', 'inventory', 'cashier']).optional(),
+    roleId: z.string().min(1).optional(),
     isActive: z.boolean().optional(),
+});
+
+export const createRoleSchema = z.object({
+    name: z.string().min(1),
+    slug: z.string().min(1),
+    description: z.string().optional(),
+    permissions: z.array(rolePermissionSchema).min(1),
+});
+
+export const updateRoleSchema = z.object({
+    name: z.string().min(1).optional(),
+    slug: z.string().min(1).optional(),
+    description: z.string().optional(),
+    permissions: z.array(rolePermissionSchema).min(1).optional(),
+    isActive: z.boolean().optional(),
+});
+
+export const listRolesQuerySchema = z.object({
+    activeOnly: z.enum(['true', 'false']).optional(),
+    ...paginationFields,
 });
 
 export const listUsersQuerySchema = z.object({
     activeOnly: z.enum(['true', 'false']).optional(),
+    roleId: z.string().min(1).optional(),
     ...paginationFields,
 });
 
@@ -72,14 +111,14 @@ export const inventoryEntryProductSchema = z.object({
 });
 
 export const inventoryEntrySchema = z.object({
-    supplierId: z.string().min(1),
+    invoiceId: z.string().min(1),
     products: z.array(inventoryEntryProductSchema).min(1).optional(),
     items: z.array(inventoryEntryProductSchema).min(1).optional(),
 }).refine(
     (data) => Boolean(data.products?.length || data.items?.length),
     { message: 'Debe incluir al menos un producto' },
 ).transform((data) => ({
-    supplierId: data.supplierId,
+    invoiceId: data.invoiceId,
     products: data.products ?? data.items ?? [],
 }));
 
@@ -133,6 +172,10 @@ export const listProductsQuerySchema = z.object({
     ...paginationFields,
 });
 
+export const listProductHistoryQuerySchema = z.object({
+    ...paginationFields,
+});
+
 export const listBatchesQuerySchema = z.object({
     productId: z.string().min(1),
     ...paginationFields,
@@ -148,8 +191,26 @@ export const listMovementsQuerySchema = z.object({
 
 export const listEntriesQuerySchema = z.object({
     supplierId: z.string().optional(),
+    invoiceId: z.string().optional(),
     from: z.string().optional(),
     to: z.string().optional(),
+    ...paginationFields,
+});
+
+export const createInvoiceSchema = z.object({
+    supplierId: z.string().min(1),
+    invoiceNumber: z.string().min(1),
+    invoiceDate: z.string().min(1),
+    totalAmount: z.number().positive(),
+    hasInvoice: z.boolean(),
+    fileUrl: z.string().min(1).startsWith('uploads/'),
+});
+
+export const listInvoicesQuerySchema = z.object({
+    supplierId: z.string().optional(),
+    from: z.string().optional(),
+    to: z.string().optional(),
+    hasInvoice: z.enum(['true', 'false']).optional(),
     ...paginationFields,
 });
 

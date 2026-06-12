@@ -1,10 +1,25 @@
-import { Product, ProductDetail, ProductWithCategory, Supplier, SupplierSummary } from '../types';
+import {
+    InvoiceSummary,
+    Product,
+    ProductDetail,
+    ProductInvoiceHistoryItem,
+    ProductPurchaseHistoryItem,
+    ProductSaleHistoryItem,
+    ProductWithCategory,
+    Supplier,
+    SupplierSummary,
+} from '../types';
 import { badRequest, conflict, notFound } from '../utils/errors';
-import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
+import { buildListMeta, buildListResult, ListMeta, parsePagination } from '../utils/pagination';
+import { getFileUrl } from '../utils/storage';
+import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
+import * as entriesRepo from '../repositories/inventory-entries.repository';
+import * as salesRepo from '../repositories/sales.repository';
+import * as invoicesRepo from '../repositories/invoices.repository';
 
 const loadSuppliersSummary = async (
     supplierIds: string[],
@@ -25,6 +40,161 @@ const loadSuppliersSummary = async (
                 ? { lastCostPrice: lastCostPriceBySupplier[id] }
                 : {}),
         }));
+};
+
+const loadInvoiceSummary = async (
+    invoiceId: string,
+    supplier: Pick<Supplier, 'id' | 'name'>,
+    invoiceCache: Map<string, InvoiceSummary | null>,
+): Promise<InvoiceSummary | null> => {
+    let cached = invoiceCache.get(invoiceId);
+    if (cached === undefined) {
+        const invoiceDoc = await invoicesRepo.getInvoiceById(invoiceId);
+        cached = invoiceDoc
+            ? {
+                id: invoiceDoc.id,
+                invoiceNumber: invoiceDoc.invoiceNumber,
+                invoiceDate: invoiceDoc.invoiceDate,
+                supplier: { id: supplier.id, name: supplier.name },
+            }
+            : null;
+        invoiceCache.set(invoiceId, cached);
+    }
+    return cached;
+};
+
+const loadPurchaseHistory = async (
+    productId: string,
+): Promise<ProductPurchaseHistoryItem[]> => {
+    const entries = await entriesRepo.listInventoryEntries({ productId });
+    const supplierCache = new Map<string, Supplier | null>();
+    const invoiceCache = new Map<string, InvoiceSummary | null>();
+    const history: ProductPurchaseHistoryItem[] = [];
+
+    for (const entry of entries) {
+        let supplier = supplierCache.get(entry.supplierId);
+        if (supplier === undefined) {
+            supplier = await suppliersRepo.getSupplierById(entry.supplierId);
+            supplierCache.set(entry.supplierId, supplier);
+        }
+        if (!supplier) {
+            throw notFound('Proveedor');
+        }
+
+        const supplierSummary = { id: supplier.id, name: supplier.name };
+        const invoice = entry.invoiceId
+            ? await loadInvoiceSummary(entry.invoiceId, supplierSummary, invoiceCache)
+            : null;
+
+        for (const item of entry.items) {
+            if (item.productId !== productId) {
+                continue;
+            }
+            history.push({
+                entryId: entry.id,
+                supplier: supplierSummary,
+                invoice,
+                lotNumber: item.lotNumber,
+                expiryDate: item.expiryDate,
+                quantity: item.quantity,
+                ...(item.costPrice !== undefined ? { costPrice: item.costPrice } : {}),
+                batchId: item.batchId,
+                createdAt: entry.createdAt,
+            });
+        }
+    }
+
+    return history.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+};
+
+const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryItem[]> => {
+    const { items: sales } = await salesRepo.listSales({ productId });
+    const history: ProductSaleHistoryItem[] = [];
+
+    for (const sale of sales) {
+        for (const item of sale.items) {
+            if (item.productId !== productId) {
+                continue;
+            }
+            history.push({
+                saleId: sale.id,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                subtotal: item.subtotal,
+                paymentMethod: sale.paymentMethod,
+                createdAt: sale.createdAt,
+            });
+        }
+    }
+
+    return history.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+};
+
+const loadInvoiceHistory = async (
+    productId: string,
+): Promise<ProductInvoiceHistoryItem[]> => {
+    const entries = await entriesRepo.listInventoryEntries({ productId });
+    const grouped = new Map<string, { quantityReceived: number; lastReceivedAt: number }>();
+
+    for (const entry of entries) {
+        if (!entry.invoiceId) {
+            continue;
+        }
+        const productQuantity = entry.items
+            .filter((item) => item.productId === productId)
+            .reduce((sum, item) => sum + item.quantity, 0);
+        const entryMs = entry.createdAt.toMillis();
+        const existing = grouped.get(entry.invoiceId);
+
+        if (existing) {
+            existing.quantityReceived += productQuantity;
+            existing.lastReceivedAt = Math.max(existing.lastReceivedAt, entryMs);
+        } else {
+            grouped.set(entry.invoiceId, {
+                quantityReceived: productQuantity,
+                lastReceivedAt: entryMs,
+            });
+        }
+    }
+
+    const supplierCache = new Map<string, Supplier | null>();
+    const history = await Promise.all(
+        [...grouped.entries()].map(async ([invoiceId, aggregate]) => {
+            const invoice = await invoicesRepo.getInvoiceById(invoiceId);
+            if (!invoice) {
+                return null;
+            }
+
+            let supplier = supplierCache.get(invoice.supplierId);
+            if (supplier === undefined) {
+                supplier = await suppliersRepo.getSupplierById(invoice.supplierId);
+                supplierCache.set(invoice.supplierId, supplier);
+            }
+            if (!supplier) {
+                throw notFound('Proveedor');
+            }
+
+            const fileUrl = invoice.storagePath
+                ? await getFileUrl(invoice.storagePath)
+                : undefined;
+
+            return {
+                id: invoice.id,
+                invoiceNumber: invoice.invoiceNumber,
+                invoiceDate: invoice.invoiceDate,
+                totalAmount: invoice.totalAmount,
+                hasInvoice: invoice.hasInvoice,
+                ...(fileUrl ? { fileUrl } : {}),
+                supplier: { id: supplier.id, name: supplier.name },
+                quantityReceived: aggregate.quantityReceived,
+                lastReceivedAt: Timestamp.fromMillis(aggregate.lastReceivedAt),
+            };
+        }),
+    );
+
+    return history
+        .filter((item): item is ProductInvoiceHistoryItem => item !== null)
+        .sort((a, b) => b.invoiceDate.toMillis() - a.invoiceDate.toMillis());
 };
 
 export const listProducts = async (filters: {
@@ -64,6 +234,13 @@ export const listProducts = async (filters: {
     };
 };
 
+const ensureProductExists = async (id: string): Promise<void> => {
+    const product = await productsRepo.getProductById(id);
+    if (!product) {
+        throw notFound('Producto');
+    }
+};
+
 export const getProduct = async (id: string): Promise<ProductDetail> => {
     const product = await productsRepo.getProductById(id);
     if (!product) {
@@ -81,7 +258,75 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
     }
 
     const { lastCostPriceBySupplier: _, ...productData } = product;
-    return { ...productData, stock, suppliers, category };
+    return {
+        ...productData,
+        stock,
+        suppliers,
+        category,
+    };
+};
+
+export const getProductPurchaseHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductPurchaseHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadPurchaseHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.supplier.name.toLowerCase().includes(term) ||
+                (item.invoice?.invoiceNumber.toLowerCase().includes(term) ?? false) ||
+                item.lotNumber.toLowerCase().includes(term) ||
+                item.entryId.toLowerCase().includes(term) ||
+                item.batchId.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
+};
+
+export const getProductSalesHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductSaleHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadSalesHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.saleId.toLowerCase().includes(term) ||
+                item.paymentMethod.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
+};
+
+export const getProductInvoiceHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductInvoiceHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadInvoiceHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.invoiceNumber.toLowerCase().includes(term) ||
+                item.supplier.name.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
 };
 
 export const createProduct = async (input: {

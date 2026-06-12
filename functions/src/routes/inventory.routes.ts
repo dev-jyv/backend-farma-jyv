@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate, requireRole } from '../middleware/auth';
+import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
     inventoryEntrySchema,
@@ -17,6 +17,7 @@ router.use(authenticate);
 
 router.get(
     '/batches',
+    requirePermission('inventory', 'read'),
     validate({ query: listBatchesQuerySchema }),
     async (req, res, next) => {
         try {
@@ -37,12 +38,12 @@ router.get(
 
 router.post(
     '/entries',
-    requireRole('admin', 'inventory'),
+    requirePermission('inventory'),
     validate({ body: inventoryEntrySchema }),
     async (req, res, next) => {
         try {
             const entry = await inventoryService.recordEntry({
-                supplierId: req.body.supplierId,
+                invoiceId: req.body.invoiceId,
                 items: req.body.products,
                 userId: req.authUser!.uid,
             });
@@ -55,12 +56,13 @@ router.post(
 
 router.get(
     '/entries',
-    requireRole('admin', 'inventory'),
+    requirePermission('inventory'),
     validate({ query: listEntriesQuerySchema }),
     async (req, res, next) => {
         try {
             const result = await inventoryService.listEntries({
                 supplierId: req.query.supplierId as string | undefined,
+                invoiceId: req.query.invoiceId as string | undefined,
                 from: req.query.from as string | undefined,
                 to: req.query.to as string | undefined,
                 search: req.query.search as string | undefined,
@@ -76,7 +78,7 @@ router.get(
 
 router.get(
     '/entries/:id',
-    requireRole('admin', 'inventory'),
+    requirePermission('inventory'),
     validate({ params: idParamSchema }),
     async (req, res, next) => {
         try {
@@ -90,7 +92,7 @@ router.get(
 
 router.post(
     '/exits',
-    requireRole('admin', 'inventory'),
+    requirePermission('inventory'),
     validate({ body: inventoryExitSchema }),
     async (req, res, next) => {
         try {
@@ -107,7 +109,7 @@ router.post(
 
 router.get(
     '/movements',
-    requireRole('admin', 'inventory'),
+    requirePermission('inventory'),
     validate({ query: listMovementsQuerySchema }),
     async (req, res, next) => {
         try {

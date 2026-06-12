@@ -1,5 +1,4 @@
 import { StockMovement, StockMovementType } from '../types';
-import { paginate } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
 
 const collection = () => db().collection('stockMovements');
@@ -21,10 +20,7 @@ export const listStockMovements = async (filters: {
     type?: StockMovementType;
     from?: string;
     to?: string;
-    search?: string;
-    page?: number;
-    limit?: number;
-}): Promise<{ items: StockMovement[]; total: number }> => {
+}): Promise<StockMovement[]> => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.productId) {
@@ -52,17 +48,7 @@ export const listStockMovements = async (filters: {
         movements = movements.filter((m) => m.createdAt.toMillis() <= toMs);
     }
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        movements = movements.filter(
-            (movement) =>
-                movement.productId.toLowerCase().includes(term) ||
-                movement.type.toLowerCase().includes(term) ||
-                (movement.reason?.toLowerCase().includes(term) ?? false),
-        );
-    }
-
-    return paginate(movements, filters.page ?? 1, filters.limit ?? 100);
+    return movements;
 };
 
 export const findEntryReferenceByBatchId = async (

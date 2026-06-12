@@ -1,6 +1,20 @@
 import { FieldValue } from 'firebase-admin/firestore';
-import { Batch, BatchWithDetails, ExitReason, InventoryEntry, InventoryEntryItem, InventoryEntryWithDetails, Product, ProductWithCategory, StockMovement, Supplier } from '../types';
+import {
+    Batch,
+    BatchWithDetails,
+    ExitReason,
+    InventoryEntry,
+    InventoryEntryItem,
+    InventoryEntryWithDetails,
+    InvoiceSummary,
+    Product,
+    ProductWithCategory,
+    StockMovement,
+    StockMovementWithDetails,
+    Supplier,
+} from '../types';
 import { badRequest, notFound } from '../utils/errors';
+import { matchesProductSearch } from '../utils/product-search';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -8,6 +22,7 @@ import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
+import * as invoicesRepo from '../repositories/invoices.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
 
 export const listBatches = async (
@@ -53,7 +68,7 @@ export const listBatches = async (
         items = items.filter(
             (batch) =>
                 batch.lotNumber.toLowerCase().includes(term) ||
-                batch.product.name.toLowerCase().includes(term) ||
+                matchesProductSearch(batch.product, term) ||
                 (batch.supplier?.name.toLowerCase().includes(term) ?? false),
         );
     }
@@ -97,6 +112,7 @@ const enrichEntry = async (
     entry: InventoryEntry,
     supplierCache = new Map<string, Supplier | null>(),
     productCache = new Map<string, ProductWithCategory | null>(),
+    invoiceCache = new Map<string, InvoiceSummary | null>(),
 ): Promise<InventoryEntryWithDetails> => {
     let supplier = supplierCache.get(entry.supplierId);
     if (supplier === undefined) {
@@ -105,6 +121,24 @@ const enrichEntry = async (
     }
     if (!supplier) {
         throw notFound('Proveedor');
+    }
+
+    let invoice: InvoiceSummary | null = null;
+    if (entry.invoiceId) {
+        let cached = invoiceCache.get(entry.invoiceId);
+        if (cached === undefined) {
+            const invoiceDoc = await invoicesRepo.getInvoiceById(entry.invoiceId);
+            cached = invoiceDoc
+                ? {
+                    id: invoiceDoc.id,
+                    invoiceNumber: invoiceDoc.invoiceNumber,
+                    invoiceDate: invoiceDoc.invoiceDate,
+                    supplier: { id: supplier.id, name: supplier.name },
+                }
+                : null;
+            invoiceCache.set(entry.invoiceId, cached);
+        }
+        invoice = cached;
     }
 
     const items = await Promise.all(
@@ -122,11 +156,28 @@ const enrichEntry = async (
         }),
     );
 
-    return { ...entry, supplier, items };
+    return { ...entry, supplier, invoice, items };
+};
+
+const enrichMovement = async (
+    movement: StockMovement,
+    productCache = new Map<string, ProductWithCategory | null>(),
+): Promise<StockMovementWithDetails> => {
+    let product = productCache.get(movement.productId);
+    if (product === undefined) {
+        const baseProduct = await productsRepo.getProductById(movement.productId);
+        product = baseProduct ? await loadProductWithCategory(baseProduct) : null;
+        productCache.set(movement.productId, product);
+    }
+    if (!product) {
+        throw notFound('Producto');
+    }
+    return { ...movement, product };
 };
 
 export const listEntries = async (filters: {
     supplierId?: string;
+    invoiceId?: string;
     from?: string;
     to?: string;
     search?: string;
@@ -137,8 +188,9 @@ export const listEntries = async (filters: {
     const entries = await entriesRepo.listInventoryEntries(filters);
     const supplierCache = new Map<string, Supplier | null>();
     const productCache = new Map<string, ProductWithCategory | null>();
+    const invoiceCache = new Map<string, InvoiceSummary | null>();
     let items = await Promise.all(
-        entries.map((entry) => enrichEntry(entry, supplierCache, productCache)),
+        entries.map((entry) => enrichEntry(entry, supplierCache, productCache, invoiceCache)),
     );
 
     if (filters.search) {
@@ -146,7 +198,7 @@ export const listEntries = async (filters: {
         items = items.filter(
             (entry) =>
                 entry.supplier.name.toLowerCase().includes(term) ||
-                entry.items.some((item) => item.product.name.toLowerCase().includes(term)),
+                entry.items.some((item) => matchesProductSearch(item.product, term)),
         );
     }
 
@@ -166,7 +218,7 @@ export const getEntry = async (id: string): Promise<InventoryEntryWithDetails> =
 };
 
 export const recordEntry = async (input: {
-    supplierId: string;
+    invoiceId: string;
     items: EntryItemInput[];
     userId: string;
 }): Promise<InventoryEntryWithDetails> => {
@@ -174,7 +226,13 @@ export const recordEntry = async (input: {
         throw badRequest('Debe incluir al menos un producto');
     }
 
-    const supplier = await suppliersRepo.getSupplierById(input.supplierId);
+    const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
+    if (!invoice) {
+        throw notFound('Factura');
+    }
+
+    const supplierId = invoice.supplierId;
+    const supplier = await suppliersRepo.getSupplierById(supplierId);
     if (!supplier) {
         throw notFound('Proveedor');
     }
@@ -327,7 +385,8 @@ export const recordEntry = async (input: {
         }
 
         const entryData = {
-            supplierId: input.supplierId,
+            invoiceId: input.invoiceId,
+            supplierId,
             items: entryItems,
             createdAt: timestamp,
             createdBy: input.userId,
@@ -347,10 +406,10 @@ export const recordEntry = async (input: {
         for (const productId of uniqueProductIds) {
             const lastCostPrice = lastCostByProduct.get(productId);
             transaction.update(firestore.collection('products').doc(productId), {
-                suppliers: FieldValue.arrayUnion(input.supplierId),
+                suppliers: FieldValue.arrayUnion(supplierId),
                 updatedAt: timestamp,
                 ...(lastCostPrice !== undefined
-                    ? { [`lastCostPriceBySupplier.${input.supplierId}`]: lastCostPrice }
+                    ? { [`lastCostPriceBySupplier.${supplierId}`]: lastCostPrice }
                     : {}),
             });
         }
@@ -428,8 +487,32 @@ export const listMovements = async (filters: {
     search?: string;
     page?: number;
     limit?: number;
-}): Promise<{ items: StockMovement[]; meta: ListMeta }> => {
+}): Promise<{ items: StockMovementWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    const { items, total } = await movementsRepo.listStockMovements({ ...filters, page, limit });
-    return { items, meta: buildListMeta(page, limit, total) };
+    const movements = await movementsRepo.listStockMovements({
+        productId: filters.productId,
+        type: filters.type,
+        from: filters.from,
+        to: filters.to,
+    });
+    const productCache = new Map<string, ProductWithCategory | null>();
+    let items = await Promise.all(
+        movements.map((movement) => enrichMovement(movement, productCache)),
+    );
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        items = items.filter(
+            (movement) =>
+                matchesProductSearch(movement.product, term) ||
+                movement.type.toLowerCase().includes(term) ||
+                (movement.reason?.toLowerCase().includes(term) ?? false),
+        );
+    }
+
+    const paginated = paginate(items, page, limit);
+    return {
+        items: paginated.items,
+        meta: buildListMeta(page, limit, paginated.total),
+    };
 };

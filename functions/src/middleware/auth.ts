@@ -1,8 +1,10 @@
 import { NextFunction, Request, Response } from 'express';
 import * as admin from 'firebase-admin';
-import { UserRole } from '../types';
+import { hasPermission } from '../constants/permissions';
+import { PermissionArea, PermissionLevel, UserProfile } from '../types';
 import { forbidden, unauthorized } from '../utils/errors';
-import { getUserProfile } from '../repositories/users.repository';
+import { getUserProfile, updateUserProfile } from '../repositories/users.repository';
+import { resolveActiveUserRole, syncUserClaims } from '../services/roles.service';
 
 const extractToken = (header?: string): string | null => {
     if (!header?.startsWith('Bearer ')) {
@@ -10,6 +12,9 @@ const extractToken = (header?: string): string | null => {
     }
     return header.slice(7);
 };
+
+type UserProfileWithLegacyRole = UserProfile & { role?: string };
+type DecodedAuthClaims = { roleSlug?: string; role?: string };
 
 export const authenticate = async (
     req: Request,
@@ -29,11 +34,37 @@ export const authenticate = async (
             throw unauthorized('Usuario no autorizado');
         }
 
+        const legacyProfile = profile as UserProfileWithLegacyRole;
+        const decodedClaims = decoded as DecodedAuthClaims;
+        const role = await resolveActiveUserRole({
+            roleId: legacyProfile.roleId,
+            legacyRole: legacyProfile.role ?? decodedClaims.role,
+            roleSlug: typeof decodedClaims.roleSlug === 'string'
+                ? decodedClaims.roleSlug
+                : undefined,
+        });
+
+        if (!legacyProfile.roleId || legacyProfile.role) {
+            await updateUserProfile(decoded.uid, { roleId: role.id });
+            if (legacyProfile.role) {
+                await admin.firestore().collection('users').doc(decoded.uid).update({
+                    role: admin.firestore.FieldValue.delete(),
+                });
+            }
+            await syncUserClaims(decoded.uid, role.id, role.slug, role.permissions);
+        }
+
         req.authUser = {
             uid: decoded.uid,
             email: profile.email,
-            role: profile.role,
+            role: {
+                id: role.id,
+                name: role.name,
+                slug: role.slug,
+            },
+            roleId: role.id,
             displayName: profile.displayName,
+            permissions: role.permissions,
         };
 
         next();
@@ -42,17 +73,26 @@ export const authenticate = async (
     }
 };
 
-export const requireRole = (...roles: UserRole[]) =>
-    (req: Request, _res: Response, next: NextFunction): void => {
-        if (!req.authUser) {
-            next(unauthorized());
-            return;
-        }
+export const requirePermission = (
+    area: PermissionArea,
+    level: PermissionLevel = 'write',
+) => (req: Request, _res: Response, next: NextFunction): void => {
+    if (!req.authUser) {
+        next(unauthorized());
+        return;
+    }
 
-        if (!roles.includes(req.authUser.role)) {
-            next(forbidden());
-            return;
-        }
+    const allowed = hasPermission(
+        req.authUser.permissions,
+        area,
+        level,
+        req.authUser.role.slug,
+    );
 
-        next();
-    };
+    if (!allowed) {
+        next(forbidden());
+        return;
+    }
+
+    next();
+};

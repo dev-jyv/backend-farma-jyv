@@ -25,9 +25,9 @@ export const getSaleById = async (id: string): Promise<Sale | null> => {
 };
 
 export const listSales = async (filters: {
+    productId?: string;
     from?: string;
     to?: string;
-    search?: string;
     page?: number;
     limit?: number;
 }): Promise<{ items: Sale[]; total: number }> => {
@@ -47,12 +47,15 @@ export const listSales = async (filters: {
         sales = sales.filter((sale) => sale.createdAt.toMillis() <= toMs);
     }
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
+    if (filters.productId) {
         sales = sales.filter((sale) =>
-            sale.items.some((item) => item.productName.toLowerCase().includes(term)),
+            sale.items.some((item) => item.productId === filters.productId),
         );
     }
 
-    return paginate(sales, filters.page ?? 1, filters.limit ?? 100);
+    if (filters.page !== undefined || filters.limit !== undefined) {
+        return paginate(sales, filters.page ?? 1, filters.limit ?? 100);
+    }
+
+    return { items: sales, total: sales.length };
 };
