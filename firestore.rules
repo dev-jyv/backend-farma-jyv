@@ -6,17 +6,33 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function hasRole(role) {
-      return isAuthenticated() && request.auth.token.role == role;
+    function hasRoleSlug(slug) {
+      return isAuthenticated() && request.auth.token.roleSlug == slug;
     }
 
     function isStaff() {
-      return isAuthenticated() &&
-        request.auth.token.role in ['admin', 'inventory', 'cashier'];
+      return isAuthenticated() && (
+        request.auth.token.roleId != null ||
+        request.auth.token.roleSlug != null ||
+        request.auth.token.role in ['admin', 'inventory', 'cashier', 'manager', 'doctor']
+      );
+    }
+
+    function canManageInventory() {
+      return hasRoleSlug('admin') || hasRoleSlug('manager');
+    }
+
+    function canAccessSales() {
+      return hasRoleSlug('admin') || hasRoleSlug('cashier') || hasRoleSlug('manager');
     }
 
     match /users/{userId} {
       allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if false;
+    }
+
+    match /roles/{roleId} {
+      allow read: if isStaff();
       allow write: if false;
     }
 
@@ -41,17 +57,17 @@ service cloud.firestore {
     }
 
     match /stockMovements/{movementId} {
-      allow read: if hasRole('admin') || hasRole('inventory');
+      allow read: if canManageInventory();
       allow write: if false;
     }
 
     match /inventoryEntries/{entryId} {
-      allow read: if hasRole('admin') || hasRole('inventory');
+      allow read: if canManageInventory();
       allow write: if false;
     }
 
     match /sales/{saleId} {
-      allow read: if hasRole('admin') || hasRole('cashier');
+      allow read: if canAccessSales();
       allow write: if false;
     }
   }
