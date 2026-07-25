@@ -62,6 +62,10 @@ export interface Product {
     unit: string;
     salePrice: number;
     minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    concentration?: string;
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
@@ -71,6 +75,16 @@ export interface Product {
 
 export interface ProductWithCategory extends Product {
     category: Category;
+}
+
+export interface BulkCreateProductsResult {
+    created: Product[];
+    errors: Array<{ index: number; sku?: string; message: string }>;
+}
+
+export interface BulkCreateEntriesResult {
+    created: InventoryEntryWithDetails[];
+    errors: Array<{ index: number; message: string }>;
 }
 
 export interface Batch {
@@ -194,10 +208,14 @@ export interface ProductDetail extends Omit<ProductWithCategory, 'suppliers' | '
     suppliers: SupplierSummary[];
 }
 
+export type InventoryEntrySource = 'invoice' | 'direct';
+
 export interface InventoryEntry {
     id: string;
     invoiceId?: string;
     supplierId: string;
+    source?: InventoryEntrySource;
+    notes?: string;
     items: InventoryEntryItem[];
     createdAt: Timestamp;
     createdBy: string;

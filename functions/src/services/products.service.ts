@@ -1,4 +1,5 @@
 import {
+    BulkCreateProductsResult,
     InvoiceSummary,
     Product,
     ProductDetail,
@@ -10,7 +11,8 @@ import {
     SupplierSummary,
 } from '../types';
 import { badRequest, conflict, notFound } from '../utils/errors';
-import { buildListMeta, buildListResult, ListMeta, parsePagination } from '../utils/pagination';
+import { buildListMeta, buildListResult, ListMeta, paginate, parsePagination } from '../utils/pagination';
+import { matchesProductSearch } from '../utils/product-search';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -208,14 +210,23 @@ export const listProducts = async (filters: {
     meta: ListMeta;
 }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    const { items, total } = await productsRepo.listProducts({ ...filters, page, limit });
-    const categoryIds = [...new Set(items.map((product) => product.categoryId))];
+    let items = await productsRepo.listProducts({
+        categoryId: filters.categoryId,
+        activeOnly: filters.activeOnly,
+    });
+
+    if (filters.search) {
+        items = items.filter((product) => matchesProductSearch(product, filters.search!));
+    }
+
+    const { items: paginated, total } = paginate(items, page, limit);
+    const categoryIds = [...new Set(paginated.map((product) => product.categoryId))];
     const [categories, stockValues] = await Promise.all([
         categoriesRepo.getCategoriesByIds(categoryIds),
-        Promise.all(items.map((product) => batchesRepo.getTotalStock(product.id))),
+        Promise.all(paginated.map((product) => batchesRepo.getTotalStock(product.id))),
     ]);
 
-    const withDetails = items.map((product, index) => {
+    const withDetails = paginated.map((product, index) => {
         const category = categories.get(product.categoryId);
         if (!category) {
             throw notFound('Categoría');
@@ -329,6 +340,27 @@ export const getProductInvoiceHistory = async (
     return buildListResult(history, page, limit);
 };
 
+const assertUniqueProductValue = async (
+    field: 'name' | 'sku' | 'barcode',
+    value: string,
+    excludeId?: string,
+): Promise<void> => {
+    const duplicate = field === 'name'
+        ? await productsRepo.getProductByName(value)
+        : field === 'sku'
+            ? await productsRepo.getProductBySku(value)
+            : await productsRepo.getProductByBarcode(value);
+
+    if (duplicate && duplicate.id !== excludeId) {
+        const labels = {
+            name: 'nombre',
+            sku: 'SKU',
+            barcode: 'código de barras',
+        };
+        throw conflict(`Ya existe un producto con ese ${labels[field]}`);
+    }
+};
+
 export const createProduct = async (input: {
     name: string;
     sku: string;
@@ -338,8 +370,16 @@ export const createProduct = async (input: {
     unit: string;
     salePrice: number;
     minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    concentration?: string;
 }): Promise<Product> => {
-    if (!input.name.trim() || !input.sku.trim()) {
+    const name = input.name.trim();
+    const sku = input.sku.trim();
+    const barcode = input.barcode?.trim();
+
+    if (!name || !sku) {
         throw badRequest('Nombre y SKU son requeridos');
     }
 
@@ -352,23 +392,90 @@ export const createProduct = async (input: {
         throw notFound('Categoría');
     }
 
-    const existingSku = await productsRepo.getProductBySku(input.sku.trim());
-    if (existingSku) {
-        throw conflict('Ya existe un producto con ese SKU');
+    await assertUniqueProductValue('name', name);
+    await assertUniqueProductValue('sku', sku);
+    if (barcode) {
+        await assertUniqueProductValue('barcode', barcode);
     }
 
     return productsRepo.createProduct({
-        name: input.name.trim(),
-        sku: input.sku.trim(),
-        barcode: input.barcode?.trim(),
+        name,
+        sku,
+        barcode,
         activeIngredient: input.activeIngredient?.trim(),
         categoryId: input.categoryId,
         unit: input.unit.trim(),
         salePrice: input.salePrice,
         minStock: input.minStock,
+        hasIva: input.hasIva,
+        hasIvaZero: input.hasIvaZero,
+        hasIeps: input.hasIeps,
+        concentration: input.concentration?.trim(),
         isActive: true,
         suppliers: [],
     });
+};
+
+type CreateProductInput = {
+    name: string;
+    sku: string;
+    barcode?: string;
+    activeIngredient?: string;
+    categoryId: string;
+    unit: string;
+    salePrice: number;
+    minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    concentration?: string;
+};
+
+export const bulkCreateProducts = async (
+    items: CreateProductInput[],
+): Promise<BulkCreateProductsResult> => {
+    const created: Product[] = [];
+    const errors: BulkCreateProductsResult['errors'] = [];
+
+    const seen: { name: Set<string>; sku: Set<string>; barcode: Set<string> } = {
+        name: new Set(),
+        sku: new Set(),
+        barcode: new Set(),
+    };
+
+    for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        const name = item.name.trim().toLowerCase();
+        const sku = item.sku.trim().toLowerCase();
+        const barcode = item.barcode?.trim().toLowerCase();
+
+        if (seen.name.has(name) || seen.sku.has(sku) || (barcode && seen.barcode.has(barcode))) {
+            errors.push({
+                index,
+                sku: item.sku,
+                message: 'Duplicado en el archivo (nombre, SKU o código de barras repetido)',
+            });
+            continue;
+        }
+
+        try {
+            const product = await createProduct(item);
+            seen.name.add(name);
+            seen.sku.add(sku);
+            if (barcode) {
+                seen.barcode.add(barcode);
+            }
+            created.push(product);
+        } catch (error) {
+            errors.push({
+                index,
+                sku: item.sku,
+                message: error instanceof Error ? error.message : 'No se pudo crear el producto',
+            });
+        }
+    }
+
+    return { created, errors };
 };
 
 export const updateProduct = async (
@@ -382,12 +489,22 @@ export const updateProduct = async (
         unit: string;
         salePrice: number;
         minStock: number;
+        hasIva: boolean;
+        hasIvaZero: boolean;
+        hasIeps: boolean;
+        concentration: string;
         isActive: boolean;
     }>,
 ): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
         throw notFound('Producto');
+    }
+
+    const hasIva = input.hasIva ?? existing.hasIva;
+    const hasIvaZero = input.hasIvaZero ?? existing.hasIvaZero;
+    if (hasIva && hasIvaZero) {
+        throw badRequest('Un producto no puede tener IVA e IVA cero al mismo tiempo');
     }
 
     if (input.categoryId) {
@@ -397,24 +514,59 @@ export const updateProduct = async (
         }
     }
 
-    if (input.sku && input.sku !== existing.sku) {
-        const duplicate = await productsRepo.getProductBySku(input.sku.trim());
-        if (duplicate && duplicate.id !== id) {
-            throw conflict('Ya existe un producto con ese SKU');
-        }
+    const name = input.name?.trim();
+    if (name && name !== existing.name) {
+        await assertUniqueProductValue('name', name, id);
+    }
+
+    const sku = input.sku?.trim();
+    if (sku && sku !== existing.sku) {
+        await assertUniqueProductValue('sku', sku, id);
+    }
+
+    const barcode = input.barcode?.trim();
+    if (barcode && barcode !== existing.barcode) {
+        await assertUniqueProductValue('barcode', barcode, id);
     }
 
     return productsRepo.updateProduct(id, {
-        name: input.name?.trim(),
-        sku: input.sku?.trim(),
-        barcode: input.barcode?.trim(),
+        name,
+        sku,
+        barcode,
         activeIngredient: input.activeIngredient?.trim(),
         categoryId: input.categoryId,
         unit: input.unit?.trim(),
         salePrice: input.salePrice,
         minStock: input.minStock,
+        hasIva: input.hasIva,
+        hasIvaZero: input.hasIvaZero,
+        hasIeps: input.hasIeps,
+        concentration: input.concentration?.trim(),
         isActive: input.isActive,
     });
+};
+
+export const updateProductPrices = async (
+    items: Array<{ productId: string; salePrice: number }>,
+): Promise<Product[]> => {
+    const uniqueIds = [...new Set(items.map((item) => item.productId))];
+    if (uniqueIds.length !== items.length) {
+        throw badRequest('No se permiten productos duplicados');
+    }
+
+    const products = await Promise.all(
+        uniqueIds.map((productId) => productsRepo.getProductById(productId)),
+    );
+
+    for (let index = 0; index < uniqueIds.length; index++) {
+        if (!products[index]) {
+            throw notFound(`Producto ${uniqueIds[index]}`);
+        }
+    }
+
+    return Promise.all(
+        items.map((item) => productsRepo.updateProduct(item.productId, { salePrice: item.salePrice })),
+    );
 };
 
 export const deleteProduct = async (id: string): Promise<Product> => {

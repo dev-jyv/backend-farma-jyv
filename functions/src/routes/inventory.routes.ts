@@ -2,8 +2,10 @@ import { Router } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
+    bulkCreateEntriesSchema,
     inventoryEntrySchema,
     inventoryExitSchema,
+    directInventoryEntrySchema,
     idParamSchema,
     listBatchesQuerySchema,
     listEntriesQuerySchema,
@@ -48,6 +50,42 @@ router.post(
                 userId: req.authUser!.uid,
             });
             res.status(201).json({ data: entry });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.post(
+    '/direct-entries',
+    requirePermission('inventory'),
+    validate({ body: directInventoryEntrySchema }),
+    async (req, res, next) => {
+        try {
+            const entry = await inventoryService.recordDirectEntry({
+                supplierId: req.body.supplierId,
+                notes: req.body.notes,
+                items: req.body.items,
+                userId: req.authUser!.uid,
+            });
+            res.status(201).json({ data: entry });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.post(
+    '/entries/bulk',
+    requirePermission('inventory'),
+    validate({ body: bulkCreateEntriesSchema }),
+    async (req, res, next) => {
+        try {
+            const result = await inventoryService.bulkCreateEntries(
+                req.body.entries,
+                req.authUser!.uid,
+            );
+            res.status(201).json({ data: result });
         } catch (error) {
             next(error);
         }

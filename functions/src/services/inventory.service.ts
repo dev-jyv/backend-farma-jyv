@@ -2,9 +2,11 @@ import { FieldValue } from 'firebase-admin/firestore';
 import {
     Batch,
     BatchWithDetails,
+    BulkCreateEntriesResult,
     ExitReason,
     InventoryEntry,
     InventoryEntryItem,
+    InventoryEntrySource,
     InventoryEntryWithDetails,
     InvoiceSummary,
     Product,
@@ -24,6 +26,7 @@ import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
+import * as productsService from './products.service';
 
 export const listBatches = async (
     productId: string,
@@ -217,32 +220,24 @@ export const getEntry = async (id: string): Promise<InventoryEntryWithDetails> =
     return enrichEntry(entry);
 };
 
-export const recordEntry = async (input: {
-    invoiceId: string;
-    items: EntryItemInput[];
-    userId: string;
-}): Promise<InventoryEntryWithDetails> => {
-    if (!input.items.length) {
+type NormalizedEntryItem = {
+    productId: string;
+    lotNumber: string;
+    expiryDate: string;
+    quantity: number;
+    costPrice?: number;
+};
+
+const normalizeAndValidateItems = async (
+    items: EntryItemInput[],
+): Promise<NormalizedEntryItem[]> => {
+    if (!items.length) {
         throw badRequest('Debe incluir al menos un producto');
-    }
-
-    const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
-    if (!invoice) {
-        throw notFound('Factura');
-    }
-
-    const supplierId = invoice.supplierId;
-    const supplier = await suppliersRepo.getSupplierById(supplierId);
-    if (!supplier) {
-        throw notFound('Proveedor');
-    }
-    if (!supplier.isActive) {
-        throw badRequest('El proveedor no está activo');
     }
 
     type CachedProduct = Awaited<ReturnType<typeof productsRepo.getProductById>>;
     const productCache = new Map<string, CachedProduct>();
-    const normalizedItems = input.items.map((item) => {
+    const normalizedItems = items.map((item) => {
         const expiry = new Date(item.expiryDate);
         if (Number.isNaN(expiry.getTime())) {
             throw badRequest('Fecha de caducidad inválida');
@@ -283,13 +278,24 @@ export const recordEntry = async (input: {
         }
     }
 
+    return normalizedItems;
+};
+
+const persistEntryItems = async (input: {
+    supplierId: string;
+    items: NormalizedEntryItem[];
+    userId: string;
+    source: InventoryEntrySource;
+    invoiceId?: string;
+    notes?: string;
+}): Promise<InventoryEntry> => {
     const firestore = db();
     const entryRef = firestore.collection('inventoryEntries').doc();
     const timestamp = now();
     type BatchLookup = { productId: string; lotNumber: string; expiryDate: string };
     const uniqueBatches = new Map<string, BatchLookup>();
 
-    for (const item of normalizedItems) {
+    for (const item of input.items) {
         const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
         uniqueBatches.set(key, {
             productId: item.productId,
@@ -306,7 +312,7 @@ export const recordEntry = async (input: {
         );
     }
 
-    const entry = await firestore.runTransaction(async (transaction) => {
+    return firestore.runTransaction(async (transaction) => {
         const batchState = new Map<string, Batch>();
         const entryItems: InventoryEntryItem[] = [];
 
@@ -326,7 +332,7 @@ export const recordEntry = async (input: {
             batchState.set(key, { id: batchDoc.id, ...batchDoc.data() } as Batch);
         }
 
-        for (const item of normalizedItems) {
+        for (const item of input.items) {
             const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
             const existingBatch = batchState.get(key);
             const movementRef = firestore.collection('stockMovements').doc();
@@ -384,40 +390,164 @@ export const recordEntry = async (input: {
             });
         }
 
-        const entryData = {
-            invoiceId: input.invoiceId,
-            supplierId,
+        const entryData: Omit<InventoryEntry, 'id'> = {
+            supplierId: input.supplierId,
+            source: input.source,
             items: entryItems,
             createdAt: timestamp,
             createdBy: input.userId,
             updatedAt: timestamp,
             updatedBy: input.userId,
+            ...(input.invoiceId ? { invoiceId: input.invoiceId } : {}),
+            ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
         };
         transaction.set(entryRef, entryData);
 
         const lastCostByProduct = new Map<string, number>();
-        for (const item of normalizedItems) {
+        for (const item of input.items) {
             if (item.costPrice !== undefined) {
                 lastCostByProduct.set(item.productId, item.costPrice);
             }
         }
 
-        const uniqueProductIds = [...new Set(normalizedItems.map((item) => item.productId))];
+        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
         for (const productId of uniqueProductIds) {
             const lastCostPrice = lastCostByProduct.get(productId);
             transaction.update(firestore.collection('products').doc(productId), {
-                suppliers: FieldValue.arrayUnion(supplierId),
+                suppliers: FieldValue.arrayUnion(input.supplierId),
                 updatedAt: timestamp,
                 ...(lastCostPrice !== undefined
-                    ? { [`lastCostPriceBySupplier.${supplierId}`]: lastCostPrice }
+                    ? { [`lastCostPriceBySupplier.${input.supplierId}`]: lastCostPrice }
                     : {}),
             });
         }
 
         return { id: entryRef.id, ...entryData };
     });
+};
+
+const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
+    const supplier = await suppliersRepo.getSupplierById(supplierId);
+    if (!supplier) {
+        throw notFound('Proveedor');
+    }
+    if (!supplier.isActive) {
+        throw badRequest('El proveedor no está activo');
+    }
+    return supplier;
+};
+
+export const recordEntry = async (input: {
+    invoiceId: string;
+    items: EntryItemInput[];
+    userId: string;
+}): Promise<InventoryEntryWithDetails> => {
+    const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
+    if (!invoice) {
+        throw notFound('Factura');
+    }
+
+    await assertActiveSupplier(invoice.supplierId);
+    const normalizedItems = await normalizeAndValidateItems(input.items);
+    const entry = await persistEntryItems({
+        supplierId: invoice.supplierId,
+        items: normalizedItems,
+        userId: input.userId,
+        source: 'invoice',
+        invoiceId: input.invoiceId,
+    });
 
     return enrichEntry(entry);
+};
+
+type DirectEntryItemInput = {
+    productId?: string;
+    product?: Parameters<typeof productsService.createProduct>[0];
+    lotNumber?: string;
+    expiryDate: string;
+    quantity: number;
+    costPrice?: number;
+};
+
+export const recordDirectEntry = async (input: {
+    supplierId: string;
+    notes?: string;
+    items: DirectEntryItemInput[];
+    userId: string;
+}): Promise<InventoryEntryWithDetails> => {
+    if (!input.items.length) {
+        throw badRequest('Debe incluir al menos un producto');
+    }
+
+    await assertActiveSupplier(input.supplierId);
+
+    const resolvedItems: EntryItemInput[] = [];
+    for (const item of input.items) {
+        let productId = item.productId;
+
+        if (item.product) {
+            const created = await productsService.createProduct(item.product);
+            productId = created.id;
+        }
+
+        if (!productId) {
+            throw badRequest('Cada ítem debe incluir productId o product');
+        }
+
+        resolvedItems.push({
+            productId,
+            expiryDate: item.expiryDate,
+            quantity: item.quantity,
+            ...(item.lotNumber !== undefined ? { lotNumber: item.lotNumber } : {}),
+            ...(item.costPrice !== undefined ? { costPrice: item.costPrice } : {}),
+        });
+    }
+
+    const normalizedItems = await normalizeAndValidateItems(resolvedItems);
+    const entry = await persistEntryItems({
+        supplierId: input.supplierId,
+        items: normalizedItems,
+        userId: input.userId,
+        source: 'direct',
+        notes: input.notes,
+    });
+
+    return enrichEntry(entry);
+};
+
+export const bulkCreateEntries = async (
+    entries: Array<{
+        invoiceId?: string;
+        supplierId?: string;
+        notes?: string;
+        items: EntryItemInput[];
+    }>,
+    userId: string,
+): Promise<BulkCreateEntriesResult> => {
+    const created: InventoryEntryWithDetails[] = [];
+    const errors: BulkCreateEntriesResult['errors'] = [];
+
+    for (let index = 0; index < entries.length; index++) {
+        const group = entries[index];
+        try {
+            const entry = group.invoiceId
+                ? await recordEntry({ invoiceId: group.invoiceId, items: group.items, userId })
+                : await recordDirectEntry({
+                    supplierId: group.supplierId!,
+                    notes: group.notes,
+                    items: group.items,
+                    userId,
+                });
+            created.push(entry);
+        } catch (error) {
+            errors.push({
+                index,
+                message: error instanceof Error ? error.message : 'No se pudo registrar la entrada',
+            });
+        }
+    }
+
+    return { created, errors };
 };
 
 export const recordExit = async (input: {

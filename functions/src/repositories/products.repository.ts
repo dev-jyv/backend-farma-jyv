@@ -1,17 +1,12 @@
 import { Product } from '../types';
-import { matchesProductSearch } from '../utils/product-search';
-import { paginate } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
 
 const collection = () => db().collection('products');
 
 export const listProducts = async (filters: {
     categoryId?: string;
-    search?: string;
     activeOnly?: boolean;
-    page?: number;
-    limit?: number;
-}): Promise<{ items: Product[]; total: number }> => {
+}): Promise<Product[]> => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.categoryId) {
@@ -27,14 +22,9 @@ export const listProducts = async (filters: {
         products = products.filter((product) => product.isActive);
     }
 
-    if (filters.search) {
-        const search = filters.search;
-        products = products.filter((product) => matchesProductSearch(product, search));
-    }
-
     products.sort((a, b) => a.name.localeCompare(b.name));
 
-    return paginate(products, filters.page ?? 1, filters.limit ?? 100);
+    return products;
 };
 
 export const getProductById = async (id: string): Promise<Product | null> => {
@@ -47,6 +37,24 @@ export const getProductById = async (id: string): Promise<Product | null> => {
 
 export const getProductBySku = async (sku: string): Promise<Product | null> => {
     const snapshot = await collection().where('sku', '==', sku).limit(1).get();
+    if (snapshot.empty) {
+        return null;
+    }
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as Product;
+};
+
+export const getProductByName = async (name: string): Promise<Product | null> => {
+    const snapshot = await collection().where('name', '==', name).limit(1).get();
+    if (snapshot.empty) {
+        return null;
+    }
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() } as Product;
+};
+
+export const getProductByBarcode = async (barcode: string): Promise<Product | null> => {
+    const snapshot = await collection().where('barcode', '==', barcode).limit(1).get();
     if (snapshot.empty) {
         return null;
     }

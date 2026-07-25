@@ -79,16 +79,25 @@ export const updateCategorySchema = z.object({
     isActive: z.boolean().optional(),
 });
 
-export const createProductSchema = z.object({
-    name: z.string().min(1),
-    sku: z.string().min(1),
-    barcode: z.string().optional(),
-    activeIngredient: z.string().optional(),
-    categoryId: z.string().min(1),
-    unit: z.string().min(1),
-    salePrice: z.number().nonnegative(),
-    minStock: z.number().int().nonnegative(),
-});
+export const createProductSchema = z
+    .object({
+        name: z.string().min(1),
+        sku: z.string().min(1),
+        barcode: z.string().optional(),
+        activeIngredient: z.string().optional(),
+        categoryId: z.string().min(1),
+        unit: z.string().min(1),
+        salePrice: z.number().nonnegative(),
+        minStock: z.number().int().nonnegative(),
+        hasIva: z.boolean(),
+        hasIvaZero: z.boolean(),
+        hasIeps: z.boolean(),
+        concentration: z.string().optional(),
+    })
+    .refine((data) => !(data.hasIva && data.hasIvaZero), {
+        message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',
+        path: ['hasIvaZero'],
+    });
 
 export const updateProductSchema = z.object({
     name: z.string().min(1).optional(),
@@ -99,7 +108,24 @@ export const updateProductSchema = z.object({
     unit: z.string().min(1).optional(),
     salePrice: z.number().nonnegative().optional(),
     minStock: z.number().int().nonnegative().optional(),
+    hasIva: z.boolean().optional(),
+    hasIvaZero: z.boolean().optional(),
+    hasIeps: z.boolean().optional(),
+    concentration: z.string().optional(),
     isActive: z.boolean().optional(),
+});
+
+export const bulkCreateProductsSchema = z.object({
+    items: z.array(createProductSchema).min(1).max(500),
+});
+
+export const updateProductPriceItemSchema = z.object({
+    productId: z.string().min(1),
+    salePrice: z.number().nonnegative(),
+});
+
+export const updateProductPricesSchema = z.object({
+    items: z.array(updateProductPriceItemSchema).min(1),
 });
 
 export const inventoryEntryProductSchema = z.object({
@@ -108,6 +134,20 @@ export const inventoryEntryProductSchema = z.object({
     quantity: z.number().positive(),
     lotNumber: z.string().min(1).optional(),
     costPrice: z.number().nonnegative().optional(),
+});
+
+export const bulkEntryGroupSchema = z.object({
+    invoiceId: z.string().min(1).optional(),
+    supplierId: z.string().min(1).optional(),
+    notes: z.string().optional(),
+    items: z.array(inventoryEntryProductSchema).min(1),
+}).refine(
+    (data) => Boolean(data.invoiceId) !== Boolean(data.supplierId),
+    { message: 'Cada entrada debe incluir invoiceId o supplierId, no ambos' },
+);
+
+export const bulkCreateEntriesSchema = z.object({
+    entries: z.array(bulkEntryGroupSchema).min(1).max(100),
 });
 
 export const inventoryEntrySchema = z.object({
@@ -121,6 +161,46 @@ export const inventoryEntrySchema = z.object({
     invoiceId: data.invoiceId,
     products: data.products ?? data.items ?? [],
 }));
+
+const createProductFieldsSchema = z
+    .object({
+        name: z.string().min(1),
+        sku: z.string().min(1),
+        barcode: z.string().optional(),
+        activeIngredient: z.string().optional(),
+        categoryId: z.string().min(1),
+        unit: z.string().min(1),
+        salePrice: z.number().nonnegative(),
+        minStock: z.number().int().nonnegative(),
+        hasIva: z.boolean(),
+        hasIvaZero: z.boolean(),
+        hasIeps: z.boolean(),
+        concentration: z.string().optional(),
+    })
+    .refine((data) => !(data.hasIva && data.hasIvaZero), {
+        message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',
+        path: ['hasIvaZero'],
+    });
+
+export const directInventoryEntryItemSchema = z
+    .object({
+        productId: z.string().min(1).optional(),
+        product: createProductFieldsSchema.optional(),
+        expiryDate: z.string().min(1),
+        quantity: z.number().positive(),
+        lotNumber: z.string().min(1).optional(),
+        costPrice: z.number().nonnegative().optional(),
+    })
+    .refine(
+        (data) => Boolean(data.productId) !== Boolean(data.product),
+        { message: 'Cada ítem debe incluir productId o product, no ambos' },
+    );
+
+export const directInventoryEntrySchema = z.object({
+    supplierId: z.string().min(1),
+    notes: z.string().optional(),
+    items: z.array(directInventoryEntryItemSchema).min(1),
+});
 
 export const createSupplierSchema = z.object({
     name: z.string().min(1),

@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth';
 import { validate } from '../middleware/validate';
 import {
+    bulkCreateProductsSchema,
     createProductSchema,
     idParamSchema,
     listProductHistoryQuerySchema,
     listProductsQuerySchema,
+    updateProductPricesSchema,
     updateProductSchema,
 } from '../schemas';
 import * as productsService from '../services/products.service';
@@ -119,6 +121,34 @@ router.post(
         try {
             const product = await productsService.createProduct(req.body);
             res.status(201).json({ data: product });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.post(
+    '/bulk',
+    requirePermission('products'),
+    validate({ body: bulkCreateProductsSchema }),
+    async (req, res, next) => {
+        try {
+            const result = await productsService.bulkCreateProducts(req.body.items);
+            res.status(201).json({ data: result });
+        } catch (error) {
+            next(error);
+        }
+    },
+);
+
+router.patch(
+    '/prices',
+    requirePermission('products'),
+    validate({ body: updateProductPricesSchema }),
+    async (req, res, next) => {
+        try {
+            const products = await productsService.updateProductPrices(req.body.items);
+            res.json({ data: products });
         } catch (error) {
             next(error);
         }
