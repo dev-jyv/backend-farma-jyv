@@ -1,21 +1,34 @@
+import 'reflect-metadata';
 import express from 'express';
+import { NestFactory } from '@nestjs/core';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import { AppModule } from './app.module';
 import { corsMiddleware } from './middleware/cors';
-import { errorHandler } from './middleware/error-handler';
-import routes from './routes';
 
-export const createApp = (): express.Application => {
-    const app = express();
+let cachedApp: express.Application | undefined;
 
-    app.use(corsMiddleware);
-    app.use((req, res, next) => {
+export const createApp = async (): Promise<express.Application> => {
+    if (cachedApp) {
+        return cachedApp;
+    }
+
+    const expressApp = express();
+
+    expressApp.use(corsMiddleware);
+    expressApp.use((req, res, next) => {
         if (req.is('multipart/form-data')) {
             next();
             return;
         }
         express.json()(req, res, next);
     });
-    app.use('/v1', routes);
-    app.use(errorHandler);
 
-    return app;
+    const nestApp = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
+        bodyParser: false,
+    });
+    nestApp.setGlobalPrefix('v1');
+    await nestApp.init();
+
+    cachedApp = expressApp;
+    return cachedApp;
 };

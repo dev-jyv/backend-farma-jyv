@@ -10,7 +10,7 @@ import {
     Supplier,
     SupplierSummary,
 } from '../types';
-import { badRequest, conflict, notFound } from '../utils/errors';
+import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, buildListResult, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
 import { getFileUrl } from '../utils/storage';
@@ -340,27 +340,6 @@ export const getProductInvoiceHistory = async (
     return buildListResult(history, page, limit);
 };
 
-const assertUniqueProductValue = async (
-    field: 'name' | 'sku' | 'barcode',
-    value: string,
-    excludeId?: string,
-): Promise<void> => {
-    const duplicate = field === 'name'
-        ? await productsRepo.getProductByName(value)
-        : field === 'sku'
-            ? await productsRepo.getProductBySku(value)
-            : await productsRepo.getProductByBarcode(value);
-
-    if (duplicate && duplicate.id !== excludeId) {
-        const labels = {
-            name: 'nombre',
-            sku: 'SKU',
-            barcode: 'código de barras',
-        };
-        throw conflict(`Ya existe un producto con ese ${labels[field]}`);
-    }
-};
-
 export const createProduct = async (input: {
     name: string;
     sku: string;
@@ -390,12 +369,6 @@ export const createProduct = async (input: {
     const category = await categoriesRepo.getCategoryById(input.categoryId);
     if (!category || !category.isActive) {
         throw notFound('Categoría');
-    }
-
-    await assertUniqueProductValue('name', name);
-    await assertUniqueProductValue('sku', sku);
-    if (barcode) {
-        await assertUniqueProductValue('barcode', barcode);
     }
 
     return productsRepo.createProduct({
@@ -515,19 +488,8 @@ export const updateProduct = async (
     }
 
     const name = input.name?.trim();
-    if (name && name !== existing.name) {
-        await assertUniqueProductValue('name', name, id);
-    }
-
     const sku = input.sku?.trim();
-    if (sku && sku !== existing.sku) {
-        await assertUniqueProductValue('sku', sku, id);
-    }
-
     const barcode = input.barcode?.trim();
-    if (barcode && barcode !== existing.barcode) {
-        await assertUniqueProductValue('barcode', barcode, id);
-    }
 
     return productsRepo.updateProduct(id, {
         name,

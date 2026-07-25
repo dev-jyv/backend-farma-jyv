@@ -75,38 +75,53 @@ export const createSale = async (input: {
         });
     }
 
+    // Firestore exige que todas las lecturas de una transacción ocurran antes
+    // que cualquier escritura: cuando una venta reparte stock entre 2+ lotes
+    // (lo normal en FEFO) hay que leer todos los lotes primero y recién luego
+    // escribir todos los updates/movimientos.
+    const allocationRefs = saleItems.flatMap((item) =>
+        item.batchAllocations.map((allocation) => ({
+            item,
+            allocation,
+            batchRef: firestore.collection('batches').doc(allocation.batchId),
+        })),
+    );
+
     const sale = await firestore.runTransaction(async (transaction) => {
-        for (const item of saleItems) {
-            for (const allocation of item.batchAllocations) {
-                const batchRef = firestore.collection('batches').doc(allocation.batchId);
-                const batchDoc = await transaction.get(batchRef);
+        const batchDocs = await Promise.all(
+            allocationRefs.map(({ batchRef }) => transaction.get(batchRef)),
+        );
 
-                if (!batchDoc.exists) {
-                    throw notFound('Lote');
-                }
-
-                const currentQty = batchDoc.data()?.quantity as number;
-                if (currentQty < allocation.quantity) {
-                    throw badRequest(`Stock insuficiente en lote ${allocation.batchId}`);
-                }
-
-                transaction.update(batchRef, {
-                    quantity: currentQty - allocation.quantity,
-                    updatedAt: timestamp,
-                });
-
-                const movementRef = firestore.collection('stockMovements').doc();
-                transaction.set(movementRef, {
-                    type: 'sale_adjustment',
-                    productId: item.productId,
-                    batchId: allocation.batchId,
-                    quantity: allocation.quantity,
-                    referenceId: saleRef.id,
-                    userId: input.cashierId,
-                    createdAt: timestamp,
-                });
+        const currentQuantities = allocationRefs.map(({ allocation }, index) => {
+            const batchDoc = batchDocs[index];
+            if (!batchDoc.exists) {
+                throw notFound('Lote');
             }
-        }
+
+            const currentQty = batchDoc.data()?.quantity as number;
+            if (currentQty < allocation.quantity) {
+                throw badRequest(`Stock insuficiente en lote ${allocation.batchId}`);
+            }
+            return currentQty;
+        });
+
+        allocationRefs.forEach(({ item, allocation, batchRef }, index) => {
+            transaction.update(batchRef, {
+                quantity: currentQuantities[index] - allocation.quantity,
+                updatedAt: timestamp,
+            });
+
+            const movementRef = firestore.collection('stockMovements').doc();
+            transaction.set(movementRef, {
+                type: 'sale_adjustment',
+                productId: item.productId,
+                batchId: allocation.batchId,
+                quantity: allocation.quantity,
+                referenceId: saleRef.id,
+                userId: input.cashierId,
+                createdAt: timestamp,
+            });
+        });
 
         const saleData = {
             items: saleItems,

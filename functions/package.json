@@ -8,24 +8,31 @@
     "serve": "npm run build && firebase emulators:start",
     "deploy": "npm run build && firebase deploy --only functions,firestore:rules,firestore:indexes,storage",
     "migrate:roles": "npm run build && node lib/scripts/migrate-roles.js",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "firebase emulators:exec --only firestore \"jest\""
   },
   "engines": {
     "node": "22"
   },
   "main": "lib/index.js",
   "dependencies": {
+    "@nestjs/common": "^11.1.28",
+    "@nestjs/core": "^11.1.28",
+    "@nestjs/platform-express": "^11.1.28",
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "firebase-admin": "^13.6.0",
     "firebase-functions": "^7.2.5",
     "multer": "^2.1.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/busboy": "^1.5.4",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/jest": "^30.0.0",
     "@types/multer": "^2.1.0",
     "@typescript-eslint/eslint-plugin": "^8.23.0",
     "@typescript-eslint/parser": "^8.23.0",
@@ -33,6 +40,8 @@
     "eslint-config-google": "^0.14.0",
     "eslint-plugin-import": "^2.31.0",
     "firebase-functions-test": "^3.4.0",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
     "typescript": "^5.7.3"
   },
   "private": true

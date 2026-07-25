@@ -281,6 +281,22 @@ const normalizeAndValidateItems = async (
     return normalizedItems;
 };
 
+// Corre antes de crear cualquier producto inline en recordDirectEntry: si un
+// ítem posterior tiene datos inválidos, falla aquí y no deja productos huérfanos
+// sin lote/entrada asociada (ver normalizeAndValidateItems para el resto).
+const assertValidExpiryAndQuantity = (
+    items: Array<{ expiryDate: string; quantity: number }>,
+): void => {
+    for (const item of items) {
+        if (Number.isNaN(new Date(item.expiryDate).getTime())) {
+            throw badRequest('Fecha de caducidad inválida');
+        }
+        if (item.quantity <= 0) {
+            throw badRequest('La cantidad debe ser mayor a cero');
+        }
+    }
+};
+
 const persistEntryItems = async (input: {
     supplierId: string;
     items: NormalizedEntryItem[];
@@ -479,6 +495,7 @@ export const recordDirectEntry = async (input: {
         throw badRequest('Debe incluir al menos un producto');
     }
 
+    assertValidExpiryAndQuantity(input.items);
     await assertActiveSupplier(input.supplierId);
 
     const resolvedItems: EntryItemInput[] = [];

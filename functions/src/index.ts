@@ -6,7 +6,7 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
-const app = createApp();
+let appPromise: ReturnType<typeof createApp> | undefined;
 
 export const api = onRequest(
     {
@@ -14,5 +14,11 @@ export const api = onRequest(
         memory: '256MiB',
         timeoutSeconds: 60,
     },
-    app,
+    async (req, res) => {
+        if (!appPromise) {
+            appPromise = createApp();
+        }
+        const app = await appPromise;
+        app(req, res);
+    },
 );
