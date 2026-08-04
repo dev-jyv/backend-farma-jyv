@@ -22,6 +22,7 @@ const createFixtures = async () => {
         unit: 'unidad',
         salePrice: 10,
         minStock: 1,
+        totalStock: 0,
         hasIva: true,
         hasIvaZero: false,
         hasIeps: false,
@@ -140,6 +141,47 @@ describe('inventory.service - recordExit', () => {
 
         const movements = await movementsRepo.listStockMovements({ productId: product.id });
         expect(movements.some((m) => m.id === movement.id && m.type === 'exit_waste')).toBe(true);
+    });
+
+    it('no permite oversell con salidas concurrentes', async () => {
+        const { product, invoice } = await createFixtures();
+
+        const entry = await inventoryService.recordEntry({
+            invoiceId: invoice.id,
+            items: [{
+                productId: product.id,
+                lotNumber: 'LOTE-RACE',
+                expiryDate: '2027-03-01',
+                quantity: 10,
+            }],
+            userId: 'test-user',
+        });
+        const batchId = entry.items[0].batchId;
+
+        const results = await Promise.allSettled([
+            inventoryService.recordExit({
+                productId: product.id,
+                batchId,
+                quantity: 7,
+                reason: 'waste',
+                userId: 'test-user-a',
+            }),
+            inventoryService.recordExit({
+                productId: product.id,
+                batchId,
+                quantity: 7,
+                reason: 'expiry',
+                userId: 'test-user-b',
+            }),
+        ]);
+
+        const fulfilled = results.filter((r) => r.status === 'fulfilled');
+        const rejected = results.filter((r) => r.status === 'rejected');
+        expect(fulfilled).toHaveLength(1);
+        expect(rejected).toHaveLength(1);
+
+        const persisted = await batchesRepo.getBatchById(batchId);
+        expect(persisted!.quantity).toBe(3);
     });
 });
 

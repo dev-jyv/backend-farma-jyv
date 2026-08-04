@@ -91,7 +91,9 @@ const initLocalAdmin = (): void => {
         throw new Error('NO_LOCAL_CREDENTIALS');
     }
 
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf8')) as admin.ServiceAccount;
+    const serviceAccount = JSON.parse(
+        fs.readFileSync(serviceAccountPath, 'utf8'),
+    ) as admin.ServiceAccount;
 
     if (!admin.apps.length) {
         admin.initializeApp({
@@ -153,7 +155,10 @@ const printSetupHelp = (reason: string): void => {
     if (reason === 'NO_LOCAL_CREDENTIALS') {
         console.error('Opción A - Service account local:');
         console.error('1. Firebase Console > Configuración del proyecto > Cuentas de servicio');
-        console.error('2. Generar nueva clave privada y guardarla como service-account.json en la raíz del repo');
+        console.error(
+            '2. Generar nueva clave privada y guardarla como service-account.json ' +
+            'en la raíz del repo',
+        );
         console.error('3. Ejecutar de nuevo: npm run migrate:roles\n');
     }
 
@@ -165,7 +170,9 @@ const printSetupHelp = (reason: string): void => {
     }
 
     if (reason === 'NO_API_URL') {
-        console.error('Agrega API_URL en functions/.env o verifica que firebase CLI esté autenticado.');
+        console.error(
+            'Agrega API_URL en functions/.env o verifica que firebase CLI esté autenticado.',
+        );
     }
 };
 

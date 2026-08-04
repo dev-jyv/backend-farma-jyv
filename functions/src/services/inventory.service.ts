@@ -40,31 +40,44 @@ export const listBatches = async (
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const productWithCategory = await loadProductWithCategory(product);
     const batches = await batchesRepo.listBatchesByProduct(productId);
-    const entrySupplierCache = new Map<string, Supplier | null>();
 
-    let items = await Promise.all(
-        batches.map(async (batch) => {
+    const supplierIds = [
+        ...new Set(
+            batches
+                .map((batch) => batch.supplierId)
+                .filter((id): id is string => Boolean(id)),
+        ),
+    ];
+    const suppliers = await suppliersRepo.getSuppliersByIds(supplierIds);
+
+    const legacyBatches = batches.filter((batch) => !batch.supplierId);
+    const legacySupplierByBatch = new Map<string, Supplier | null>();
+    await Promise.all(
+        legacyBatches.map(async (batch) => {
             const referenceId = await movementsRepo.findEntryReferenceByBatchId(batch.id);
-            let supplier: Supplier | null = null;
-
-            if (referenceId) {
-                if (!entrySupplierCache.has(referenceId)) {
-                    const entry = await entriesRepo.getInventoryEntryById(referenceId);
-                    if (entry?.supplierId) {
-                        entrySupplierCache.set(
-                            referenceId,
-                            await suppliersRepo.getSupplierById(entry.supplierId),
-                        );
-                    } else {
-                        entrySupplierCache.set(referenceId, null);
-                    }
-                }
-                supplier = entrySupplierCache.get(referenceId) ?? null;
+            if (!referenceId) {
+                legacySupplierByBatch.set(batch.id, null);
+                return;
             }
-
-            return { ...batch, product: productWithCategory, supplier };
+            const entry = await entriesRepo.getInventoryEntryById(referenceId);
+            if (!entry?.supplierId) {
+                legacySupplierByBatch.set(batch.id, null);
+                return;
+            }
+            legacySupplierByBatch.set(
+                batch.id,
+                await suppliersRepo.getSupplierById(entry.supplierId),
+            );
         }),
     );
+
+    let items: BatchWithDetails[] = batches.map((batch) => ({
+        ...batch,
+        product: productWithCategory,
+        supplier: batch.supplierId
+            ? suppliers.get(batch.supplierId) ?? null
+            : legacySupplierByBatch.get(batch.id) ?? null,
+    }));
 
     if (filters.search) {
         const term = filters.search.toLowerCase();
@@ -189,6 +202,16 @@ export const listEntries = async (filters: {
 }): Promise<{ items: InventoryEntryWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const entries = await entriesRepo.listInventoryEntries(filters);
+
+    if (!filters.search) {
+        const paginated = paginate(entries, page, limit);
+        const items = await Promise.all(paginated.items.map((entry) => enrichEntry(entry)));
+        return {
+            items,
+            meta: buildListMeta(page, limit, paginated.total),
+        };
+    }
+
     const supplierCache = new Map<string, Supplier | null>();
     const productCache = new Map<string, ProductWithCategory | null>();
     const invoiceCache = new Map<string, InvoiceSummary | null>();
@@ -196,14 +219,12 @@ export const listEntries = async (filters: {
         entries.map((entry) => enrichEntry(entry, supplierCache, productCache, invoiceCache)),
     );
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        items = items.filter(
-            (entry) =>
-                entry.supplier.name.toLowerCase().includes(term) ||
-                entry.items.some((item) => matchesProductSearch(item.product, term)),
-        );
-    }
+    const term = filters.search.toLowerCase();
+    items = items.filter(
+        (entry) =>
+            entry.supplier.name.toLowerCase().includes(term) ||
+            entry.items.some((item) => matchesProductSearch(item.product, term)),
+    );
 
     const paginated = paginate(items, page, limit);
     return {
@@ -321,10 +342,20 @@ const persistEntryItems = async (input: {
     }
 
     const existingBatches = new Map<string, Batch | null>();
-    for (const [key, { productId, lotNumber, expiryDate }] of uniqueBatches) {
-        existingBatches.set(
-            key,
-            await batchesRepo.findBatchByProductLotAndExpiry(productId, lotNumber, expiryDate),
+    await Promise.all(
+        [...uniqueBatches.entries()].map(async ([key, { productId, lotNumber, expiryDate }]) => {
+            existingBatches.set(
+                key,
+                await batchesRepo.findBatchByProductLotAndExpiry(productId, lotNumber, expiryDate),
+            );
+        }),
+    );
+
+    const stockDeltaByProduct = new Map<string, number>();
+    for (const item of input.items) {
+        stockDeltaByProduct.set(
+            item.productId,
+            (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
         );
     }
 
@@ -361,11 +392,13 @@ const persistEntryItems = async (input: {
                     ...existingBatch,
                     quantity: newQuantity,
                     costPrice: item.costPrice ?? existingBatch.costPrice,
+                    supplierId: existingBatch.supplierId ?? input.supplierId,
                     updatedAt: timestamp,
                 };
                 transaction.update(batchRef, {
                     quantity: newQuantity,
                     costPrice: batch.costPrice,
+                    supplierId: batch.supplierId,
                     updatedAt: timestamp,
                 });
             } else {
@@ -376,6 +409,7 @@ const persistEntryItems = async (input: {
                     expiryDate: toTimestamp(item.expiryDate),
                     quantity: item.quantity,
                     costPrice: item.costPrice,
+                    supplierId: input.supplierId,
                     createdAt: timestamp,
                     updatedAt: timestamp,
                 };
@@ -406,9 +440,11 @@ const persistEntryItems = async (input: {
             });
         }
 
+        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
         const entryData: Omit<InventoryEntry, 'id'> = {
             supplierId: input.supplierId,
             source: input.source,
+            productIds: uniqueProductIds,
             items: entryItems,
             createdAt: timestamp,
             createdBy: input.userId,
@@ -426,11 +462,11 @@ const persistEntryItems = async (input: {
             }
         }
 
-        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
         for (const productId of uniqueProductIds) {
             const lastCostPrice = lastCostByProduct.get(productId);
             transaction.update(firestore.collection('products').doc(productId), {
                 suppliers: FieldValue.arrayUnion(input.supplierId),
+                totalStock: FieldValue.increment(stockDeltaByProduct.get(productId) ?? 0),
                 updatedAt: timestamp,
                 ...(lastCostPrice !== undefined
                     ? { [`lastCostPriceBySupplier.${input.supplierId}`]: lastCostPrice }
@@ -589,20 +625,34 @@ export const recordExit = async (input: {
         throw notFound('Lote');
     }
 
-    if (batch.quantity < input.quantity) {
-        throw badRequest('Cantidad superior al stock del lote');
-    }
-
     const movementType = input.reason === 'waste' ? 'exit_waste' : 'exit_expiry';
     const firestore = db();
     const batchRef = firestore.collection('batches').doc(batch.id);
     const movementRef = firestore.collection('stockMovements').doc();
     const timestamp = now();
-    const newQuantity = batch.quantity - input.quantity;
 
     const result = await firestore.runTransaction(async (transaction) => {
+        const batchDoc = await transaction.get(batchRef);
+        if (!batchDoc.exists) {
+            throw notFound('Lote');
+        }
+
+        const current = batchDoc.data() as Omit<Batch, 'id'>;
+        if (current.productId !== input.productId) {
+            throw notFound('Lote');
+        }
+        if (current.quantity < input.quantity) {
+            throw badRequest('Cantidad superior al stock del lote');
+        }
+
+        const newQuantity = current.quantity - input.quantity;
         transaction.update(batchRef, {
             quantity: newQuantity,
+            updatedAt: timestamp,
+        });
+
+        transaction.update(firestore.collection('products').doc(input.productId), {
+            totalStock: FieldValue.increment(-input.quantity),
             updatedAt: timestamp,
         });
 
@@ -618,7 +668,12 @@ export const recordExit = async (input: {
         transaction.set(movementRef, movementData);
 
         return {
-            batch: { ...batch, quantity: newQuantity, updatedAt: timestamp },
+            batch: {
+                id: batch.id,
+                ...current,
+                quantity: newQuantity,
+                updatedAt: timestamp,
+            },
             movement: { id: movementRef.id, ...movementData },
         };
     });
@@ -642,20 +697,30 @@ export const listMovements = async (filters: {
         from: filters.from,
         to: filters.to,
     });
+
+    if (!filters.search) {
+        const paginated = paginate(movements, page, limit);
+        const items = await Promise.all(
+            paginated.items.map((movement) => enrichMovement(movement)),
+        );
+        return {
+            items,
+            meta: buildListMeta(page, limit, paginated.total),
+        };
+    }
+
     const productCache = new Map<string, ProductWithCategory | null>();
     let items = await Promise.all(
         movements.map((movement) => enrichMovement(movement, productCache)),
     );
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        items = items.filter(
-            (movement) =>
-                matchesProductSearch(movement.product, term) ||
-                movement.type.toLowerCase().includes(term) ||
-                (movement.reason?.toLowerCase().includes(term) ?? false),
-        );
-    }
+    const term = filters.search.toLowerCase();
+    items = items.filter(
+        (movement) =>
+            matchesProductSearch(movement.product, term) ||
+            movement.type.toLowerCase().includes(term) ||
+            (movement.reason?.toLowerCase().includes(term) ?? false),
+    );
 
     const paginated = paginate(items, page, limit);
     return {

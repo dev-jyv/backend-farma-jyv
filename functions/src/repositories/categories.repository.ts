@@ -1,4 +1,5 @@
 import { Category } from '../types';
+import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
 
@@ -10,6 +11,22 @@ export const listCategories = async (filters: {
     page?: number;
     limit?: number;
 }): Promise<{ items: Category[]; total: number }> => {
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+
+    if (!filters.search) {
+        let query: FirebaseFirestore.Query = collection();
+        if (filters.activeOnly !== false) {
+            query = query.where('isActive', '==', true);
+        }
+        query = query.orderBy('name', 'asc');
+        const snapshot = await query.get();
+        const categories = snapshot.docs.map(
+            (doc) => ({ id: doc.id, ...doc.data() } as Category),
+        );
+        return paginate(categories, page, limit);
+    }
+
     const query = filters.activeOnly !== false
         ? collection().where('isActive', '==', true)
         : collection();
@@ -18,19 +35,14 @@ export const listCategories = async (filters: {
         (doc) => ({ id: doc.id, ...doc.data() } as Category),
     );
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        categories = categories.filter(
-            (category) =>
-                category.name.toLowerCase().includes(term) ||
-                (category.description?.toLowerCase().includes(term) ?? false),
-        );
-    }
-
+    const term = filters.search.toLowerCase();
+    categories = categories.filter(
+        (category) =>
+            category.name.toLowerCase().includes(term) ||
+            (category.description?.toLowerCase().includes(term) ?? false),
+    );
     categories.sort((a, b) => a.name.localeCompare(b.name));
 
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 100;
     return paginate(categories, page, limit);
 };
 
@@ -82,7 +94,17 @@ export const updateCategory = async (
     await collection().doc(id).update({ ...data, updatedAt: timestamp });
     const updated = await getCategoryById(id);
     if (!updated) {
-        throw new Error('Categoría no encontrada tras actualizar');
+        throw notFound('Categoría');
     }
     return updated;
+};
+
+export const countActiveProductsByCategory = async (categoryId: string): Promise<number> => {
+    const snapshot = await db()
+        .collection('products')
+        .where('categoryId', '==', categoryId)
+        .where('isActive', '==', true)
+        .limit(1)
+        .get();
+    return snapshot.size;
 };

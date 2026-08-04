@@ -79,5 +79,15 @@ export const deleteSupplier = async (id: string): Promise<Supplier> => {
         throw notFound('Proveedor');
     }
 
+    const [invoices, products] = await Promise.all([
+        suppliersRepo.countInvoicesBySupplier(id),
+        suppliersRepo.countActiveProductsBySupplier(id),
+    ]);
+    if (invoices > 0 || products > 0) {
+        throw badRequest(
+            'No se puede desactivar un proveedor con facturas o productos vinculados',
+        );
+    }
+
     return suppliersRepo.updateSupplier(id, { isActive: false });
 };

@@ -50,6 +50,7 @@ const assertNoDuplicate = async (
 export const listProducts = async (filters: {
     categoryId?: string;
     activeOnly?: boolean;
+    limit?: number;
 }): Promise<Product[]> => {
     let query: FirebaseFirestore.Query = collection();
 
@@ -57,6 +58,10 @@ export const listProducts = async (filters: {
         query = query.where('categoryId', '==', filters.categoryId);
     } else if (filters.activeOnly !== false) {
         query = query.where('isActive', '==', true);
+    }
+
+    if (filters.limit) {
+        query = query.limit(filters.limit);
     }
 
     const snapshot = await query.get();
@@ -69,6 +74,27 @@ export const listProducts = async (filters: {
     products.sort((a, b) => a.name.localeCompare(b.name));
 
     return products;
+};
+
+export const findProductBySkuOrBarcode = async (term: string): Promise<Product | null> => {
+    const normalized = term.trim();
+    if (!normalized) {
+        return null;
+    }
+
+    const skuSnap = await collection().where('sku', '==', normalized).limit(1).get();
+    if (!skuSnap.empty) {
+        const doc = skuSnap.docs[0];
+        return { id: doc.id, ...doc.data() } as Product;
+    }
+
+    const barcodeSnap = await collection().where('barcode', '==', normalized).limit(1).get();
+    if (!barcodeSnap.empty) {
+        const doc = barcodeSnap.docs[0];
+        return { id: doc.id, ...doc.data() } as Product;
+    }
+
+    return null;
 };
 
 export const getProductById = async (id: string): Promise<Product | null> => {

@@ -10,9 +10,12 @@ const buildDownloadUrl = (
     storagePath: string,
     token: string,
 ): string =>
-    `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
+    `https://firebasestorage.googleapis.com/v0/b/${bucketName}` +
+    `/o/${encodeURIComponent(storagePath)}?alt=media&token=${token}`;
 
-const getDownloadToken = (customMetadata: Record<string, unknown> | undefined): string | undefined => {
+const getDownloadToken = (
+    customMetadata: Record<string, unknown> | undefined,
+): string | undefined => {
     const tokens = customMetadata?.firebaseStorageDownloadTokens;
     return typeof tokens === 'string' ? tokens.split(',')[0] : undefined;
 };

@@ -25,6 +25,7 @@ export const createApp = async (): Promise<express.Application> => {
 
     const nestApp = await NestFactory.create(AppModule, new ExpressAdapter(expressApp), {
         bodyParser: false,
+        logger: false,
     });
     nestApp.setGlobalPrefix('v1');
     await nestApp.init();

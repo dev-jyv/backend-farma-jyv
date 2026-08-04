@@ -1,5 +1,5 @@
 import { StockMovement, StockMovementType } from '../types';
-import { db, now } from '../utils/firestore';
+import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('stockMovements');
 
@@ -31,24 +31,20 @@ export const listStockMovements = async (filters: {
         query = query.where('type', '==', filters.type);
     }
 
-    query = query.orderBy('createdAt', 'desc');
-
-    const snapshot = await query.get();
-    let movements = snapshot.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() } as StockMovement),
-    );
-
     if (filters.from) {
-        const fromMs = new Date(filters.from).getTime();
-        movements = movements.filter((m) => m.createdAt.toMillis() >= fromMs);
+        query = query.where('createdAt', '>=', toTimestamp(filters.from));
     }
 
     if (filters.to) {
-        const toMs = new Date(filters.to).getTime();
-        movements = movements.filter((m) => m.createdAt.toMillis() <= toMs);
+        query = query.where('createdAt', '<=', toTimestamp(filters.to));
     }
 
-    return movements;
+    query = query.orderBy('createdAt', 'desc');
+
+    const snapshot = await query.get();
+    return snapshot.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() } as StockMovement),
+    );
 };
 
 export const findEntryReferenceByBatchId = async (

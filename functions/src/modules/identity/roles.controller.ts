@@ -9,6 +9,8 @@ import {
     updateRoleSchema,
 } from '../../schemas';
 import * as rolesService from '../../services/roles.service';
+import { AuthUser } from '../../types';
+import { CurrentUser } from './decorators/current-user.decorator';
 import { RequirePermission } from './decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
@@ -39,8 +41,14 @@ export class RolesController {
 
     @Post()
     @HttpCode(201)
-    async create(@Body(new ZodValidationPipe(createRoleSchema)) body: CreateRoleInput) {
-        const role = await rolesService.createRole(body);
+    async create(
+        @Body(new ZodValidationPipe(createRoleSchema)) body: CreateRoleInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const role = await rolesService.createRole({
+            ...body,
+            actor: { userId: user.uid, roleSlug: user.role.slug },
+        });
         return { data: role };
     }
 
@@ -48,14 +56,24 @@ export class RolesController {
     async update(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(updateRoleSchema)) body: UpdateRoleInput,
+        @CurrentUser() user: AuthUser,
     ) {
-        const role = await rolesService.updateRole(params.id, body);
+        const role = await rolesService.updateRole(params.id, body, {
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
         return { data: role };
     }
 
     @Delete(':id')
-    async remove(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
-        const role = await rolesService.deleteRole(params.id);
+    async remove(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const role = await rolesService.deleteRole(params.id, {
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
         return { data: role };
     }
 }

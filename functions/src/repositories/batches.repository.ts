@@ -11,6 +11,21 @@ export const listBatchesByProduct = async (productId: string): Promise<Batch[]> 
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Batch));
 };
 
+/**
+ * Lotes con existencia (`quantity > 0`), para alertas de caducidad y conteo
+ * físico. La colección `batches` es del orden de miles de documentos en una
+ * farmacia; si crece, esto se pagina por `expiryDate`.
+ */
+export const listBatchesWithStock = async (): Promise<Batch[]> => {
+    const snapshot = await collection()
+        .where('quantity', '>', 0)
+        .orderBy('quantity')
+        .get();
+    return snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Batch))
+        .sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+};
+
 export const getBatchById = async (id: string): Promise<Batch | null> => {
     const doc = await collection().doc(id).get();
     if (!doc.exists) {

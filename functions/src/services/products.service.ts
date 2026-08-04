@@ -1,5 +1,6 @@
 import {
     BulkCreateProductsResult,
+    ControlledGroup,
     InvoiceSummary,
     Product,
     ProductDetail,
@@ -11,7 +12,13 @@ import {
     SupplierSummary,
 } from '../types';
 import { badRequest, notFound } from '../utils/errors';
-import { buildListMeta, buildListResult, ListMeta, paginate, parsePagination } from '../utils/pagination';
+import {
+    buildListMeta,
+    buildListResult,
+    ListMeta,
+    paginate,
+    parsePagination,
+} from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -22,6 +29,7 @@ import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
+import { AuditActor, diffFields, recordAudit } from './audit.service';
 
 const loadSuppliersSummary = async (
     supplierIds: string[],
@@ -210,34 +218,51 @@ export const listProducts = async (filters: {
     meta: ListMeta;
 }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    let items = await productsRepo.listProducts({
-        categoryId: filters.categoryId,
-        activeOnly: filters.activeOnly,
-    });
+    const search = filters.search?.trim();
+    let items: Product[];
 
-    if (filters.search) {
-        items = items.filter((product) => matchesProductSearch(product, filters.search!));
+    if (search) {
+        const exact = await productsRepo.findProductBySkuOrBarcode(search);
+        if (exact) {
+            items = [exact];
+        } else if (filters.categoryId) {
+            items = await productsRepo.listProducts({
+                categoryId: filters.categoryId,
+                activeOnly: filters.activeOnly,
+            });
+            items = items.filter((product) => matchesProductSearch(product, search));
+        } else {
+            items = await productsRepo.listProducts({
+                activeOnly: filters.activeOnly,
+                limit: 500,
+            });
+            items = items.filter((product) => matchesProductSearch(product, search));
+        }
+    } else {
+        items = await productsRepo.listProducts({
+            categoryId: filters.categoryId,
+            activeOnly: filters.activeOnly,
+        });
     }
 
     const { items: paginated, total } = paginate(items, page, limit);
     const categoryIds = [...new Set(paginated.map((product) => product.categoryId))];
-    const [categories, stockValues] = await Promise.all([
-        categoriesRepo.getCategoriesByIds(categoryIds),
-        Promise.all(paginated.map((product) => batchesRepo.getTotalStock(product.id))),
-    ]);
+    const categories = await categoriesRepo.getCategoriesByIds(categoryIds);
 
-    const withDetails = paginated.map((product, index) => {
-        const category = categories.get(product.categoryId);
-        if (!category) {
-            throw notFound('Categoría');
-        }
-
-        return {
-            ...product,
-            stock: stockValues[index],
-            category,
-        };
-    });
+    const withDetails = await Promise.all(
+        paginated.map(async (product) => {
+            const category = categories.get(product.categoryId);
+            if (!category) {
+                throw notFound('Categoría');
+            }
+            const stock = product.totalStock ?? await batchesRepo.getTotalStock(product.id);
+            return {
+                ...product,
+                stock,
+                category,
+            };
+        }),
+    );
 
     return {
         items: withDetails,
@@ -259,7 +284,9 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
     }
 
     const [stock, suppliers, category] = await Promise.all([
-        batchesRepo.getTotalStock(id),
+        product.totalStock !== undefined
+            ? Promise.resolve(product.totalStock)
+            : batchesRepo.getTotalStock(id),
         loadSuppliersSummary(product.suppliers ?? [], product.lastCostPriceBySupplier ?? {}),
         categoriesRepo.getCategoryById(product.categoryId),
     ]);
@@ -340,6 +367,51 @@ export const getProductInvoiceHistory = async (
     return buildListResult(history, page, limit);
 };
 
+/** Campos de producto que se vigilan en la bitácora (precio, impuestos, control). */
+const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
+    'name',
+    'sku',
+    'barcode',
+    'salePrice',
+    'minStock',
+    'hasIva',
+    'hasIvaZero',
+    'hasIeps',
+    'iepsRate',
+    'controlledGroup',
+    'requiresPrescription',
+    'isActive',
+];
+
+const auditProductUpdate = async (
+    before: Product,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    const changes = diffFields(
+        before as unknown as Record<string, unknown>,
+        after as unknown as Record<string, unknown>,
+        AUDITED_PRODUCT_FIELDS as unknown as string[],
+    );
+    if (!changes) {
+        return;
+    }
+
+    const priceChanged = Boolean(changes.salePrice);
+    await recordAudit({
+        action: priceChanged ? 'product.price_changed' : 'product.updated',
+        entity: 'product',
+        entityId: after.id,
+        summary: priceChanged
+            ? `Precio de ${after.name} de ${before.salePrice.toFixed(2)} a ` +
+                `${after.salePrice.toFixed(2)}`
+            : `Producto ${after.name} actualizado (${Object.keys(changes).join(', ')})`,
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        changes,
+    });
+};
+
 export const createProduct = async (input: {
     name: string;
     sku: string;
@@ -353,6 +425,11 @@ export const createProduct = async (input: {
     hasIvaZero: boolean;
     hasIeps: boolean;
     concentration?: string;
+    controlledGroup?: ControlledGroup;
+    iepsRate?: number;
+    requiresPrescription?: boolean;
+    /** Actor para la bitácora; opcional para no romper llamadas internas. */
+    actor?: AuditActor;
 }): Promise<Product> => {
     const name = input.name.trim();
     const sku = input.sku.trim();
@@ -371,7 +448,7 @@ export const createProduct = async (input: {
         throw notFound('Categoría');
     }
 
-    return productsRepo.createProduct({
+    const created = await productsRepo.createProduct({
         name,
         sku,
         barcode,
@@ -380,13 +457,29 @@ export const createProduct = async (input: {
         unit: input.unit.trim(),
         salePrice: input.salePrice,
         minStock: input.minStock,
+        totalStock: 0,
         hasIva: input.hasIva,
         hasIvaZero: input.hasIvaZero,
         hasIeps: input.hasIeps,
         concentration: input.concentration?.trim(),
+        controlledGroup: input.controlledGroup,
+        iepsRate: input.iepsRate,
+        requiresPrescription: input.requiresPrescription ?? false,
         isActive: true,
         suppliers: [],
     });
+
+    await recordAudit({
+        action: 'product.created',
+        entity: 'product',
+        entityId: created.id,
+        summary: `Producto ${created.name} (${created.sku}) creado a ` +
+            `${created.salePrice.toFixed(2)}`,
+        userId: input.actor?.userId ?? 'system',
+        roleSlug: input.actor?.roleSlug ?? null,
+    });
+
+    return created;
 };
 
 type CreateProductInput = {
@@ -402,6 +495,7 @@ type CreateProductInput = {
     hasIvaZero: boolean;
     hasIeps: boolean;
     concentration?: string;
+    requiresPrescription?: boolean;
 };
 
 export const bulkCreateProducts = async (
@@ -466,8 +560,12 @@ export const updateProduct = async (
         hasIvaZero: boolean;
         hasIeps: boolean;
         concentration: string;
+        controlledGroup: ControlledGroup;
+        iepsRate: number;
+        requiresPrescription: boolean;
         isActive: boolean;
     }>,
+    actor?: AuditActor,
 ): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
@@ -491,7 +589,7 @@ export const updateProduct = async (
     const sku = input.sku?.trim();
     const barcode = input.barcode?.trim();
 
-    return productsRepo.updateProduct(id, {
+    const updated = await productsRepo.updateProduct(id, {
         name,
         sku,
         barcode,
@@ -504,12 +602,19 @@ export const updateProduct = async (
         hasIvaZero: input.hasIvaZero,
         hasIeps: input.hasIeps,
         concentration: input.concentration?.trim(),
+        controlledGroup: input.controlledGroup,
+        iepsRate: input.iepsRate,
+        requiresPrescription: input.requiresPrescription,
         isActive: input.isActive,
     });
+
+    await auditProductUpdate(existing, updated, actor);
+    return updated;
 };
 
 export const updateProductPrices = async (
     items: Array<{ productId: string; salePrice: number }>,
+    actor?: AuditActor,
 ): Promise<Product[]> => {
     const uniqueIds = [...new Set(items.map((item) => item.productId))];
     if (uniqueIds.length !== items.length) {
@@ -526,16 +631,50 @@ export const updateProductPrices = async (
         }
     }
 
-    return Promise.all(
-        items.map((item) => productsRepo.updateProduct(item.productId, { salePrice: item.salePrice })),
+    const existingById = new Map(
+        (products as Product[]).map((product) => [product.id, product]),
     );
+
+    const updated = await Promise.all(
+        items.map((item) =>
+            productsRepo.updateProduct(item.productId, { salePrice: item.salePrice })),
+    );
+
+    // Cambio masivo de precios: una bitácora por producto que realmente cambió.
+    await Promise.all(updated.map((product) => {
+        const before = existingById.get(product.id);
+        if (!before || before.salePrice === product.salePrice) {
+            return Promise.resolve();
+        }
+        return recordAudit({
+            action: 'product.price_changed',
+            entity: 'product',
+            entityId: product.id,
+            summary: `Precio de ${product.name} de ${before.salePrice.toFixed(2)} a ` +
+                `${product.salePrice.toFixed(2)} (actualización masiva)`,
+            userId: actor?.userId ?? 'system',
+            roleSlug: actor?.roleSlug ?? null,
+            changes: { salePrice: { before: before.salePrice, after: product.salePrice } },
+        });
+    }));
+
+    return updated;
 };
 
-export const deleteProduct = async (id: string): Promise<Product> => {
+export const deleteProduct = async (id: string, actor?: AuditActor): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
         throw notFound('Producto');
     }
 
-    return productsRepo.updateProduct(id, { isActive: false });
+    const updated = await productsRepo.updateProduct(id, { isActive: false });
+    await recordAudit({
+        action: 'product.deactivated',
+        entity: 'product',
+        entityId: id,
+        summary: `Producto ${existing.name} (${existing.sku}) dado de baja`,
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+    });
+    return updated;
 };

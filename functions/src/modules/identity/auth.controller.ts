@@ -16,6 +16,7 @@ export class AuthController {
         return { data: user };
     }
 
+    // Alias de POST /users — path canónico de alta de personal.
     @Post('register-staff')
     @RequirePermission('users', 'write')
     @HttpCode(201)

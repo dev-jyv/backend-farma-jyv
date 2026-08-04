@@ -9,6 +9,7 @@ import {
     updateUserProfile,
 } from '../repositories/users.repository';
 import * as rolesRepo from '../repositories/roles.repository';
+import { recordAudit } from './audit.service';
 import { getActiveRoleById, getAdminRoleId, syncUserClaims } from './roles.service';
 
 const toRoleSummary = (role: { id: string; name: string; slug: string }): RoleSummary => ({
@@ -58,7 +59,7 @@ const assertLastAdmin = async (id: string, existing: UserProfile): Promise<void>
     }
     const remaining = await countActiveAdmins(id);
     if (remaining === 0) {
-        throw badRequest('No se puede desactivar al último administrador activo');
+        throw badRequest('No se puede quitar al último administrador activo');
     }
 };
 
@@ -93,6 +94,7 @@ export const updateUser = async (
         isActive?: boolean;
     },
     actorUid: string,
+    actorRoleSlug?: string | null,
 ): Promise<UserWithRole> => {
     const existing = await getUserProfile(id);
     if (!existing) {
@@ -109,10 +111,12 @@ export const updateUser = async (
         input.roleId !== undefined &&
         adminRoleId &&
         input.roleId !== adminRoleId &&
-        id === actorUid &&
         existing.roleId === adminRoleId
     ) {
-        throw badRequest('No puedes quitarte tu propio rol de administrador');
+        if (id === actorUid) {
+            throw badRequest('No puedes quitarte tu propio rol de administrador');
+        }
+        await assertLastAdmin(id, existing);
     }
 
     const authUpdate: admin.auth.UpdateRequest = {};
@@ -155,8 +159,37 @@ export const updateUser = async (
     if (!updated) {
         throw notFound('Usuario');
     }
+
+    // Accesos: cambio de rol y activación/desactivación se auditan; renombrar no.
+    if (input.roleId !== undefined && input.roleId !== existing.roleId) {
+        await recordAudit({
+            action: 'user.role_changed',
+            entity: 'user',
+            entityId: id,
+            summary: `Rol del usuario ${updated.email ?? id} cambiado`,
+            userId: actorUid,
+            roleSlug: actorRoleSlug ?? null,
+            changes: { roleId: { before: existing.roleId, after: updated.roleId } },
+        });
+    }
+    if (input.isActive !== undefined && input.isActive !== existing.isActive) {
+        await recordAudit({
+            action: 'user.status_changed',
+            entity: 'user',
+            entityId: id,
+            summary: `Usuario ${updated.email ?? id} ` +
+                `${input.isActive ? 'reactivado' : 'desactivado'}`,
+            userId: actorUid,
+            roleSlug: actorRoleSlug ?? null,
+            changes: { isActive: { before: existing.isActive, after: updated.isActive } },
+        });
+    }
+
     return enrichSingleUser(updated);
 };
 
-export const deactivateUser = async (id: string, actorUid: string): Promise<UserWithRole> =>
-    updateUser(id, { isActive: false }, actorUid);
+export const deactivateUser = async (
+    id: string,
+    actorUid: string,
+    actorRoleSlug?: string | null,
+): Promise<UserWithRole> => updateUser(id, { isActive: false }, actorUid, actorRoleSlug);

@@ -60,14 +60,22 @@ export const registerStaff = async (input: {
         throw badRequest('No se pudo crear el usuario');
     }
 
-    await syncUserClaims(userRecord.uid, role.id, role.slug, role.permissions);
-
-    await createUserProfile(userRecord.uid, {
-        email: input.email,
-        displayName: input.displayName,
-        roleId: role.id,
-        isActive: true,
-    });
+    try {
+        await syncUserClaims(userRecord.uid, role.id, role.slug, role.permissions);
+        await createUserProfile(userRecord.uid, {
+            email: input.email,
+            displayName: input.displayName,
+            roleId: role.id,
+            isActive: true,
+        });
+    } catch (error) {
+        try {
+            await admin.auth().deleteUser(userRecord.uid);
+        } catch {
+            // Best-effort cleanup; surface the original failure below.
+        }
+        throw error;
+    }
 
     return {
         uid: userRecord.uid,

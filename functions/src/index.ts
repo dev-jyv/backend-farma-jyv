@@ -6,12 +6,18 @@ if (!admin.apps.length) {
     admin.initializeApp();
 }
 
+export {
+    dailyInventoryAlerts,
+    dailySalesReport,
+    monthlySalesReport,
+} from './schedules/sales-reports.schedule';
+
 let appPromise: ReturnType<typeof createApp> | undefined;
 
 export const api = onRequest(
     {
         region: 'us-central1',
-        memory: '256MiB',
+        memory: '512MiB',
         timeoutSeconds: 60,
     },
     async (req, res) => {

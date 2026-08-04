@@ -21,9 +21,9 @@ type RegisterStaffInput = z.infer<typeof registerStaffSchema>;
 type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 @Controller('users')
-@RequirePermission('users', 'write')
 export class UsersController {
     @Get()
+    @RequirePermission('users', 'read')
     async list(@Query(new ZodValidationPipe(listUsersQuerySchema)) query: ListUsersQuery) {
         const result = await usersService.listUsers({
             activeOnly: query.activeOnly === 'true',
@@ -36,12 +36,14 @@ export class UsersController {
     }
 
     @Get(':id')
+    @RequirePermission('users', 'read')
     async get(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
         const user = await usersService.getUser(params.id);
         return { data: user };
     }
 
     @Post()
+    @RequirePermission('users', 'write')
     @HttpCode(201)
     async register(
         @Body(new ZodValidationPipe(registerStaffSchema)) body: RegisterStaffInput,
@@ -51,21 +53,32 @@ export class UsersController {
     }
 
     @Patch(':id')
+    @RequirePermission('users', 'write')
     async update(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(updateUserSchema)) body: UpdateUserInput,
         @CurrentUser() actor: AuthUser,
     ) {
-        const user = await usersService.updateUser(params.id, body, actor.uid);
+        const user = await usersService.updateUser(
+            params.id,
+            body,
+            actor.uid,
+            actor.role.slug,
+        );
         return { data: user };
     }
 
     @Delete(':id')
+    @RequirePermission('users', 'write')
     async remove(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @CurrentUser() actor: AuthUser,
     ) {
-        const user = await usersService.deactivateUser(params.id, actor.uid);
+        const user = await usersService.deactivateUser(
+            params.id,
+            actor.uid,
+            actor.role.slug,
+        );
         return { data: user };
     }
 }

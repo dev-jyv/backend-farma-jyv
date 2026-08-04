@@ -70,5 +70,44 @@ service cloud.firestore {
       allow read: if canAccessSales();
       allow write: if false;
     }
+
+    match /inventoryCounts/{countId} {
+      allow read: if canManageInventory();
+      allow write: if false;
+    }
+
+    // Libro de control COFEPRIS: lectura restringida a quien administra inventario.
+    match /controlledSalesLedger/{entryId} {
+      allow read: if canManageInventory();
+      allow write: if false;
+    }
+
+    // Bitácora: solo el admin la lee desde el cliente; la API la escribe.
+    match /auditLogs/{logId} {
+      allow read: if hasRoleSlug('admin');
+      allow write: if false;
+    }
+
+    // Lecturas X del turno: mismas reglas que el turno.
+    match /cashReadings/{readingId} {
+      allow read: if canAccessSales();
+      allow write: if false;
+    }
+
+    match /saleReturns/{returnId} {
+      allow read: if canAccessSales();
+      allow write: if false;
+    }
+
+    // Client SDK reads for staff; all writes go through the Admin API (Cloud Functions).
+    match /invoices/{invoiceId} {
+      allow read: if canManageInventory();
+      allow write: if false;
+    }
+
+    match /cashSessions/{sessionId} {
+      allow read: if canAccessSales();
+      allow write: if false;
+    }
   }
 }

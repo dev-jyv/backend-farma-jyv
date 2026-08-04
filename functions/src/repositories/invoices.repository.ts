@@ -1,7 +1,17 @@
 import { Invoice } from '../types';
-import { db, now } from '../utils/firestore';
+import { db, now, toTimestamp } from '../utils/firestore';
+import { conflict } from '../utils/errors';
 
 const collection = () => db().collection('invoices');
+
+const mapInvoice = (doc: FirebaseFirestore.DocumentSnapshot): Invoice => {
+    const data = doc.data()!;
+    return {
+        id: doc.id,
+        ...data,
+        hasInvoice: data.hasInvoice ?? Boolean(data.storagePath),
+    } as Invoice;
+};
 
 export const listInvoices = async (filters: {
     supplierId?: string;
@@ -15,33 +25,22 @@ export const listInvoices = async (filters: {
         query = query.where('supplierId', '==', filters.supplierId);
     }
 
-    query = query.orderBy('invoiceDate', 'desc');
-
-    const snapshot = await query.get();
-    let invoices = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        return {
-            id: doc.id,
-            ...data,
-            hasInvoice: data.hasInvoice ?? Boolean(data.storagePath),
-        } as Invoice;
-    });
-
     if (filters.hasInvoice !== undefined) {
-        invoices = invoices.filter((invoice) => invoice.hasInvoice === filters.hasInvoice);
+        query = query.where('hasInvoice', '==', filters.hasInvoice);
     }
 
     if (filters.from) {
-        const fromMs = new Date(filters.from).getTime();
-        invoices = invoices.filter((invoice) => invoice.invoiceDate.toMillis() >= fromMs);
+        query = query.where('invoiceDate', '>=', toTimestamp(filters.from));
     }
 
     if (filters.to) {
-        const toMs = new Date(filters.to).getTime();
-        invoices = invoices.filter((invoice) => invoice.invoiceDate.toMillis() <= toMs);
+        query = query.where('invoiceDate', '<=', toTimestamp(filters.to));
     }
 
-    return invoices;
+    query = query.orderBy('invoiceDate', 'desc');
+
+    const snapshot = await query.get();
+    return snapshot.docs.map((doc) => mapInvoice(doc));
 };
 
 export const getInvoiceById = async (id: string): Promise<Invoice | null> => {
@@ -49,12 +48,7 @@ export const getInvoiceById = async (id: string): Promise<Invoice | null> => {
     if (!doc.exists) {
         return null;
     }
-    const data = doc.data()!;
-    return {
-        id: doc.id,
-        ...data,
-        hasInvoice: data.hasInvoice ?? Boolean(data.storagePath),
-    } as Invoice;
+    return mapInvoice(doc);
 };
 
 export const findInvoiceBySupplierAndNumber = async (
@@ -71,8 +65,7 @@ export const findInvoiceBySupplierAndNumber = async (
         return null;
     }
 
-    const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() } as Invoice;
+    return mapInvoice(snapshot.docs[0]);
 };
 
 export const createInvoice = async (
@@ -80,6 +73,7 @@ export const createInvoice = async (
     data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
     userId: string,
 ): Promise<Invoice> => {
+    const firestore = db();
     const timestamp = now();
     const payload = {
         ...data,
@@ -88,7 +82,20 @@ export const createInvoice = async (
         updatedAt: timestamp,
         updatedBy: userId,
     };
-    await collection().doc(id).set(payload);
+
+    await firestore.runTransaction(async (transaction) => {
+        const existingSnap = await transaction.get(
+            collection()
+                .where('supplierId', '==', data.supplierId)
+                .where('invoiceNumber', '==', data.invoiceNumber)
+                .limit(1),
+        );
+        if (!existingSnap.empty) {
+            throw conflict('Ya existe una factura con ese número para este proveedor');
+        }
+        transaction.set(collection().doc(id), payload);
+    });
+
     return { id, ...payload };
 };
 

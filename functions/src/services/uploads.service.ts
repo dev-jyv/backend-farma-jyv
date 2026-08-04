@@ -24,12 +24,12 @@ export const uploadFileToStorage = async (
 
     await uploadFile(storagePath, file.buffer, file.mimetype);
 
-    const fileUrl = await getFileUrl(storagePath);
+    const signedUrl = await getFileUrl(storagePath);
 
     return {
         storagePath,
         fileName: file.originalname,
         mimeType: file.mimetype,
-        fileUrl,
+        fileUrl: signedUrl,
     };
 };

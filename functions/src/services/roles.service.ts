@@ -8,6 +8,7 @@ import {
 import { badRequest, notFound, unauthorized } from '../utils/errors';
 import { buildListMeta, parsePagination } from '../utils/pagination';
 import * as rolesRepo from '../repositories/roles.repository';
+import { AuditActor, diffFields, recordAudit } from './audit.service';
 import { listUserProfiles, updateUserProfile } from '../repositories/users.repository';
 
 export const syncUserClaims = async (
@@ -29,19 +30,22 @@ export const syncRoleUsersClaims = async (roleId: string): Promise<void> => {
         return;
     }
 
-    const { items: users } = await listUserProfiles({
+    const { items: roleUsers } = await listUserProfiles({
+        roleId,
         activeOnly: true,
         page: 1,
         limit: 10000,
     });
 
-    const roleUsers = users.filter((user) => user.roleId === roleId);
-
-    await Promise.all(
-        roleUsers.map((user) =>
-            syncUserClaims(user.id, role.id, role.slug, role.permissions),
-        ),
-    );
+    const CHUNK_SIZE = 20;
+    for (let i = 0; i < roleUsers.length; i += CHUNK_SIZE) {
+        const chunk = roleUsers.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+            chunk.map((user) =>
+                syncUserClaims(user.id, role.id, role.slug, role.permissions),
+            ),
+        );
+    }
 };
 
 const normalizeSlug = (slug: string): string => slug.trim().toLowerCase();
@@ -76,6 +80,7 @@ export const createRole = async (input: {
     slug: string;
     description?: string;
     permissions: RolePermission[];
+    actor?: AuditActor;
 }) => {
     const slug = normalizeSlug(input.slug);
     validatePermissions(input.permissions);
@@ -84,7 +89,7 @@ export const createRole = async (input: {
         throw badRequest('Ya existe un rol activo con ese slug');
     }
 
-    return rolesRepo.createRole({
+    const created = await rolesRepo.createRole({
         name: input.name.trim(),
         slug,
         description: input.description?.trim(),
@@ -92,6 +97,19 @@ export const createRole = async (input: {
         isSystem: false,
         isActive: true,
     });
+
+    await recordAudit({
+        action: 'role.created',
+        entity: 'role',
+        entityId: created.id,
+        summary: `Rol ${created.name} (${created.slug}) creado con ` +
+            `${created.permissions.length} permisos`,
+        userId: input.actor?.userId ?? 'system',
+        roleSlug: input.actor?.roleSlug ?? null,
+        metadata: { permissions: created.permissions },
+    });
+
+    return created;
 };
 
 export const updateRole = async (
@@ -103,6 +121,7 @@ export const updateRole = async (
         permissions?: RolePermission[];
         isActive?: boolean;
     },
+    actor?: AuditActor,
 ) => {
     const existing = await rolesRepo.getRoleById(id);
     if (!existing) {
@@ -153,10 +172,39 @@ export const updateRole = async (
         await syncRoleUsersClaims(id);
     }
 
+    // Un cambio de permisos es un cambio de alcance de acceso: se audita aparte de
+    // los cambios cosméticos de nombre/descripción.
+    const permissionsChanged = input.permissions !== undefined &&
+        JSON.stringify(existing.permissions) !== JSON.stringify(updated.permissions);
+    await recordAudit({
+        action: permissionsChanged ? 'role.permissions_changed' : 'role.updated',
+        entity: 'role',
+        entityId: id,
+        summary: permissionsChanged
+            ? `Permisos del rol ${updated.name} actualizados ` +
+                `(${existing.permissions.length} → ${updated.permissions.length})`
+            : `Rol ${updated.name} actualizado`,
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        changes: permissionsChanged
+            ? {
+                permissions: {
+                    before: existing.permissions,
+                    after: updated.permissions,
+                },
+            }
+            : diffFields(
+                existing as unknown as Record<string, unknown>,
+                { name: updated.name, slug: updated.slug, isActive: updated.isActive },
+                ['name', 'slug', 'isActive'],
+            ),
+    });
+
     return updated;
 };
 
-export const deleteRole = async (id: string) => updateRole(id, { isActive: false });
+export const deleteRole = async (id: string, actor?: AuditActor) =>
+    updateRole(id, { isActive: false }, actor);
 
 export const seedSystemRoles = async (): Promise<Record<SystemRoleSlug, string>> => {
     const roleIds: Partial<Record<SystemRoleSlug, string>> = {};
@@ -261,19 +309,10 @@ const resolveSlugFromLegacyRole = (legacyRole?: string): string | null => {
 };
 
 const resolveRoleBySlug = async (slug: string) => {
-    let role = await rolesRepo.getRoleBySlug(slug);
+    const role = await rolesRepo.getRoleBySlug(slug);
     if (role?.isActive) {
         return role;
     }
-
-    if ((SYSTEM_ROLE_SLUGS as readonly string[]).includes(slug)) {
-        await seedSystemRoles();
-        role = await rolesRepo.getRoleBySlug(slug);
-        if (role?.isActive) {
-            return role;
-        }
-    }
-
     return null;
 };
 

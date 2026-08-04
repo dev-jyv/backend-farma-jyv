@@ -12,6 +12,8 @@ import {
     updateProductSchema,
 } from '../../schemas';
 import * as productsService from '../../services/products.service';
+import { AuthUser } from '../../types';
+import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
@@ -90,8 +92,14 @@ export class ProductsController {
     @Post()
     @RequirePermission('products')
     @HttpCode(201)
-    async create(@Body(new ZodValidationPipe(createProductSchema)) body: CreateProductInput) {
-        const product = await productsService.createProduct(body);
+    async create(
+        @Body(new ZodValidationPipe(createProductSchema)) body: CreateProductInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const product = await productsService.createProduct({
+            ...body,
+            actor: { userId: user.uid, roleSlug: user.role.slug },
+        });
         return { data: product };
     }
 
@@ -109,8 +117,12 @@ export class ProductsController {
     @RequirePermission('products')
     async updatePrices(
         @Body(new ZodValidationPipe(updateProductPricesSchema)) body: UpdateProductPricesInput,
+        @CurrentUser() user: AuthUser,
     ) {
-        const products = await productsService.updateProductPrices(body.items);
+        const products = await productsService.updateProductPrices(
+            body.items,
+            { userId: user.uid, roleSlug: user.role.slug },
+        );
         return { data: products };
     }
 
@@ -119,15 +131,25 @@ export class ProductsController {
     async update(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(updateProductSchema)) body: UpdateProductInput,
+        @CurrentUser() user: AuthUser,
     ) {
-        const product = await productsService.updateProduct(params.id, body);
+        const product = await productsService.updateProduct(params.id, body, {
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
         return { data: product };
     }
 
     @Delete(':id')
     @RequirePermission('products')
-    async remove(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
-        const product = await productsService.deleteProduct(params.id);
+    async remove(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const product = await productsService.deleteProduct(params.id, {
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
         return { data: product };
     }
 }
