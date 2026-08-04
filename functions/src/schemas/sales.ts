@@ -77,7 +77,7 @@ export const createSaleSchema = z.object({
     ) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'El pago mixto requiere un monto en efectivo mayor a cero',
+            message: 'El pago mixto requiere el efectivo recibido (mayor a cero)',
             path: ['amountReceived'],
         });
     }
@@ -156,6 +156,13 @@ export const listControlledLedgerQuerySchema = z.object({
     from: parseableDate.optional(),
     to: parseableDate.optional(),
     ...paginationFields,
+});
+
+export const exportControlledLedgerQuerySchema = z.object({
+    productId: z.string().min(1).optional(),
+    group: z.enum(['I', 'II', 'III', 'IV', 'V', 'VI']).optional(),
+    from: parseableDate.optional(),
+    to: parseableDate.optional(),
 });
 
 export const listAuditLogsQuerySchema = z.object({

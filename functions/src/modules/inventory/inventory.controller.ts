@@ -1,4 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { z } from 'zod';
 import {
     bulkCreateEntriesSchema,
@@ -9,6 +10,7 @@ import {
     inventoryExitSchema,
     createInventoryCountSchema,
     listBatchesQuerySchema,
+    exportControlledLedgerQuerySchema,
     listControlledLedgerQuerySchema,
     listInventoryCountsQuerySchema,
     scanCodeSchema,
@@ -40,6 +42,7 @@ type CreateInventoryCountInput = z.infer<typeof createInventoryCountSchema>;
 type ListInventoryCountsQuery = z.infer<typeof listInventoryCountsQuerySchema>;
 type ListControlledLedgerQuery = z.infer<typeof listControlledLedgerQuerySchema>;
 type ScanCodeInput = z.infer<typeof scanCodeSchema>;
+type ExportControlledLedgerQuery = z.infer<typeof exportControlledLedgerQuerySchema>;
 
 @Controller('inventory')
 export class InventoryController {
@@ -136,6 +139,29 @@ export class InventoryController {
             limit: query.limit ? Number(query.limit) : undefined,
         });
         return { data: result.items, meta: result.meta };
+    }
+
+    /**
+     * Libro de control completo del periodo en CSV, sin paginar: es el archivo que
+     * se entrega y se firma en una visita de COFEPRIS. Responde el archivo crudo,
+     * no el envoltorio `{ data }`.
+     */
+    @Get('controlled-ledger/export')
+    @RequirePermission('inventory', 'read')
+    async exportControlledLedger(
+        @Query(new ZodValidationPipe(exportControlledLedgerQuerySchema))
+            query: ExportControlledLedgerQuery,
+        @CurrentUser() user: AuthUser,
+        @Res() res: Response,
+    ) {
+        const { filename, csv } = await controlledService.exportControlledLedger({
+            ...query,
+            roleSlug: user.role.slug,
+        });
+
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(csv);
     }
 
     @Post('entries')

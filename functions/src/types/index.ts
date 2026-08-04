@@ -504,6 +504,14 @@ export interface Sale {
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;
+    /**
+     * Parte del total pagada en efectivo. En `cash` es el total; en `mixed` es
+     * `total - cardAmount`; `null` en tarjeta y transferencia. Es lo que entra al
+     * cajón, y no coincide con `amountReceived` cuando hubo cambio.
+     */
+    cashAmount?: number | null;
+    /** Parte del total pagada con tarjeta (monto de la order Point). */
+    cardAmount?: number | null;
     cardPaymentReference: string | null;
     pointPayment: PointPaymentSnapshot | null;
     cashSessionId: string | null;
@@ -598,6 +606,9 @@ export interface Receipt {
     paymentMethod: PaymentMethod | RefundMethod;
     amountReceived: number | null;
     change: number | null;
+    /** Reparto del cobro mixto; `null` cuando no aplica. */
+    cashAmount: number | null;
+    cardAmount: number | null;
     cashierId: string;
     customerName: string | null;
     prescription: SalePrescription | null;

@@ -62,6 +62,8 @@ export interface SessionSaleRow {
     paymentMethod: string;
     amountReceived: number | null;
     change: number | null;
+    /** Efectivo aplicado a la venta; ausente en ventas anteriores al split mixto. */
+    cashAmount: number | null;
     total: number;
     voidedAt: unknown | null;
 }
@@ -77,6 +79,7 @@ export const listSalesForSession = async (cashSessionId: string): Promise<Sessio
             paymentMethod: data.paymentMethod as string,
             amountReceived: data.amountReceived as number | null,
             change: data.change as number | null,
+            cashAmount: (data.cashAmount as number | null | undefined) ?? null,
             total: data.total as number,
             voidedAt: data.voidedAt ?? null,
         };

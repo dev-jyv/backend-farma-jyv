@@ -21,6 +21,8 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => ({
     paymentMethod: data.paymentMethod as Sale['paymentMethod'],
     amountReceived: (data.amountReceived as number | null) ?? null,
     change: (data.change as number | null) ?? null,
+    cashAmount: (data.cashAmount as number | null | undefined) ?? null,
+    cardAmount: (data.cardAmount as number | null | undefined) ?? null,
     cardPaymentReference: (data.cardPaymentReference as string | null) ?? null,
     pointPayment: (data.pointPayment as Sale['pointPayment']) ?? null,
     cashSessionId: (data.cashSessionId as string | null) ?? null,

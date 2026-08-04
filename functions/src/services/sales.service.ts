@@ -15,6 +15,7 @@ import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pag
 import { allocateFefo } from '../utils/fefo';
 import {
     breakdownLineTaxes,
+    fromCents,
     prorateDiscount,
     sumTaxSummary,
     toCents,
@@ -32,6 +33,7 @@ import {
 } from './controlled.service';
 import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
+import { assertCanAccessSession } from './cash-sessions.service';
 
 interface SaleItemInput {
     productId: string;
@@ -116,14 +118,31 @@ interface TenderInput {
     total: number;
     amountReceived?: number;
     cardPaymentReference?: string;
+    /**
+     * Monto cobrado con tarjeta (order Point). Obligatorio en `mixed`: es lo que
+     * define cuánto falta cubrir en efectivo.
+     */
+    cardAmount?: number;
 }
 
 interface TenderResult {
     amountReceived: number | null;
     change: number | null;
+    cashAmount: number | null;
+    cardAmount: number | null;
     cardPaymentReference: string | null;
 }
 
+/**
+ * Reparte el cobro entre efectivo y tarjeta.
+ *
+ *  - `cash`      — el efectivo recibido cubre el total; cambio = recibido − total.
+ *  - `card`/`transfer` — sin efectivo.
+ *  - `mixed`     — la tarjeta paga `cardAmount` y el efectivo cubre el resto
+ *                  (`total − cardAmount`). El cambio se calcula contra **esa
+ *                  parte en efectivo**, no contra el total: exigir que el efectivo
+ *                  cubra el total completo era el bug histórico de `mixed`.
+ */
 const resolveTender = (input: TenderInput): TenderResult => {
     const { paymentMethod, total, amountReceived, cardPaymentReference } = input;
 
@@ -136,6 +155,8 @@ const resolveTender = (input: TenderInput): TenderResult => {
         return {
             amountReceived: null,
             change: null,
+            cashAmount: null,
+            cardAmount: paymentMethod === 'card' ? total : null,
             cardPaymentReference: cardPaymentReference ?? null,
         };
     }
@@ -143,19 +164,54 @@ const resolveTender = (input: TenderInput): TenderResult => {
     if (amountReceived === undefined) {
         throw badRequest('El monto recibido es requerido para este método de pago');
     }
-    if (amountReceived < total) {
-        throw badRequest('El monto recibido es menor al total de la venta');
+
+    if (paymentMethod === 'cash') {
+        if (toCents(amountReceived) < toCents(total)) {
+            throw badRequest('El monto recibido es menor al total de la venta');
+        }
+        return {
+            amountReceived,
+            change: fromCents(toCents(amountReceived) - toCents(total)),
+            cashAmount: total,
+            cardAmount: null,
+            cardPaymentReference: null,
+        };
     }
-    if (paymentMethod === 'mixed' && !cardPaymentReference) {
+
+    // mixed
+    if (!cardPaymentReference) {
         throw badRequest(
             'El pago mixto requiere el id de la order de Mercado Pago Point',
+        );
+    }
+    if (input.cardAmount === undefined) {
+        throw badRequest('El pago mixto requiere el monto cobrado con tarjeta');
+    }
+
+    const cardCents = toCents(input.cardAmount);
+    const totalCents = toCents(total);
+    if (cardCents <= 0) {
+        throw badRequest('El monto cobrado con tarjeta debe ser mayor a cero');
+    }
+    if (cardCents >= totalCents) {
+        throw badRequest(
+            'La tarjeta cubre el total: registra la venta como pago con tarjeta',
+        );
+    }
+
+    const cashCents = totalCents - cardCents;
+    if (toCents(amountReceived) < cashCents) {
+        throw badRequest(
+            `El efectivo recibido no cubre la parte en efectivo (${fromCents(cashCents)})`,
         );
     }
 
     return {
         amountReceived,
-        change: amountReceived - total,
-        cardPaymentReference: cardPaymentReference ?? null,
+        change: fromCents(toCents(amountReceived) - cashCents),
+        cashAmount: fromCents(cashCents),
+        cardAmount: fromCents(cardCents),
+        cardPaymentReference,
     };
 };
 
@@ -461,16 +517,19 @@ export const createSale = async (input: {
         }
     }
 
+    // La order Point se resuelve ANTES del tender: en pago mixto su monto es lo que
+    // define cuánto falta cubrir en efectivo.
+    const pointPayment = await resolvePointPayment({
+        paymentMethod: input.paymentMethod,
+        orderId: input.cardPaymentReference ?? null,
+        saleTotal: total,
+    });
     const tender = resolveTender({
         paymentMethod: input.paymentMethod,
         total,
         amountReceived: input.amountReceived,
         cardPaymentReference: input.cardPaymentReference,
-    });
-    const pointPayment = await resolvePointPayment({
-        paymentMethod: input.paymentMethod,
-        orderId: tender.cardPaymentReference,
-        saleTotal: total,
+        ...(pointPayment ? { cardAmount: Number(pointPayment.amount) } : {}),
     });
 
     // Firestore exige que todas las lecturas de una transacción ocurran antes
@@ -533,6 +592,13 @@ export const createSale = async (input: {
         if (!cashSessionDoc.exists) {
             throw notFound('Turno de caja');
         }
+        // El turno es de quien lo abrió: sin esto un cajero puede cargar ventas en
+        // efectivo al turno de otro y dejarle el faltante en su corte.
+        assertCanAccessSession(
+            { openedBy: cashSessionDoc.data()!.openedBy as string },
+            input.cashierId,
+            input.roleSlug,
+        );
         if (cashSessionDoc.data()?.closedAt) {
             throw badRequest('El turno de caja ya está cerrado');
         }
@@ -601,6 +667,8 @@ export const createSale = async (input: {
             paymentMethod: input.paymentMethod,
             amountReceived: tender.amountReceived,
             change: tender.change,
+            cashAmount: tender.cashAmount,
+            cardAmount: tender.cardAmount,
             cardPaymentReference: pointPayment?.orderId ?? tender.cardPaymentReference,
             pointPayment,
             cashSessionId: input.cashSessionId,

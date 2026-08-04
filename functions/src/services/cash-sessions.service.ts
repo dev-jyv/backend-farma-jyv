@@ -53,7 +53,10 @@ const buildSummary = (
             byMethod[method].total += sale.total;
         }
         if (method === 'cash' || method === 'mixed') {
-            cashInDrawerNet += (sale.amountReceived ?? 0) - (sale.change ?? 0);
+            // `cashAmount` es la parte del total pagada en efectivo. En ventas
+            // anteriores al split mixto se reconstruye como recibido − cambio.
+            cashInDrawerNet += sale.cashAmount ??
+                ((sale.amountReceived ?? 0) - (sale.change ?? 0));
         }
     }
 
@@ -107,13 +110,23 @@ const buildSummary = (
     };
 };
 
-const assertCanAccessSession = (
-    session: CashSession,
+/**
+ * Un turno de caja es de quien lo abrió: solo ese cajero (o un admin) puede
+ * consultarlo, moverlo o cargarle ventas y devoluciones. Se exporta porque
+ * `sales.service` y `sale-returns.service` deben aplicar la misma regla: sin ella
+ * un cajero puede cargar efectivo al turno de otro y dejarle el faltante en su
+ * corte. Acepta la forma mínima para poder llamarse con los datos del documento
+ * ya leído dentro de una transacción, sin una lectura extra.
+ */
+export const assertCanAccessSession = (
+    session: Pick<CashSession, 'openedBy'>,
     userId: string,
-    roleSlug: string,
+    roleSlug?: string | null,
 ): void => {
     if (session.openedBy !== userId && roleSlug !== 'admin') {
-        throw forbidden('Solo el cajero que abrió el turno o un administrador puede consultarlo');
+        throw forbidden(
+            'Solo el cajero que abrió el turno o un administrador puede usarlo',
+        );
     }
 };
 

@@ -17,6 +17,7 @@ import * as mercadoPagoService from './mercado-pago.service';
 import { writeLedgerEntryInTransaction } from './controlled.service';
 import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
+import { assertCanAccessSession } from './cash-sessions.service';
 
 const RETURNS_COUNTER_ID = 'saleReturns';
 const IDEMPOTENCY_COLLECTION = 'saleIdempotencyKeys';
@@ -176,6 +177,9 @@ export const createSaleReturn = async (input: {
     if (!session) {
         throw notFound('Turno de caja');
     }
+    // Misma regla que en la venta: el reembolso en efectivo sale del cajón de este
+    // turno, así que no puede cargarse al turno de otro cajero.
+    assertCanAccessSession(session, input.userId, input.roleSlug);
     if (session.closedAt) {
         throw badRequest('El turno de caja ya está cerrado');
     }

@@ -421,6 +421,84 @@ describe('controlled.service - reglas COFEPRIS', () => {
         expect(ledger.items.reduce((sum, entry) => sum + entry.quantity, 0)).toBe(2);
     });
 
+    it('el libro de control admite hasta 1000 renglones por página', async () => {
+        const product = await createProductFixture({ controlledGroup: 'II' });
+        const session = await openSession();
+        await stockProduct(product.id, 2, isoInDays(300));
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 100,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+            prescription: validPrescription,
+            prescriptionRetained: true,
+        });
+
+        // El resto de la API tope a 100; aquí se entrega el periodo completo.
+        const wide = await controlledService.listControlledLedger({
+            saleId: sale.id,
+            limit: 1000,
+        });
+        expect(wide.meta.limit).toBe(1000);
+
+        await expect(
+            controlledService.listControlledLedger({ saleId: sale.id, limit: 1001 }),
+        ).rejects.toMatchObject({
+            code: 'BAD_REQUEST',
+            message: expect.stringContaining('no puede ser mayor a 1000'),
+        });
+    });
+
+    it('exporta el periodo completo en CSV con encabezados y PII del renglón', async () => {
+        const product = await createProductFixture({ controlledGroup: 'I' });
+        const session = await openSession();
+        await stockProduct(product.id, 4, isoInDays(300));
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 2 }],
+            paymentMethod: 'cash',
+            amountReceived: 200,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+            prescription: validPrescription,
+            prescriptionRetained: true,
+        });
+
+        const { filename, csv, rows } = await controlledService.exportControlledLedger({
+            productId: product.id,
+            roleSlug: 'admin',
+        });
+
+        expect(filename).toBe('libro-control.csv');
+        expect(rows).toBe(1);
+        expect(csv.startsWith('\ufeff')).toBe(true);
+        expect(csv).toContain('Fecha,Movimiento,Folio venta');
+        expect(csv).toContain(sale.folio);
+        expect(csv).toContain('Grupo I (estupefacientes)');
+        expect(csv).toContain('1234567');
+        expect(csv).toContain('Sí');
+    });
+
+    it('la exportación completa está limitada a admin y gerente', async () => {
+        await expect(
+            controlledService.exportControlledLedger({ roleSlug: 'cashier' }),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+        await expect(
+            controlledService.exportControlledLedger({ roleSlug: 'manager' }),
+        ).resolves.toMatchObject({ filename: 'libro-control.csv' });
+    });
+
+    it('el nombre del archivo lleva el periodo exportado', async () => {
+        const result = await controlledService.exportControlledLedger({
+            from: '2026-07-01',
+            to: '2026-07-31',
+            roleSlug: 'admin',
+        });
+
+        expect(result.filename).toBe('libro-control-2026-07-01_a_2026-07-31.csv');
+    });
+
     it('un producto sin grupo no escribe libro de control', async () => {
         const product = await createProductFixture();
         const session = await openSession();

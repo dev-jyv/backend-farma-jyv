@@ -102,6 +102,8 @@ const buildSaleReceipt = (sale: Sale): Receipt => {
         paymentMethod: sale.paymentMethod,
         amountReceived: sale.amountReceived,
         change: sale.change,
+        cashAmount: sale.cashAmount ?? null,
+        cardAmount: sale.cardAmount ?? null,
         cashierId: sale.cashierId,
         customerName: sale.customerName,
         prescription: sale.prescription,
@@ -131,6 +133,8 @@ const buildReturnReceipt = (saleReturn: SaleReturn): Receipt => ({
     paymentMethod: saleReturn.refundMethod,
     amountReceived: null,
     change: null,
+    cashAmount: null,
+    cardAmount: null,
     cashierId: saleReturn.createdBy,
     customerName: null,
     prescription: null,
@@ -192,6 +196,14 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
 
     const tenderRows = [
         ['Pago', PAYMENT_LABELS[receipt.paymentMethod] ?? receipt.paymentMethod],
+        // En pago mixto el ticket debe mostrar el reparto, o el cliente no puede
+        // verificar el cambio contra lo que entregó en efectivo.
+        receipt.cardAmount !== null && receipt.cashAmount !== null
+            ? ['  Tarjeta', formatCurrency(receipt.cardAmount)]
+            : null,
+        receipt.cardAmount !== null && receipt.cashAmount !== null
+            ? ['  Efectivo', formatCurrency(receipt.cashAmount)]
+            : null,
         receipt.amountReceived !== null
             ? ['Recibido', formatCurrency(receipt.amountReceived)]
             : null,

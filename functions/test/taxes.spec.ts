@@ -7,6 +7,7 @@ import {
     sumTaxSummary,
     toCents,
 } from '../src/utils/taxes';
+import { buildCsv, escapeCsvValue } from '../src/utils/csv';
 
 /**
  * Precios con impuestos incluidos: el invariante que importa es que el desglose
@@ -117,5 +118,34 @@ describe('utils/taxes - prorateDiscount', () => {
 
     it('sin descuento devuelve ceros', () => {
         expect(prorateDiscount([10, 20], 0)).toEqual([0, 0]);
+    });
+});
+
+describe('utils/csv', () => {
+    it('neutraliza fórmulas para que Excel no las ejecute', () => {
+        expect(escapeCsvValue('=HYPERLINK("http://mal.example")'))
+            .toBe('"\'=HYPERLINK(""http://mal.example"")"');
+        expect(escapeCsvValue('+1')).toBe("'+1");
+        expect(escapeCsvValue('-1')).toBe("'-1");
+        expect(escapeCsvValue('@sum')).toBe("'@sum");
+    });
+
+    it('entrecomilla y duplica comillas cuando hace falta', () => {
+        expect(escapeCsvValue('Paracetamol, 500mg')).toBe('"Paracetamol, 500mg"');
+        expect(escapeCsvValue('Lote "A"')).toBe('"Lote ""A"""');
+        expect(escapeCsvValue('linea1\nlinea2')).toBe('"linea1\nlinea2"');
+        expect(escapeCsvValue('simple')).toBe('simple');
+    });
+
+    it('vacío para null y undefined', () => {
+        expect(escapeCsvValue(null)).toBe('');
+        expect(escapeCsvValue(undefined)).toBe('');
+        expect(escapeCsvValue(0)).toBe('0');
+    });
+
+    it('arma el archivo con BOM y CRLF', () => {
+        const csv = buildCsv(['a', 'b'], [[1, 'x'], [2, 'y']]);
+        expect(csv.startsWith('\ufeff')).toBe(true);
+        expect(csv).toBe('\ufeffa,b\r\n1,x\r\n2,y\r\n');
     });
 });

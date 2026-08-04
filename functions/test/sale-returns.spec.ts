@@ -395,9 +395,8 @@ describe('sale-returns.service - createSaleReturn', () => {
         const sale = await salesService.createSale({
             items: [{ productId: product.id, quantity: 1 }],
             paymentMethod: 'mixed',
-            // `resolveTender` exige hoy que el efectivo recibido cubra el total
-            // completo incluso en pago mixto (ver nota en GOALS.md).
-            amountReceived: 100,
+            // Tarjeta 50 de 100: el efectivo solo cubre los otros 50.
+            amountReceived: 50,
             cardPaymentReference: order.id,
             cashSessionId: session.id,
             cashierId: 'test-cashier',
@@ -436,6 +435,21 @@ describe('sale-returns.service - createSaleReturn', () => {
         expect(retry.id).toBe(first.id);
         expect((await batchesRepo.getBatchById(batch.id))!.quantity).toBe(8);
         expect((await salesRepo.getSaleById(sale.id))!.refundedTotal).toBe(232);
+    });
+
+    it('un gerente no puede cargar la devolución al turno de otro cajero', async () => {
+        const { product, session, sale } = await sellTwo();
+
+        await expect(
+            returnsService.createSaleReturn({
+                saleId: sale.id,
+                items: [{ productId: product.id, quantity: 1 }],
+                reason: 'Turno ajeno',
+                cashSessionId: session.id,
+                userId: 'manager-user',
+                roleSlug: 'manager',
+            }),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });
 
     it('solo admin o gerente pueden devolver', async () => {

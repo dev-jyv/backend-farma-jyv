@@ -6,6 +6,7 @@ import * as cashSessionsRepo from '../src/repositories/cash-sessions.repository'
 import * as customersRepo from '../src/repositories/customers.repository';
 import * as salesRepo from '../src/repositories/sales.repository';
 import * as salesService from '../src/services/sales.service';
+import * as cashSessionsService from '../src/services/cash-sessions.service';
 import * as mercadoPagoService from '../src/services/mercado-pago.service';
 import { AppError } from '../src/utils/errors';
 import { toTimestamp } from '../src/utils/firestore';
@@ -396,6 +397,151 @@ describe('sales.service - createSale (receta, cliente, sesión)', () => {
     });
 });
 
+describe('sales.service - createSale (pago mixto)', () => {
+    const mixedOrder = (amount: string) => ({
+        id: unique('ORD'),
+        status: 'processed' as const,
+        statusDetail: null,
+        terminalId: 'TERM-1',
+        amount,
+        externalReference: 'ref-1',
+        paymentId: 'PAY-1',
+    } as const);
+
+    it('el efectivo solo cubre la parte que no pagó la tarjeta', async () => {
+        const product = await createProductFixture({ salePrice: 100, totalStock: 2 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('60.00');
+        getOrderMock.mockResolvedValue(order);
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'mixed',
+            amountReceived: 40,
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+
+        expect(sale.total).toBe(100);
+        expect(sale.cardAmount).toBe(60);
+        expect(sale.cashAmount).toBe(40);
+        expect(sale.amountReceived).toBe(40);
+        expect(sale.change).toBe(0);
+    });
+
+    it('el cambio se calcula contra la parte en efectivo, no contra el total', async () => {
+        const product = await createProductFixture({ salePrice: 100, totalStock: 2 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('70.00');
+        getOrderMock.mockResolvedValue(order);
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'mixed',
+            amountReceived: 50,
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+
+        expect(sale.cashAmount).toBe(30);
+        expect(sale.change).toBe(20);
+    });
+
+    it('rechaza cuando el efectivo no alcanza a cubrir su parte', async () => {
+        const product = await createProductFixture({ salePrice: 100, totalStock: 2 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('30.00');
+        getOrderMock.mockResolvedValue(order);
+
+        await expect(
+            salesService.createSale({
+                items: [{ productId: product.id, quantity: 1 }],
+                paymentMethod: 'mixed',
+                amountReceived: 50,
+                cardPaymentReference: order.id,
+                cashSessionId: session.id,
+                cashierId: 'test-cashier',
+            }),
+        ).rejects.toMatchObject({
+            code: 'BAD_REQUEST',
+            message: expect.stringContaining('no cubre la parte en efectivo'),
+        });
+    });
+
+    it('si la tarjeta cubre el total, pide registrarla como pago con tarjeta', async () => {
+        const product = await createProductFixture({ salePrice: 100, totalStock: 2 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('100.00');
+        getOrderMock.mockResolvedValue(order);
+
+        await expect(
+            salesService.createSale({
+                items: [{ productId: product.id, quantity: 1 }],
+                paymentMethod: 'mixed',
+                amountReceived: 10,
+                cardPaymentReference: order.id,
+                cashSessionId: session.id,
+                cashierId: 'test-cashier',
+            }),
+        ).rejects.toMatchObject({
+            code: 'BAD_REQUEST',
+            message: expect.stringContaining('pago con tarjeta'),
+        });
+    });
+
+    it('solo la parte en efectivo entra al cajón', async () => {
+        const product = await createProductFixture({ salePrice: 100, totalStock: 2 });
+        const cashier = unique('cajero');
+        const session = await openSession(cashier);
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('60.00');
+        getOrderMock.mockResolvedValue(order);
+
+        await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'mixed',
+            amountReceived: 100,
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: cashier,
+        });
+
+        const { summary } = await cashSessionsService.getSessionSummary(
+            session.id,
+            cashier,
+            'admin',
+        );
+        // Cobrado 100 (60 tarjeta + 40 efectivo), recibió 100 y se le dieron 60 de cambio.
+        expect(summary.cashInDrawer).toBe(40);
+        expect(summary.byMethod.mixed.total).toBe(100);
+    });
+
+    it('en pago con tarjeta el total va completo a la tarjeta', async () => {
+        const product = await createProductFixture({ salePrice: 116, totalStock: 2 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = mixedOrder('116.00');
+        getOrderMock.mockResolvedValue(order);
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'card',
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+
+        expect(sale.cardAmount).toBe(116);
+        expect(sale.cashAmount).toBeNull();
+    });
+});
+
 describe('sales.service - createSale (Mercado Pago Point)', () => {
     it('persiste pointPayment cuando la order está processed y el monto coincide', async () => {
         const product = await createProductFixture({ salePrice: 50, totalStock: 1 });
@@ -578,21 +724,64 @@ describe('sales.service - createSale (idempotencia)', () => {
 
     it('la llave está aislada por cajero', async () => {
         const product = await createProductFixture({ salePrice: 10, totalStock: 10 });
-        const session = await openSession();
         const key = unique('idem-key');
         await stockProduct(product.id, 10);
+        // Un turno por cajero: cada uno solo puede cargar ventas al suyo.
+        const sessionA = await openSession('cashier-a');
+        const sessionB = await openSession('cashier-b');
         const payload = {
             idempotencyKey: key,
             items: [{ productId: product.id, quantity: 1 }],
             paymentMethod: 'cash' as const,
             amountReceived: 10,
-            cashSessionId: session.id,
         };
 
-        const cashierA = await salesService.createSale({ ...payload, cashierId: 'cashier-a' });
-        const cashierB = await salesService.createSale({ ...payload, cashierId: 'cashier-b' });
+        const cashierA = await salesService.createSale({
+            ...payload,
+            cashSessionId: sessionA.id,
+            cashierId: 'cashier-a',
+        });
+        const cashierB = await salesService.createSale({
+            ...payload,
+            cashSessionId: sessionB.id,
+            cashierId: 'cashier-b',
+        });
 
         expect(cashierB.id).not.toBe(cashierA.id);
+    });
+
+    it('un cajero no puede cargar la venta al turno de otro', async () => {
+        const product = await createProductFixture({ salePrice: 10, totalStock: 5 });
+        await stockProduct(product.id, 5);
+        const session = await openSession('cajero-dueño');
+
+        await expect(
+            salesService.createSale({
+                items: [{ productId: product.id, quantity: 1 }],
+                paymentMethod: 'cash',
+                amountReceived: 10,
+                cashSessionId: session.id,
+                cashierId: 'cajero-intruso',
+                roleSlug: 'cashier',
+            }),
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
+
+    it('un admin sí puede registrar en el turno de otro', async () => {
+        const product = await createProductFixture({ salePrice: 10, totalStock: 5 });
+        await stockProduct(product.id, 5);
+        const session = await openSession('cajero-dueño');
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 10,
+            cashSessionId: session.id,
+            cashierId: 'admin-user',
+            roleSlug: 'admin',
+        });
+
+        expect(sale.cashSessionId).toBe(session.id);
     });
 
     it('dos requests concurrentes con la misma llave producen una sola venta', async () => {
