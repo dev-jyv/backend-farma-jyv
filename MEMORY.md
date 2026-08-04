@@ -40,6 +40,8 @@ Caja: `GET|POST /v1/cash-sessions/:id/x-report` (vista previa / lectura registra
 Reportes: `GET /v1/reports/{sales-summary,profit,top-products,by-cashier,dead-stock}` (permiso **`dashboard:read`**).
 Escaneo: `POST /v1/inventory/scan` (GS1-128 / DataMatrix o código plano).
 
+Exportación: `GET /v1/inventory/controlled-ledger/export?from&to&group&productId` → CSV del periodo completo (archivo, sin envoltorio `{ data }`), solo admin/manager.
+
 Inventario: `GET /v1/inventory/alerts?windows=30,60,90`, `POST|GET /v1/inventory/counts`, `GET /v1/inventory/counts/:id`, `GET /v1/inventory/controlled-ledger`. Bitácora: `GET /v1/audit-logs` (permiso `users:read`).
 
 Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/receipt` (`?width=58|80`) devuelven `{ receipt, html }` (JSON + HTML para rollo térmico, sin Puppeteer).
@@ -62,7 +64,8 @@ services/ repositories/ types/ constants/ utils/   — capa de dominio (funcione
 - `services/` y `repositories/` son funciones exportadas planas (no `@Injectable`).
 - Escrituras multi-colección **siempre** en `firestore.runTransaction` (lecturas antes que escrituras).
 - Errores vía `AppError`; repos usan `notFound`/`conflict`, no `throw new Error` crudo.
-- Paginación: `parsePagination` con **máx. 100**. Listados empujan `from`/`to` a Firestore cuando aplica; enriquecer solo la página.
+- Paginación: `parsePagination` con **máx. 100** (excepción: el libro de control `GET /v1/inventory/controlled-ledger` admite hasta **1000** vía `parsePagination(..., { maxLimit })`). Para periodos más grandes existe la exportación CSV, no subir más el tope.
+- CSV: siempre con `utils/csv.ts` (neutraliza fórmulas `=`/`+`/`-`/`@`, BOM + CRLF para Excel). Exportar el libro completo es admin/manager (`assertCanExportControlledLedger`). Listados empujan `from`/`to` a Firestore cuando aplica; enriquecer solo la página.
 - Stock de producto: preferir `product.totalStock`; fallback a sumar lotes si falta el campo (docs viejos).
 - Auth: `AuthGuard` exige `roleId` en perfil (migración legacy solo vía script/`internal/migrate-roles`). Claims Auth son espejo para el cliente; la API autoriza con rol en Firestore. Sesión caduca a las **24:00 America/Mexico_City** del día de `auth_time` (refresco de ID token no la prolonga; hay que volver a iniciar sesión).
 - Anular venta: solo rol slug `admin` (`assertCanVoidSale`); se rechaza si la venta ya tiene devoluciones.
@@ -72,13 +75,15 @@ services/ repositories/ types/ constants/ utils/   — capa de dominio (funcione
 - **Conteo físico:** `POST /v1/inventory/counts` (admin/manager). Movimiento `adjustment_count` con cantidad **con signo**, nunca `exit_waste`. Lotes que cuadran quedan en el acta sin ajuste. Bitácora dentro de la misma transacción.
 - **Controlados COFEPRIS:** `product.controlledGroup` I–VI (tabla de reglas en `constants/controlled.ts`). I–III exigen receta + folio + `prescriptionRetained: true`; IV solo receta; V/VI libres. `doctorLicense` = cédula de 7-8 dígitos. Libro de control en `controlledSalesLedger`, escrito en la transacción de la venta; anulación y devolución **contra-asientan** con cantidad negativa (nunca se borra un renglón).
 - **Bitácora:** `audit.service` audita dinero, precios y accesos (no altas rutinarias). `recordAudit` traga su propio error para no tumbar la operación ya confirmada; `writeAuditInTransaction` cuando puede ser atómica; `diffFields` evita bitácoras vacías.
+- **Pago mixto:** tarjeta paga `cardAmount` (monto de la order Point) y el efectivo cubre `total - cardAmount`; el cambio se calcula contra la parte en efectivo. `resolvePointPayment` corre **antes** de `resolveTender` (el monto de la order define la parte en efectivo). Se persisten `Sale.cashAmount` y `Sale.cardAmount`; al cajón solo entra `cashAmount` (ventas viejas: `amountReceived - change`).
+- **El turno de caja es de quien lo abrió.** `assertCanAccessSession` (exportada desde `cash-sessions.service`) se aplica en consultas, movimientos, corte X/Z **y** en `createSale` / `createSaleReturn`: solo el cajero que abrió el turno o un admin puede cargarle ventas o devoluciones. En la venta se valida con el documento ya leído dentro de la transacción.
 - **Corte X vs Z:** `GET :id/x-report` no deja rastro; `POST :id/x-report` persiste en `cashReadings` con folio `X-`. Ambos rechazan turno cerrado. HTML térmico 58/80mm en `cash-reports.service` (mismo formato que el ticket).
 - **Reportes de gestión** (`analytics.service`, permiso `dashboard:read`): margen sobre `taxSummary.base` (el IVA no es ingreso), devoluciones restadas siempre, COGS desde `SaleItem.costAmount` (snapshot del `costPrice` del lote al vender; `null` si algún lote no tenía costo → cae en `salesWithoutCost`, no en utilidad 100%). `dead-stock` solo mira movimientos de **salida**.
 - **GS1:** `utils/gs1.ts` parsea FNC1 / paréntesis / longitud fija; AI 17 con `DD=00` = fin de mes; GTIN-14 se normaliza a EAN-13. `POST /v1/inventory/scan` devuelve producto + ítem de entrada precargado + `existingBatchId`.
 - Venta idempotente: `idempotencyKey` en body o header `Idempotency-Key` (opcional hoy). Doble chequeo — antes de consultar Mercado Pago y dentro de `runTransaction` (`transaction.create` de la llave junto con la venta). Misma llave + cobro distinto = `CONFLICT`. TTL de `expiresAt` se habilita con `gcloud firestore fields ttls update expiresAt --collection-group=saleIdempotencyKeys --enable-ttl`.
 - Respuestas `{ data, meta? }` (interceptor global passthrough si ya viene envuelto).
 - Textos en **español**. ESLint: comillas simples, indent **4**, máx. 100 cols.
-- Validación Zod endurecida (nivel farmacia MX, helpers en `schemas/common.ts`): dinero a 2 decimales (`money`/`positiveMoney`), cantidades enteras positivas (`qty`), fechas `YYYY-MM-DD` (`isoDate`), `rfc` (regex 12-13, uppercase), `phoneMx` (10 dígitos), `usoCfdiSchema` (enum G01/G02/G03/I01/D01/S01). Contratos que cambiaron: **`lotNumber` obligatorio** en entradas de inventario, caducidad no puede estar en el pasado, `barcode` 8-14 dígitos, password requiere un número, slug de rol `^[a-z0-9-]+$`, pago `mixed` exige `amountReceived > 0`.
+- Validación Zod endurecida (nivel farmacia MX, helpers en `schemas/common.ts`): dinero a 2 decimales (`money`/`positiveMoney`), cantidades enteras positivas (`qty`), fechas `YYYY-MM-DD` (`isoDate`), `rfc` (regex 12-13, uppercase), `phoneMx` (10 dígitos), `usoCfdiSchema` (enum G01/G02/G03/I01/D01/S01). Contratos que cambiaron: **`lotNumber` obligatorio** en entradas de inventario, caducidad no puede estar en el pasado, `barcode` 8-14 dígitos, password requiere un número, slug de rol `^[a-z0-9-]+$`, pago `mixed` exige `amountReceived > 0` (el efectivo recibido, no el total).
 
 ## Firestore rules
 
@@ -144,6 +149,13 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 - Backfill de `totalStock` / `productIds` / `batches.supplierId`: script listo (`npm run backfill:denormalized`, idempotente, `--dry-run` / `--force` / `--only=`). **Falta ejecutarlo en producción** y luego quitar los fallbacks.
 - `products.service` lee `salesRepo`/`entriesRepo`/`invoicesRepo` para el historial de producto (frontera de dominio borrosa, sin ciclo). Extraer a `product-history.service.ts` si crece.
 
+## Hallazgos de seguridad abiertos (revisión 2026-08-04)
+
+- `verifyWebhookSignature` falla **abierto** si `MERCADOPAGO_WEBHOOK_SECRET` no está configurado; la ruta del webhook es `@Public()`.
+- El id de order de MP se interpola sin codificar en la ruta de la API (`mpRequest`); no explotable hoy porque `mapOrder` proyecta solo siete escalares, pero falta `encodeURIComponent` o regex en el schema.
+
 ## Decisiones cerradas
+
+- **CFDI 4.0: no se construye todavía** (2026-08-04). Los datos ya están listos (desglose por partida, `usoCfdi`, `billing`). Al retomar: elegir PAC (Facturama recomendado por API REST y sandbox) y meter los datos del emisor en `.env` con el patrón `RECEIPT_*` (RFC, régimen fiscal, CP de expedición, serie/folio).
 
 - **Fachadas Nest `@Injectable`: descartado** (medido 2026-08-03). Cero ciclos entre services; 5 aristas cross-service, todas unidireccionales (`auth→roles`, `users→roles`, `inventory→products` solo para producto inline, `sales→mercado-pago`, `sales-report-sender→email`/`report-pdf`); cada controller importa 1 service (2 en `users` e `internal`). La capa de dominio sigue siendo funciones planas. Reabrir solo si aparece un ciclo de imports o si hace falta sustituir/mockear un service en tests.
