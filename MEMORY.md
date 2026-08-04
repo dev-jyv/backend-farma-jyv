@@ -31,10 +31,18 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `cashReadings` | Lecturas X registradas (folio `X-`, snapshot del resumen del turno) |
 | `saleReturns` | Devoluciones parciales de venta (folio `D-`, items con lote de origen, `refundMethod`, `taxSummary`, `pointRefund`) |
 | `saleIdempotencyKeys` | Llaves de idempotencia de venta (doc id `<cashierId>:<key>`; `saleId`, `requestFingerprint`, `expiresAt` 48h para TTL) |
+| `patients` | Padrón del consultorio (folio `EXP-`, CURP única, alergias, padecimientos crónicos, `customerId` opcional hacia `customers`); baja **lógica** (`isActive`), nunca borrado |
+| `medicalRecords` | Notas del expediente clínico (paciente/doctor denormalizados, `visitedAt`, `vitals` con `bmi` calculado en servidor, `attachments[]` con ruta de Storage) |
+| `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
 
 ## Endpoints (montados bajo `/v1`, servidos por controllers Nest en `src/modules/`)
 
-`auth`, `categories`, `products`, `inventory`, `invoices`, `uploads`, `sales`, `sale-returns`, `suppliers`, `users`, `roles`, `doctor`, `internal`, `cash-sessions`, `payments`, más `GET /v1/health`.
+`auth`, `categories`, `products`, `inventory`, `invoices`, `uploads`, `sales`, `sale-returns`, `suppliers`, `users`, `roles`, `doctor`, `internal`, `cash-sessions`, `payments`, `patients`, `medical-records`, `appointments`, más `GET /v1/health`.
+
+Consultorio (`modules/clinic`, áreas de permiso `patients` / `medicalRecords` / `appointments`):
+- `GET|POST /v1/patients`, `GET|PATCH /v1/patients/:id`, `GET /v1/patients/:id/overview` (conteos para la ficha), `GET /v1/patients/:id/records` (línea de tiempo, exige `medicalRecords:read`).
+- `GET|POST /v1/medical-records`, `GET|PATCH /v1/medical-records/:id`, `POST /v1/medical-records/:id/attachments` (multipart campo `file`, guarda en `clinical/<patientId>/<recordId>/`), `GET /v1/medical-records/:id/attachments/:attachmentId/url` (URL firmada bajo demanda, no persistida), `DELETE` del adjunto.
+- `GET|POST /v1/appointments`, `GET /v1/appointments/calendar?from&to&doctorId` (rango completo, tope 92 días), `GET /v1/appointments/availability?date&doctorId&durationMinutes` (huecos libres), `GET /v1/appointments/doctors` (existe porque `GET /users` exige `users:read`, que el doctor no tiene), `GET /v1/appointments/:id`, `PATCH /v1/appointments/:id`, `POST :id/reschedule`, `POST :id/status`.
 
 Caja: `GET|POST /v1/cash-sessions/:id/x-report` (vista previa / lectura registrada), `GET /v1/cash-sessions/:id/x-readings`; `POST :id/close` (Z) devuelve también `html`.
 Reportes: `GET /v1/reports/{sales-summary,profit,top-products,by-cashier,dead-stock}` (permiso **`dashboard:read`**).
@@ -143,7 +151,9 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 
 ## Pendientes conocidos
 
-- Módulo `doctor` stub.
+- Módulo `doctor` stub (el consultorio real vive en `modules/clinic`).
+- Horario de atención del consultorio hardcodeado en `constants/clinic.ts` (lun-vie 9-14 y 16-20, sáb 9-13, dom cerrado). Si se vuelve configurable por doctor, mover a una colección `clinicSettings`.
+- `medicalRecordAttachment.sizeBytes` queda en `0` cuando el archivo se adjunta por ruta ya subida a `/v1/uploads` (Storage no lo reporta en ese flujo); la subida directa a la nota sí lo guarda.
 - `resolveTender` exige que el efectivo recibido cubra el total completo incluso en pago `mixed` (donde parte la paga la tarjeta). Revisar la semántica de mixto antes de tocar el cálculo de cambio y el cajón.
 - `idempotencyKey` de venta es opcional por compatibilidad; volverla obligatoria cuando el frontend la envíe siempre. Falta habilitar la política TTL en `saleIdempotencyKeys`.
 - Backfill de `totalStock` / `productIds` / `batches.supplierId`: script listo (`npm run backfill:denormalized`, idempotente, `--dry-run` / `--force` / `--only=`). **Falta ejecutarlo en producción** y luego quitar los fallbacks.

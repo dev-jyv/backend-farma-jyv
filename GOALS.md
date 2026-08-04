@@ -30,7 +30,8 @@ Proveer la API REST que da soporte a la gestión de una farmacia: catálogo de p
 - **Facturas de compra** — carga y almacenamiento de archivos de factura en Cloud Storage.
 - **Reportes de ventas** — funciones programadas diaria y mensual que agregan ventas, renderizan PDF y lo envían por correo.
 - **Usuarios y roles** — control de acceso por permisos `{ área, nivel }`, roles de sistema (admin, cajero, gerente, doctor) y roles personalizados, con permisos espejados en custom claims de Firebase Auth.
-- **Módulo doctor** — área reservada/pendiente para funcionalidad médica.
+- **Consultorio médico** — padrón de pacientes con folio de expediente (`EXP-`), expediente clínico (notas por consulta con signos vitales, diagnóstico, tratamiento y archivos adjuntos en Storage) y agenda de citas con horario de atención, huecos libres calculados y control de traslapes. Sirve al front [farma-jyv-clinic](../farma-jyv-clinic) (Angular 22).
+- **Módulo doctor** — área reservada/pendiente para funcionalidad médica adicional (el consultorio ya salió de `doctor` a sus propias áreas de permiso).
 
 ## Objetivos no funcionales
 
@@ -44,6 +45,7 @@ Proveer la API REST que da soporte a la gestión de una farmacia: catálogo de p
 - Migración Express → NestJS **completa** (detalle abajo). Bootstrap Nest (`app.ts` + `app.module.ts`), módulos de dominio en `modules/`, guards/pipes/filtros globales, tests de caracterización para inventory y sales.
 - Módulos posteriores a la migración ya en código: `cash-sessions`, `customers`, `payments` (Mercado Pago Point), reportes de ventas programados (Puppeteer + Resend).
 - Deploy: función única `api` (`onRequest`, `us-central1`, 512MiB, 60s) + dos funciones `onSchedule` de reportes (1GiB).
+- Consultorio entregado (2026-08-04): áreas de permiso `patients` / `medicalRecords` / `appointments`, módulo Nest `modules/clinic`, colecciones `patients` / `medicalRecords` / `appointments`, tests de agenda en `test/appointments.spec.ts`.
 - Pendiente de producto: módulo `doctor` (placeholder) y el roadmap de la siguiente sección.
 - Deuda de datos: documentos históricos sin `totalStock` / `productIds` / `batches.supplierId`; el script de backfill existe pero falta correrlo en producción (ver P1.5).
 

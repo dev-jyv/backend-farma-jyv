@@ -19,6 +19,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { CashSessionsModule } from './modules/cash-sessions/cash-sessions.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { ClinicModule } from './modules/clinic/clinic.module';
 
 @Module({
     imports: [
@@ -36,6 +37,7 @@ import { CustomersModule } from './modules/customers/customers.module';
         CashSessionsModule,
         PaymentsModule,
         CustomersModule,
+        ClinicModule,
     ],
     controllers: [HealthController],
     providers: [

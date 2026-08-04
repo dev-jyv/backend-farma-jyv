@@ -109,5 +109,22 @@ service cloud.firestore {
       allow read: if canAccessSales();
       allow write: if false;
     }
+
+    // Consultorio. A diferencia del catálogo, aquí el cliente NO lee de Firestore:
+    // el front del consultorio consume solo la API (`/v1/patients`,
+    // `/v1/medical-records`, `/v1/appointments`), que aplica los permisos por área
+    // y por rol. Denegar también la lectura evita que un token de cajero baje el
+    // expediente completo de un paciente esquivando `medicalRecords:read`.
+    match /patients/{patientId} {
+      allow read, write: if false;
+    }
+
+    match /medicalRecords/{recordId} {
+      allow read, write: if false;
+    }
+
+    match /appointments/{appointmentId} {
+      allow read, write: if false;
+    }
   }
 }

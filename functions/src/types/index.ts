@@ -10,7 +10,10 @@ export type PermissionArea =
     | 'inventory'
     | 'invoices'
     | 'uploads'
-    | 'doctor';
+    | 'doctor'
+    | 'patients'
+    | 'medicalRecords'
+    | 'appointments';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -62,7 +65,16 @@ export type AuditAction =
     | 'role.updated'
     | 'role.permissions_changed'
     | 'user.role_changed'
-    | 'user.status_changed';
+    | 'user.status_changed'
+    /**
+     * Expediente clínico: la NOM-004 exige que el expediente sea íntegro y
+     * rastreable, así que toda edición de una nota ya guardada se audita
+     * (a diferencia de las altas rutinarias del resto del sistema).
+     */
+    | 'medicalRecord.updated'
+    | 'medicalRecord.attachment_added'
+    | 'appointment.cancelled'
+    | 'appointment.rescheduled';
 
 export type AuditEntity =
     | 'product'
@@ -71,7 +83,9 @@ export type AuditEntity =
     | 'cashSession'
     | 'inventoryCount'
     | 'role'
-    | 'user';
+    | 'user'
+    | 'medicalRecord'
+    | 'appointment';
 
 export interface AuditLog {
     id: string;
@@ -740,4 +754,135 @@ export interface AuthUser {
     roleId: string;
     role: RoleSummary;
     permissions: RolePermission[];
+}
+
+/* ── Consultorio: pacientes, expediente clínico y agenda ───────────────── */
+
+/**
+ * Quién ejecuta la acción en el consultorio. Se propaga desde el controller
+ * (`req.authUser`) porque la nota clínica y la cita guardan el nombre del doctor
+ * denormalizado, no solo su uid.
+ */
+export interface ClinicActor {
+    userId: string;
+    displayName: string;
+    roleSlug?: string | null;
+}
+
+export type PatientSex = 'male' | 'female' | 'other';
+
+export type BloodType = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-';
+
+export interface PatientEmergencyContact {
+    name: string;
+    phone: string;
+    relationship?: string;
+}
+
+export interface Patient {
+    id: string;
+    /** Folio de expediente visible al paciente: `EXP-000001`. */
+    folio: string;
+    firstName: string;
+    lastName: string;
+    /** `firstName lastName`, denormalizado para búsqueda y para pintar listas. */
+    fullName: string;
+    birthDate: Timestamp;
+    sex: PatientSex;
+    phone?: string;
+    email?: string;
+    /** CURP: identificador oficial mexicano, único cuando está presente. */
+    curp?: string;
+    bloodType?: BloodType;
+    allergies: string[];
+    chronicConditions: string[];
+    /** Enlace opcional al cliente de la farmacia (`customers`) para facturación. */
+    customerId?: string;
+    address?: string;
+    emergencyContact?: PatientEmergencyContact;
+    notes?: string;
+    isActive: boolean;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+export type MedicalRecordType =
+    | 'consultation'
+    | 'followUp'
+    | 'labResult'
+    | 'imaging'
+    | 'prescription'
+    | 'note';
+
+/** Signos vitales de la consulta. Todos opcionales: no toda nota los toma. */
+export interface Vitals {
+    heightCm?: number;
+    weightKg?: number;
+    temperatureC?: number;
+    systolic?: number;
+    diastolic?: number;
+    heartRate?: number;
+    respiratoryRate?: number;
+    oxygenSaturation?: number;
+    /** Calculado por el servidor a partir de peso y talla; no se acepta del cliente. */
+    bmi?: number;
+}
+
+export interface MedicalRecordAttachment {
+    id: string;
+    storagePath: string;
+    fileName: string;
+    mimeType: string;
+    sizeBytes: number;
+    uploadedBy: string;
+    uploadedAt: Timestamp;
+}
+
+export interface MedicalRecord {
+    id: string;
+    patientId: string;
+    /** Denormalizado para listar sin resolver el paciente en cada fila. */
+    patientName: string;
+    doctorId: string;
+    doctorName: string;
+    appointmentId?: string;
+    type: MedicalRecordType;
+    visitedAt: Timestamp;
+    chiefComplaint?: string;
+    vitals?: Vitals;
+    diagnosis?: string;
+    treatment?: string;
+    notes?: string;
+    attachments: MedicalRecordAttachment[];
+    createdBy: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+export type AppointmentStatus =
+    | 'scheduled'
+    | 'confirmed'
+    | 'in_progress'
+    | 'completed'
+    | 'cancelled'
+    | 'no_show';
+
+export interface Appointment {
+    id: string;
+    patientId: string;
+    patientName: string;
+    doctorId: string;
+    doctorName: string;
+    startAt: Timestamp;
+    endAt: Timestamp;
+    durationMinutes: number;
+    reason?: string;
+    status: AppointmentStatus;
+    notes?: string;
+    cancelReason?: string;
+    /** Nota del expediente generada al cerrar la cita, si existe. */
+    medicalRecordId?: string;
+    createdBy: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
 }
