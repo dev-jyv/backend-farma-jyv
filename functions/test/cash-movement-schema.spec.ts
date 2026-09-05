@@ -216,8 +216,14 @@ describe('closeCashSessionSchema', () => {
         expect(result.success).toBe(true);
     });
 
-    it('rechaza un efectivo contado negativo o con más de dos decimales', () => {
-        expect(closeCashSessionSchema.safeParse({ countedCashAmount: -1 }).success).toBe(false);
+    /**
+     * El negativo sí se acepta desde 2026-09: el conteo arrastra el fondo
+     * heredado —que puede venir en rojo— y la caja acaba en números rojos si se
+     * gastó de más o si un movimiento se registró mal. Los dos decimales siguen
+     * siendo obligatorios. Ver `signedMoney` y `test/open-cash-session-schema`.
+     */
+    it('acepta un efectivo contado negativo, pero no más de dos decimales', () => {
+        expect(closeCashSessionSchema.safeParse({ countedCashAmount: -1 }).success).toBe(true);
         expect(closeCashSessionSchema.safeParse({ countedCashAmount: 1.234 }).success).toBe(false);
     });
 });

@@ -38,6 +38,24 @@ export const positiveMoney = z
     .max(MAX_MONEY, `El monto no puede superar ${MAX_MONEY}`)
     .refine(maxTwoDecimals, { message: 'El monto debe tener máximo 2 decimales' });
 
+/**
+ * Monto que **sí** puede ser negativo: el fondo con el que abre un turno.
+ *
+ * El fondo hereda el efectivo que quedó del corte anterior, y ese saldo puede
+ * quedar en rojo si se retiró más de lo que había en el cajón. Recortarlo a
+ * cero no hacía aparecer el dinero: solo abría el turno con un fondo falso, y
+ * el faltante reaparecía en el arqueo del siguiente cierre sin explicación.
+ *
+ * Lo mismo vale para el conteo del cierre: arrastra ese fondo y la caja puede
+ * quedar en rojo por un gasto de más o un movimiento mal registrado.
+ */
+export const signedMoney = z
+    .number()
+    .finite()
+    .min(-MAX_MONEY, `El monto no puede ser menor a -${MAX_MONEY}`)
+    .max(MAX_MONEY, `El monto no puede superar ${MAX_MONEY}`)
+    .refine(maxTwoDecimals, { message: 'El monto debe tener máximo 2 decimales' });
+
 /** Mismo criterio que `MAX_MONEY`: ninguna partida real mueve un millón de piezas. */
 export const MAX_QTY = 1_000_000;
 

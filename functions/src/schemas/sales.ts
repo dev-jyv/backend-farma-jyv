@@ -7,6 +7,7 @@ import {
     positiveMoney,
     qty,
     rfc,
+    signedMoney,
     usoCfdiSchema,
 } from './common';
 
@@ -88,6 +89,12 @@ const saleProductItemSchema = z.object({
     productId: z.string().min(1),
     quantity: qty,
     discountAmount: money.optional(),
+    /**
+     * Precio cobrado por unidad. Lo manda el POS para que una venta sin conexión
+     * se registre con el precio del momento y no con el de catálogo al
+     * sincronizar. Ausente en clientes viejos: entonces manda el catálogo.
+     */
+    unitPrice: positiveMoney.optional(),
 });
 
 const saleServiceItemSchema = z.object({
@@ -167,18 +174,28 @@ export const createSaleSchema = z.object({
             path: ['amountReceived'],
         });
     }
-    if (data.paymentMethod === 'card' && !data.cardPaymentReference) {
+    /**
+     * La order de Point **no** es obligatoria: con la terminal desactivada, tarjeta
+     * y mixto se registran igual que el efectivo (`resolveTender` lo documenta y lo
+     * implementa). Exigirla aquí rechazaba con 400 toda venta con tarjeta hecha sin
+     * terminal, y el POS las dejaba atoradas en la cola.
+     *
+     * Cuando la order sí viene, `resolvePointPayment` la verifica contra Mercado
+     * Pago: monto, estado `processed` y que no se haya reutilizado.
+     *
+     * Lo que el mixto necesita siempre es el **reparto**: sin order que lo diga,
+     * tiene que venir `cardAmount`, o no hay forma de saber cuánto entró al cajón.
+     */
+    if (
+        data.paymentMethod === 'mixed' &&
+        !data.cardPaymentReference &&
+        (data.cardAmount === undefined || data.cardAmount === null)
+    ) {
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: 'El pago con tarjeta requiere el id de la order de Mercado Pago Point',
-            path: ['cardPaymentReference'],
-        });
-    }
-    if (data.paymentMethod === 'mixed' && !data.cardPaymentReference) {
-        ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: 'El pago mixto requiere el id de la order de Mercado Pago Point',
-            path: ['cardPaymentReference'],
+            message:
+                'El pago mixto requiere el monto cobrado con tarjeta (o la order de Mercado Pago Point)',
+            path: ['cardAmount'],
         });
     }
 });
@@ -315,11 +332,18 @@ export const listSalesQuerySchema = z.object({
 });
 
 export const openCashSessionSchema = z.object({
-    openingAmount: money,
+    /** Puede ser negativo: hereda el efectivo del corte anterior. Ver `signedMoney`. */
+    openingAmount: signedMoney,
 });
 
 export const closeCashSessionSchema = z.object({
-    countedCashAmount: money,
+    /**
+     * También puede ser negativo. No es "billetes contados a mano": arrastra el
+     * fondo heredado, que ya puede venir en rojo, y una caja puede quedar en
+     * números rojos si se gastó de más o si un movimiento se registró mal. Un
+     * cierre que no se puede capturar tal cual es un cierre que se falsea.
+     */
+    countedCashAmount: signedMoney,
     /** El POS lo cerró solo por expiración de sesión (24:00 CDMX), sin cajero presente. */
     autoClosedByExpiry: z.boolean().optional(),
 });

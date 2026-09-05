@@ -917,10 +917,26 @@ describe('sales.service - voidSale', () => {
 });
 
 describe('sales.service - assertCanVoidSale', () => {
-    it('permite solo al rol admin', () => {
-        expect(() => salesService.assertCanVoidSale('admin')).not.toThrow();
-        expect(() => salesService.assertCanVoidSale('cashier')).toThrow(
-            expect.objectContaining({ code: 'FORBIDDEN' }),
-        );
+    const usuario = (slug: string, permisos: Array<{ area: string; level: string }>) =>
+        ({ role: { slug }, permissions: permisos }) as Parameters<
+            typeof salesService.assertCanVoidSale
+        >[0];
+
+    it('el cajero puede anular: es rutina de mostrador, no atribución de admin', () => {
+        // Exigir un admin obligaba a escalar cada error de cobro y empujaba a la
+        // práctica peor: dejar la venta mal registrada y cuadrarla a mano.
+        expect(() =>
+            salesService.assertCanVoidSale(usuario('cashier', [{ area: 'sales', level: 'write' }])),
+        ).not.toThrow();
+    });
+
+    it('el admin puede aunque no liste el permiso', () => {
+        expect(() => salesService.assertCanVoidSale(usuario('admin', []))).not.toThrow();
+    });
+
+    it('un rol sin `sales:write` no puede', () => {
+        expect(() =>
+            salesService.assertCanVoidSale(usuario('doctor', [{ area: 'doctor', level: 'write' }])),
+        ).toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));
     });
 });

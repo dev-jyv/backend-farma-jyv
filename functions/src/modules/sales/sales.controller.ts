@@ -203,7 +203,7 @@ export class SalesController {
         @CurrentUser() user: AuthUser,
         @Body(new ZodValidationPipe(voidSaleSchema)) body: VoidSaleInput,
     ) {
-        salesService.assertCanVoidSale(user.role.slug);
+        salesService.assertCanVoidSale(user);
         const sale = await salesService.voidSale(params.id, user.uid, user.role.slug, body);
         return { data: sale };
     }

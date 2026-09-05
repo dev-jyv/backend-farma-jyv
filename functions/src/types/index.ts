@@ -582,6 +582,13 @@ export interface SaleProductItem extends SaleItemCommon {
     productId: string;
     productName: string;
     /**
+     * Precio de catálogo al registrar la venta, guardado **solo cuando difiere**
+     * del cobrado (`unitPrice`). Una venta sin conexión se tarifa con el precio
+     * del momento; si el catálogo cambió entre medias, esto deja la divergencia
+     * auditable en vez de invisible.
+     */
+    catalogUnitPrice?: number;
+    /**
      * Costo de la mercancía vendida (COGS) tomado del `costPrice` de los lotes
      * asignados al momento de la venta. `null` cuando algún lote no tenía costo
      * capturado: así el reporte de margen distingue "sin costo" de "costo cero".

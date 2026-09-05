@@ -40,6 +40,8 @@ import {
 import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
 import { assertCanAccessSession } from './cash-sessions.service';
+import { hasPermission } from '../constants/permissions';
+import { RolePermission } from '../types';
 
 interface SaleProductItemInput {
     /** Ausente en los payloads del POS anterior a los servicios: se lee como mercancía. */
@@ -47,6 +49,8 @@ interface SaleProductItemInput {
     productId: string;
     quantity: number;
     discountAmount?: number;
+    /** Precio cobrado; ausente en clientes anteriores (manda el catálogo). */
+    unitPrice?: number;
 }
 
 interface SaleServiceItemInput {
@@ -462,7 +466,13 @@ export const createSale = async (input: {
             }
         }
 
-        const itemSubtotal = product.salePrice * item.quantity;
+        // Precio **cobrado**, no el de catálogo de hoy. Una venta sin conexión se
+        // sincroniza horas o días después; si el precio subió entre medias, tarifar
+        // con el nuevo dejaba el `amountReceived` corto y el backend rechazaba una
+        // venta que el cliente ya había pagado. El catálogo solo manda cuando el
+        // POS no informa precio (ventas anteriores a este campo).
+        const unitPrice = item.unitPrice ?? product.salePrice;
+        const itemSubtotal = unitPrice * item.quantity;
         const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
         subtotal += itemSubtotal;
         lineDiscountTotal += discountAmount;
@@ -472,7 +482,11 @@ export const createSale = async (input: {
             productId: product.id,
             productName: product.name,
             quantity: item.quantity,
-            unitPrice: product.salePrice,
+            unitPrice,
+            // Precio de catálogo al momento de registrar. Se guarda solo cuando
+            // difiere de lo cobrado: es la señal auditable de que el POS tarifó
+            // distinto, y evita que un precio manipulado pase inadvertido.
+            ...(unitPrice !== product.salePrice ? { catalogUnitPrice: product.salePrice } : {}),
             discountAmount,
             subtotal: itemSubtotal,
             batchAllocations: allocations,
@@ -976,6 +990,16 @@ export const voidSale = async (
     const firestore = db();
     const saleRef = firestore.collection('sales').doc(id);
 
+    // Fuera de la transacción: Firestore exige que todas sus lecturas ocurran
+    // antes de cualquier escritura, y esto solo decide quién puede anular.
+    const saleSnapshot = await saleRef.get();
+    const sesionId = saleSnapshot.exists
+        ? ((saleSnapshot.data()?.cashSessionId as string | null) ?? null)
+        : null;
+    const sesionCerrada = sesionId
+        ? Boolean((await cashSessionsRepo.getCashSessionById(sesionId))?.closedAt)
+        : false;
+
     const sale = await firestore.runTransaction(async (transaction) => {
         const saleDoc = await transaction.get(saleRef);
         if (!saleDoc.exists) {
@@ -987,6 +1011,14 @@ export const voidSale = async (
         }
         // Anular después de devolver parcialmente restauraría stock dos veces y
         // devolvería dinero de más: primero se cancela la devolución.
+        // Un turno cerrado ya tiene su arqueo firmado: cambiarle una venta lo
+        // descuadra hacia atrás. Ahí la anulación deja de ser rutina de
+        // mostrador y pasa a ser decisión de administración.
+        if (sesionCerrada && roleSlug !== 'admin') {
+            throw forbidden(
+                'La venta pertenece a un turno ya cerrado: solo un administrador puede anularla',
+            );
+        }
         if ((existing.refundedTotal ?? 0) > 0) {
             throw conflict(
                 'La venta tiene devoluciones registradas; no se puede anular completa',
@@ -1291,8 +1323,25 @@ export const syncPointPaymentFromOrder = async (orderId: string): Promise<Sale |
     return { ...sale, pointPayment };
 };
 
-export const assertCanVoidSale = (roleSlug: string): void => {
-    if (roleSlug !== 'admin') {
-        throw forbidden('Solo un administrador puede anular una venta');
+/**
+ * Anular es **operación normal de mostrador**: el cajero se equivoca de producto
+ * o el cliente se arrepiente, y eso pasa con la fila enfrente. Exigir un admin
+ * obligaba a escalar cada error y empujaba a la práctica peor —dejar la venta
+ * mal registrada y "arreglarla" a mano en el corte—, que es justo lo que un
+ * rastro auditable debe evitar.
+ *
+ * Basta `sales:write` (el permiso con el que se cobra). La protección no es
+ * negar la anulación, sino que quede firmada: `voidedAt`, `voidedBy` y el
+ * renglón de anulación en el libro de control.
+ *
+ * La excepción está en `voidSale`: tocar una venta de un turno **ya cerrado**
+ * cambia un arqueo firmado, y eso sí sigue siendo de admin.
+ */
+export const assertCanVoidSale = (user: {
+    role: { slug: string };
+    permissions: RolePermission[];
+}): void => {
+    if (!hasPermission(user.permissions, 'sales', 'write', user.role.slug)) {
+        throw forbidden('Tu rol no tiene permiso para anular ventas');
     }
 };

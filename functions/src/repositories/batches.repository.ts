@@ -47,18 +47,23 @@ export const listBatchesWithStockByProductIds = async (
         chunks.push(productIds.slice(index, index + CHUNK_SIZE));
     }
 
+    // Solo igualdad sobre `productId`: se resuelve con el índice de campo simple
+    // que Firestore mantiene solo. Combinarlo con `where('quantity','>',0)` exigía
+    // un índice compuesto (productId, quantity) — y si ese índice no está
+    // desplegado, Firestore responde FAILED_PRECONDITION y el sync entero
+    // devuelve 500 (pasó en producción). Los lotes agotados se descartan aquí:
+    // son pocos frente al catálogo y no valen un despliegue de índices como
+    // requisito para que la caja sincronice.
     const snapshots = await Promise.all(
-        chunks.map((chunk) =>
-            collection()
-                .where('productId', 'in', chunk)
-                .where('quantity', '>', 0)
-                .get(),
-        ),
+        chunks.map((chunk) => collection().where('productId', 'in', chunk).get()),
     );
 
     for (const snapshot of snapshots) {
         for (const doc of snapshot.docs) {
             const batch = { id: doc.id, ...doc.data() } as Batch;
+            if (!(batch.quantity > 0)) {
+                continue;
+            }
             const current = grouped.get(batch.productId);
             if (current) {
                 current.push(batch);

@@ -39,6 +39,49 @@ const partidaServicio = {
 };
 
 describe('contrato: el payload del POS pasa el schema del backend', () => {
+    /**
+     * Caso real de producción: con la terminal Point desactivada el POS registra
+     * tarjeta y mixto sin order, y el schema los rechazaba con 400. La venta ya
+     * estaba cobrada y se quedaba atorada en la cola del POS.
+     */
+    it('acepta pago mixto sin order de Point, con el reparto capturado', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            items: [partidaProducto],
+            paymentMethod: 'mixed',
+            amountReceived: 10,
+            cardPaymentReference: null,
+            cardAmount: 10,
+        });
+
+        expect(resultado.success).toBe(true);
+    });
+
+    it('acepta pago con tarjeta sin order: queda como registro, igual que el efectivo', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            items: [partidaProducto],
+            paymentMethod: 'card',
+            amountReceived: null,
+            cardPaymentReference: null,
+        });
+
+        expect(resultado.success).toBe(true);
+    });
+
+    /** Sin order NI reparto no hay forma de saber cuánto efectivo entró al cajón. */
+    it('rechaza el mixto sin order y sin monto con tarjeta', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            items: [partidaProducto],
+            paymentMethod: 'mixed',
+            amountReceived: 10,
+            cardPaymentReference: null,
+        });
+
+        expect(resultado.success).toBe(false);
+    });
+
     it('acepta un ticket mixto de medicamento y servicio', () => {
         const resultado = createSaleSchema.safeParse({
             ...base,
