@@ -93,7 +93,7 @@ export const createInvoice = async (input: {
     invoiceDate: string;
     totalAmount: number;
     hasInvoice: boolean;
-    fileUrl: string;
+    fileUrl?: string;
     userId: string;
 }): Promise<InvoiceWithDetails> => {
     const supplier = await suppliersRepo.getSupplierById(input.supplierId);
@@ -114,13 +114,25 @@ export const createInvoice = async (input: {
         throw badRequest('Fecha de factura inválida');
     }
 
-    const storagePath = input.fileUrl;
-    if (!storagePath.startsWith('uploads/')) {
-        throw badRequest('La ruta del archivo no es válida');
-    }
-
-    // `getFileMetadata` rechaza el archivo inexistente: una llamada, no dos.
-    const { fileName, mimeType } = await getFileMetadata(storagePath);
+    /**
+     * El comprobante es opcional: la factura se registra aunque el archivo
+     * llegue después. Los tres campos del archivo viajan juntos o no viajan —
+     * escribir `undefined` en Firestore es un error de escritura, no un campo
+     * vacío, así que se omiten en vez de asignarse.
+     */
+    const archivo: Pick<Invoice, 'storagePath' | 'fileName' | 'mimeType'> | undefined =
+        await (async () => {
+            const storagePath = input.fileUrl;
+            if (!storagePath) {
+                return undefined;
+            }
+            if (!storagePath.startsWith('uploads/')) {
+                throw badRequest('La ruta del archivo no es válida');
+            }
+            // `getFileMetadata` rechaza el archivo inexistente: una llamada, no dos.
+            const { fileName, mimeType } = await getFileMetadata(storagePath);
+            return { storagePath, fileName, mimeType };
+        })();
 
     const invoiceId = invoicesRepo.generateInvoiceId();
     const invoice = await invoicesRepo.createInvoice(
@@ -131,9 +143,7 @@ export const createInvoice = async (input: {
             invoiceDate: toTimestamp(input.invoiceDate),
             totalAmount: input.totalAmount,
             hasInvoice: input.hasInvoice,
-            storagePath,
-            fileName,
-            mimeType,
+            ...archivo,
         },
         input.userId,
     );

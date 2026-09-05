@@ -109,7 +109,12 @@ export const createInvoiceSchema = z.object({
     invoiceDate: isoDate,
     totalAmount: positiveMoney,
     hasInvoice: z.boolean(),
-    fileUrl: z.string().min(1, 'El comprobante es obligatorio').startsWith('uploads/'),
+    /**
+     * Opcional: se registra la factura aunque el comprobante llegue después (o
+     * nunca, cuando el proveedor solo dejó ticket). Lo que sí se valida es la
+     * ruta cuando viene, para que no entre un path arbitrario al Storage.
+     */
+    fileUrl: z.string().startsWith('uploads/', 'La ruta del comprobante no es válida').optional(),
 });
 
 export const listInvoicesQuerySchema = z.object({
