@@ -68,6 +68,17 @@ export class AppointmentsController {
         return { data: appointments };
     }
 
+    /**
+     * Horario de atención y parámetros de la agenda. El calendario del front los
+     * lee de aquí en vez de repetirlos: dos copias de la misma regla se separan
+     * en cuanto una cambia. También va antes de `:id`.
+     */
+    @Get('settings')
+    @RequirePermission('appointments', 'read')
+    settings() {
+        return { data: appointmentsService.getClinicSettings() };
+    }
+
     /** Doctores activos, para el selector de la agenda (no requiere `users:read`). */
     @Get('doctors')
     @RequirePermission('appointments', 'read')

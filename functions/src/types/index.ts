@@ -13,7 +13,56 @@ export type PermissionArea =
     | 'doctor'
     | 'patients'
     | 'medicalRecords'
-    | 'appointments';
+    | 'appointments'
+    /**
+     * Operación del mostrador: levantar la venta, cobrar con la terminal,
+     * abrir/cerrar el turno y dar de alta al cliente en caja.
+     *
+     * Área propia y no `sales` porque `sales` mezcla dos cosas distintas:
+     * vender y administrar lo vendido (anular, devolver, reembolsar en MP,
+     * configurar terminales). El cajero necesita lo primero y no debe tener
+     * lo segundo — con un área sola, darle de vender le daba también el poder
+     * de cancelar y reembolsar sus propias ventas.
+     */
+    | 'pos'
+    /**
+     * Cobros con Mercado Pago fuera de una venta. Área propia y no `sales`:
+     * mueve dinero sin ticket ni inventario detrás, así que es una atribución de
+     * supervisión, no del mostrador —un cajero puede vender sin poder cobrar
+     * fuera del ticket.
+     */
+    | 'directCharges'
+    /**
+     * Entrada de stock desde la caja: dar de alta mercancía contra una factura ya
+     * registrada. Área propia y no `inventory`, porque `inventory:write` abre
+     * además conteos, salidas y el libro de control —atribuciones que el
+     * mostrador no tiene aunque sí reciba la mercancía.
+     */
+    | 'stockEntry'
+    /**
+     * Auditoría de cortes de caja de TODAS las cajas (listado global, aprobar/
+     * rechazar ajustes pendientes). Exclusiva de `admin` — el cajero opera su
+     * propio turno con `pos:write`, esta área es para supervisión, no para
+     * operar el mostrador.
+     */
+    | 'cashSessions'
+    /**
+     * Auditoría de gastos de TODAS las cajas (listado global de `CashMovement`
+     * con `type: 'expense'`). Exclusiva de `admin` — el cajero registra sus
+     * propios gastos con `pos:write`, esta área es solo de supervisión.
+     */
+    | 'expenses'
+    /**
+     * Catálogo de servicios de la farmacia (consultas, procedimientos, otros) y
+     * el padrón de quienes los realizan. Escritura **exclusiva de `admin`**:
+     * el precio y la tasa de comisión de un servicio deciden cuánto se le paga
+     * al doctor, así que no es una atribución del mostrador ni de la gerencia.
+     *
+     * La lectura sí baja hasta el cajero, y se concede **explícitamente** en
+     * `cashier` y en `manager`: sin ella la caja no puede sincronizar el
+     * catálogo (`GET /pharmacy-services/sync`) ni cobrar un servicio.
+     */
+    | 'pharmacyServices';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -28,6 +77,14 @@ export interface Role {
     slug: string;
     description?: string;
     permissions: RolePermission[];
+    /**
+     * Se incrementa cada vez que cambia `permissions`. El mismo valor se sella
+     * en el perfil del usuario y en sus custom claims: el guard solo confía en
+     * los claims cuando ambos coinciden, de modo que un token emitido antes del
+     * cambio deja de valer al instante en vez de conservar el acceso viejo
+     * hasta que expire. `undefined` en documentos anteriores a la migración.
+     */
+    permissionsVersion?: number;
     isSystem: boolean;
     isActive: boolean;
     createdAt: Timestamp;
@@ -57,9 +114,14 @@ export type AuditAction =
     | 'product.price_changed'
     | 'product.deactivated'
     | 'sale.voided'
+    /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
+    | 'sale.unreconciled'
     | 'sale.discount_override'
     | 'sale.returned'
     | 'cash_session.closed_with_difference'
+    | 'cash_session.adjustment_reviewed'
+    /** Entrada o salida de efectivo hecha por un admin desde la caja de la farmacia. */
+    | 'cashMovement.created'
     | 'inventory.count_adjusted'
     | 'role.created'
     | 'role.updated'
@@ -74,18 +136,24 @@ export type AuditAction =
     | 'medicalRecord.updated'
     | 'medicalRecord.attachment_added'
     | 'appointment.cancelled'
-    | 'appointment.rescheduled';
+    | 'appointment.rescheduled'
+    /** Cobro con terminal fuera de una venta: mueve dinero sin ticket que lo respalde. */
+    | 'directCharge.created'
+    | 'directCharge.canceled';
 
 export type AuditEntity =
     | 'product'
     | 'sale'
     | 'saleReturn'
     | 'cashSession'
+    | 'cashMovement'
     | 'inventoryCount'
     | 'role'
     | 'user'
     | 'medicalRecord'
-    | 'appointment';
+    | 'appointment'
+    | 'directCharge'
+    | 'unreconciledSale';
 
 export interface AuditLog {
     id: string;
@@ -199,13 +267,31 @@ export interface SaleBilling {
 
 export type CashMovementType = 'deposit' | 'withdrawal' | 'expense';
 
+/** Solo aplica cuando `CashMovement.type === 'expense'`. */
+export type ExpenseCategory =
+    | 'salary' | 'food' | 'rent' | 'contingency' | 'electricity' | 'supplies' | 'supplier' | 'other';
+
 export interface CashMovement {
     id: string;
-    cashSessionId: string;
+    /**
+     * `null` en los movimientos de la caja de la farmacia: el admin puede sacar
+     * o meter efectivo sin turno abierto, y esos no entran a ningún corte.
+     */
+    cashSessionId: string | null;
     type: CashMovementType;
     amount: number;
     reason: string;
+    /** Solo poblado cuando `type === 'expense'`. */
+    category?: ExpenseCategory | null;
+    /** Obligatoria cuando `category` es `supplies`/`supplier`/`other`. */
+    description?: string | null;
     createdBy: string;
+    /**
+     * Nombre o correo de quien lo registró, denormalizado. El POS solo conoce el
+     * `uid`, y la auditoría la lee un admin que no tiene forma de traducirlo: sin
+     * esto la pantalla mostraba el uid crudo.
+     */
+    createdByLabel?: string | null;
     createdAt: Timestamp;
 }
 
@@ -467,9 +553,12 @@ export interface SaleTaxSummary {
     total: number;
 }
 
-export interface SaleItem {
-    productId: string;
-    productName: string;
+/**
+ * Lo que toda partida de venta tiene, venda mercancía o servicio: cantidad,
+ * precio, descuento e impuestos. Lo específico de cada naturaleza vive en
+ * `SaleProductItem` / `SaleServiceItem`.
+ */
+export interface SaleItemCommon {
     quantity: number;
     unitPrice: number;
     discountAmount: number;
@@ -480,6 +569,18 @@ export interface SaleItem {
     netAmount?: number;
     /** Ausente en ventas anteriores al desglose de impuestos. */
     taxes?: SaleItemTaxes;
+}
+
+/** Partida de mercancía: descuenta lotes y tiene costo de venta (COGS). */
+export interface SaleProductItem extends SaleItemCommon {
+    /**
+     * Discriminante de la unión. Los documentos anteriores a los servicios no lo
+     * tienen: al leer Firestore se resuelve con `saleItemKind(item)`
+     * (`kind ?? 'product'`), nunca leyendo `item.kind` a secas.
+     */
+    kind: 'product';
+    productId: string;
+    productName: string;
     /**
      * Costo de la mercancía vendida (COGS) tomado del `costPrice` de los lotes
      * asignados al momento de la venta. `null` cuando algún lote no tenía costo
@@ -492,6 +593,58 @@ export interface SaleItem {
     }>;
 }
 
+/**
+ * Partida de servicio (consulta, procedimiento, otro): no toca inventario y su
+ * comisión se acredita a un `ServiceProvider` del catálogo propio —un doctor que
+ * **no** es usuario del sistema—, por eso `providerId` es un id de
+ * `serviceProviders` y no un uid.
+ */
+export interface SaleServiceItem extends SaleItemCommon {
+    kind: 'service';
+    serviceId: string;
+    serviceName: string;
+    /** `null` cuando el servicio no exige quién lo realizó (`requiresPerformer: false`). */
+    providerId: string | null;
+    providerName: string | null;
+    /** Porcentaje (0..100) congelado al cobrar; el catálogo puede cambiar después. */
+    commissionRate: number;
+    /** Importe de la comisión en pesos, ya calculado con `commissionRate`. */
+    commissionAmount: number;
+}
+
+export type SaleLineItem = SaleProductItem | SaleServiceItem;
+
+/**
+ * Alias histórico de la partida de mercancía. Se conserva para no renombrar de
+ * golpe cada uso; el flujo de venta con servicios (fase 2) migra a
+ * `SaleLineItem`.
+ */
+export type SaleItem = SaleProductItem;
+
+/**
+ * Naturaleza de una partida leída de Firestore. Las ventas anteriores a los
+ * servicios no guardaron `kind`: todas eran mercancía.
+ */
+export const saleItemKind = (
+    item: { kind?: SaleLineItem['kind'] },
+): SaleLineItem['kind'] => item.kind ?? 'product';
+
+/** Estrecha una partida leída de Firestore a la variante de mercancía. */
+export const isSaleProductItem = (item: SaleLineItem): item is SaleProductItem =>
+    saleItemKind(item) === 'product';
+
+/** Estrecha una partida leída de Firestore a la variante de servicio. */
+export const isSaleServiceItem = (item: SaleLineItem): item is SaleServiceItem =>
+    saleItemKind(item) === 'service';
+
+/**
+ * Nombre imprimible de la partida, sea mercancía o servicio. Existe porque el
+ * ticket y la búsqueda de ventas no tienen por qué saber de qué naturaleza es
+ * cada renglón, pero el campo se llama distinto en cada variante.
+ */
+export const saleItemName = (item: SaleLineItem): string =>
+    isSaleServiceItem(item) ? item.serviceName : item.productName;
+
 export interface PointPaymentSnapshot {
     orderId: string;
     paymentId: string | null;
@@ -501,11 +654,47 @@ export interface PointPaymentSnapshot {
     externalReference: string;
 }
 
+/**
+ * Venta **cobrada en la caja** que el backend no pudo registrar como venta: el
+ * stock remoto no alcanzaba, el producto no existe allá, o el turno ya estaba
+ * cerrado. El dinero entró y el movimiento no puede perderse, pero registrarla
+ * en `sales` descuadraría el inventario, así que vive aquí hasta que alguien la
+ * concilie a mano.
+ */
+export interface UnreconciledSale {
+    id: string;
+    /** Id de la venta en el SQLite de la caja: la liga entre las dos bases. */
+    localId: string;
+    /** Folio provisional con el que se imprimió el ticket (`PENDIENTE-…`). */
+    localFolio: string | null;
+    /** Motivo con el que el backend rechazó la venta. */
+    reason: string;
+    total: number;
+    /** `CreateSalePayload` tal como se intentó registrar. */
+    payload: Record<string, unknown>;
+    cashierId: string;
+    cashSessionId: string | null;
+    /** Instante del cobro en la caja, no el del intento de sincronización. */
+    occurredAt: Timestamp | null;
+    resolvedAt: Timestamp | null;
+    resolvedBy: string | null;
+    createdAt: Timestamp;
+}
+
 export interface Sale {
     id: string;
     folio: string;
+    /**
+     * **Solo mercancía**, nunca ids de servicio: los reportes resuelven cada id
+     * contra `products`, así que un id de servicio aquí los revienta.
+     */
     productIds?: string[];
-    items: SaleItem[];
+    /**
+     * Mercancía y servicios en la misma venta. Las partidas anteriores a los
+     * servicios no traen `kind`: hay que estrecharlas con `isSaleProductItem` /
+     * `isSaleServiceItem`, nunca leyendo `item.kind` a secas.
+     */
+    items: SaleLineItem[];
     subtotal: number;
     discountTotal: number;
     total: number;
@@ -537,6 +726,30 @@ export interface Sale {
     prescriptionRetained?: boolean;
     /** Grupos COFEPRIS presentes en la venta; vacío si nada era controlado. */
     controlledGroups?: ControlledGroup[];
+    /**
+     * Denormalizados del cobro de servicios. **Los calcula el servidor**: el
+     * payload propone las partidas, el backend decide los totales. Ausentes en
+     * las ventas anteriores a los servicios, que se leen como 100 % farmacia.
+     */
+    hasServices?: boolean;
+    /** Ids de servicio de la venta; para `array-contains`. */
+    serviceIds?: string[];
+    /** Doctores con comisión en la venta; para `array-contains`. */
+    providerIds?: string[];
+    commissionTotal?: number;
+    /** Comisión por doctor, ya sumada por partida. */
+    commissionByProvider?: Record<string, number>;
+    /** Σ del importe neto de las partidas de mercancía; `total` si no hubo servicios. */
+    pharmacyTotal?: number;
+    /** Σ del importe neto de las partidas de servicio; 0 si no hubo. */
+    servicesTotal?: number;
+    /**
+     * Reparto del efectivo entre las dos ramas, con la regla **servicios
+     * primero**: el efectivo cubre los servicios y lo que sobra es de farmacia.
+     * Siempre suman `cashAmount ?? 0`.
+     */
+    pharmacyCashAmount?: number;
+    servicesCashAmount?: number;
     billing: SaleBilling | null;
     invoiceStatus: 'pending' | null;
     voidedAt: Timestamp | null;
@@ -636,17 +849,34 @@ export interface Receipt {
     voided: boolean;
 }
 
+export type CashAdjustmentStatus = 'pending' | 'approved' | 'rejected';
+
 export interface CashSession {
     id: string;
     openedBy: string;
     openingAmount: number;
+    /** Efectivo esperado **de farmacia**; el de servicios va aparte. */
     expectedCashAmount: number | null;
+    /**
+     * Efectivo esperado de la rama de servicios. El cajón es uno solo: el
+     * conteo (`countedCashAmount`) y la diferencia se calculan contra la **suma**
+     * de los dos esperados. Ausente en los turnos anteriores a los servicios.
+     */
+    expectedServicesCashAmount?: number | null;
     countedCashAmount: number | null;
     cashDifference: number | null;
     summary?: CashSessionSummary | null;
     closedBy: string | null;
     openedAt: Timestamp;
     closedAt: Timestamp | null;
+    /** `true` si `|cashDifference| >= 0.01` al cerrar y el cierre no fue automático. */
+    hasPendingAdjustment?: boolean;
+    adjustmentStatus?: CashAdjustmentStatus | null;
+    adjustmentReviewedBy?: string | null;
+    adjustmentReviewedAt?: Timestamp | null;
+    adjustmentNote?: string | null;
+    /** `true` si el turno se cerró solo por expiración de sesión (24:00 CDMX), sin cajero presente. */
+    autoClosedByExpiry?: boolean;
 }
 
 /**
@@ -680,6 +910,31 @@ export interface CashReturnTotals {
     cashTotal: number;
 }
 
+/**
+ * Corte de la rama de servicios, **hermano** del corte de farmacia y no unos
+ * campos sueltos: el cajón es uno solo, pero la farmacia quiere ver el dinero de
+ * consultas y procedimientos aparte del de mercancía.
+ *
+ * Ausente en los cortes anteriores a los servicios y en los turnos donde no se
+ * cobró ninguno.
+ */
+export interface CashServicesTotals {
+    /** Ventas **con servicios** del turno (no partidas). */
+    count: number;
+    voidedCount: number;
+    byMethod: {
+        cash: CashMethodTotals;
+        card: CashMethodTotals;
+        transfer: CashMethodTotals;
+        mixed: CashMethodTotals;
+    };
+    /** Σ del importe neto de las partidas de servicio. */
+    total: number;
+    commissionTotal: number;
+    /** Efectivo de servicios que quedó en el cajón (abre en 0: el fondo es de farmacia). */
+    cashInDrawer: number;
+}
+
 export interface CashSessionSummary {
     salesCount: number;
     voidedCount: number;
@@ -696,7 +951,10 @@ export interface CashSessionSummary {
         expenses: CashMovementTotals;
     };
     grandTotal: number;
+    /** Efectivo esperado **de farmacia** (fondo inicial + ventas − movimientos − devoluciones). */
     cashInDrawer: number;
+    /** Corte de servicios; solo presente si el turno cobró alguno. */
+    services?: CashServicesTotals;
 }
 
 export type PointOperatingMode = 'PDV' | 'STANDALONE' | 'UNDEFINED';
@@ -734,11 +992,72 @@ export interface PointOrder {
     paymentId: string | null;
 }
 
+/* ── Cobro directo con tarjeta (sin venta) ─────────────────────────────── */
+
+/**
+ * Estado del cobro directo. Es un estado propio, no el de Mercado Pago: la
+ * order Point tiene más estados de los que le importan a la caja, y el cobro
+ * puede quedar `approved` aunque la order caduque después.
+ */
+export type DirectChargeStatus = 'pending' | 'approved' | 'failed' | 'canceled';
+
+/** Cómo se cobró: terminal física (Point) o link de pago de Mercado Pago. */
+export type DirectChargeChannel = 'point' | 'online';
+
+/**
+ * Cobro en línea (Checkout Pro). `initPoint` es el link que se comparte con el
+ * cliente; `expiresAt` lo cierra para que un link viejo no cobre de nuevo.
+ */
+export interface OnlineChargeSnapshot {
+    preferenceId: string;
+    initPoint: string;
+    sandboxInitPoint: string | null;
+    paymentId: string | null;
+    /** Estado crudo del pago en Mercado Pago (`approved`, `rejected`, …). */
+    paymentStatus: string | null;
+    externalReference: string;
+    expiresAt: string | null;
+}
+
+/**
+ * Cobro que NO corresponde a una venta de mostrador (servicio, abono, cobro de
+ * terceros), por terminal Point o por link de pago. Vive en su propia colección
+ * `directCharges`: no toca inventario, ni el corte de caja, ni los reportes de
+ * ventas.
+ */
+export interface DirectCharge {
+    id: string;
+    folio: string;
+    amount: number;
+    concept: string;
+    channel: DirectChargeChannel;
+    status: DirectChargeStatus;
+    /** Detalle del rechazo tal como lo reporta Mercado Pago. */
+    statusDetail: string | null;
+    /** Presente solo en cobros por terminal. */
+    point: PointPaymentSnapshot | null;
+    /** Presente solo en cobros en línea. */
+    online: OnlineChargeSnapshot | null;
+    cashierId: string;
+    roleSlug: string | null;
+    canceledBy: string | null;
+    canceledAt: Timestamp | null;
+    approvedAt: Timestamp | null;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
 export interface UserProfile {
     id: string;
     email: string;
     displayName: string;
     roleId: string;
+    /**
+     * Copia de `Role.permissionsVersion` vigente cuando se sincronizaron los
+     * claims de este usuario. El guard ya lee el perfil en cada request, así
+     * que comparar contra el claim no cuesta lecturas extra.
+     */
+    permissionsVersion?: number;
     isActive: boolean;
     createdAt: Timestamp;
 }
@@ -883,6 +1202,68 @@ export interface Appointment {
     /** Nota del expediente generada al cerrar la cita, si existe. */
     medicalRecordId?: string;
     createdBy: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+/** Naturaleza del servicio que cobra la farmacia. */
+export type ServiceType = 'consultation' | 'procedure' | 'other';
+
+/**
+ * Régimen de IVA del servicio. A diferencia del producto —que lo modela con dos
+ * banderas (`hasIva`/`hasIvaZero`) que pueden contradecirse— aquí es un solo
+ * valor: exento (sin IVA y sin derecho a acreditamiento, el caso de la consulta
+ * médica), tasa 0% o tasa general 16%.
+ */
+export type ServiceTaxMode = 'exempt' | 'zero' | 'iva16';
+
+/**
+ * Servicio que la farmacia cobra en la misma venta que la mercancía: consulta,
+ * procedimiento u otro concepto.
+ *
+ * No tiene `stock`, `minStock`, `controlledGroup` ni `costPrice` **a propósito**:
+ * un servicio no se recibe en una entrada de inventario ni se agota, y su corte
+ * se lleva aparte del de mercancía.
+ */
+export interface PharmacyService {
+    id: string;
+    /** Clave corta con la que la caja lo busca; única en la colección. */
+    code: string;
+    name: string;
+    description?: string;
+    serviceType: ServiceType;
+    /** Precio al público con impuesto **incluido**, igual criterio que `Product.salePrice`. */
+    price: number;
+    taxMode: ServiceTaxMode;
+    hasIeps: boolean;
+    /** Tasa de IEPS como fracción (0.08 = 8%), no como porcentaje. */
+    iepsRate?: number;
+    /** Porcentaje 0..100 que se le acredita a quien realiza el servicio; 0 = sin comisión. */
+    commissionRate: number;
+    /** `true` ⇒ al cobrarlo es obligatorio elegir el `ServiceProvider` que lo realizó. */
+    requiresPerformer: boolean;
+    isActive: boolean;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+    createdBy: string;
+    updatedBy: string;
+}
+
+/**
+ * Quien realiza un servicio y cobra la comisión: el "doctor" del catálogo.
+ *
+ * **No es un usuario del sistema**: no tiene uid, ni rol, ni acceso. La farmacia
+ * le acredita comisiones sin darle de alta en Firebase Auth, que es justo lo que
+ * hacía inviable reutilizar `users` para esto.
+ */
+export interface ServiceProvider {
+    id: string;
+    name: string;
+    /** Cédula profesional mexicana: 7 u 8 dígitos, la misma validación que la receta. */
+    license?: string;
+    /** Porcentaje 0..100 por omisión; **el servicio manda** si define el suyo. */
+    defaultCommissionRate?: number;
+    isActive: boolean;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }

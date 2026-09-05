@@ -8,4 +8,43 @@ module.exports = {
     // Serial: las suites comparten el emulador de Firestore y en paralelo se pelean
     // por los locks de transacción (ABORTED: Transaction lock timeout).
     maxWorkers: 1,
+
+    collectCoverageFrom: [
+        'src/**/*.ts',
+        // Scripts de operación de un solo uso: se ejecutan a mano y con la vista
+        // puesta en su salida, no en producción.
+        '!src/scripts/**',
+        '!src/**/*.d.ts',
+    ],
+    coverageThreshold: {
+        // Piso global: no es una meta, es un trinquete. Un cambio no debería
+        // poder bajar la cobertura sin que alguien lo decida a propósito
+        // subiendo estos números.
+        //
+        // Van ~2 puntos por debajo de lo medido (≈47% líneas, ≈44% ramas)
+        // a propósito: las suites comparten el emulador y reutilizan lo que
+        // dejaron las anteriores, así que la cifra oscila alrededor de un punto
+        // entre corridas. Sin ese margen el gate falla de forma intermitente y
+        // el equipo acaba desactivándolo, que es peor que no tenerlo.
+        global: {
+            lines: 45,
+            statements: 46,
+            branches: 41,
+            functions: 43,
+        },
+        // Identidad y acceso: aquí un hueco de cobertura es una escalada de
+        // privilegios, así que se exige mucho más que en el resto del código.
+        './src/modules/identity/guards/auth.guard.ts': {
+            lines: 100,
+            branches: 90,
+        },
+        './src/utils/memory-cache.ts': {
+            lines: 100,
+            branches: 90,
+        },
+        './src/services/users.service.ts': {
+            lines: 80,
+            branches: 80,
+        },
+    },
 };

@@ -17,6 +17,41 @@ export const getMercadoPagoUserId = (): string => {
 export const getMercadoPagoWebhookSecret = (): string | null =>
     process.env.MERCADOPAGO_WEBHOOK_SECRET?.trim() || null;
 
+/**
+ * `true` cuando corre desplegado en Cloud Functions. El emulador exporta
+ * `FUNCTIONS_EMULATOR=true`, y los tests corren sin `K_SERVICE`, así que ninguno
+ * de los dos se toma por producción.
+ */
+export const isProduction = (): boolean =>
+    process.env.FUNCTIONS_EMULATOR !== 'true' &&
+    (!!process.env.K_SERVICE || process.env.NODE_ENV === 'production');
+
+/**
+ * Qué imprime la terminal Point al aprobar. Por defecto `no_ticket`: el POS
+ * imprime su propio ticket y el comprobante de la terminal duplica papel y
+ * confunde al cliente. Valores válidos: `no_ticket`, `seller_ticket`,
+ * `buyer_ticket`.
+ */
+export const getPointPrintOnTerminal = (): 'no_ticket' | 'seller_ticket' | 'buyer_ticket' => {
+    const value = process.env.MERCADOPAGO_PRINT_ON_TERMINAL?.trim();
+    return value === 'seller_ticket' || value === 'buyer_ticket' ? value : 'no_ticket';
+};
+
+/**
+ * URL pública de la API (sin slash final), usada como `notification_url` de las
+ * preferencias de Checkout Pro. Si no está configurada, la preferencia se crea
+ * sin ella y el webhook global del panel de Mercado Pago sigue funcionando.
+ */
+export const getPublicApiUrl = (): string | null =>
+    process.env.PUBLIC_API_URL?.trim().replace(/\/+$/, '') || null;
+
+/**
+ * URL pública del POS/tienda a la que Mercado Pago devuelve al cliente después
+ * de pagar. Opcional: sin ella la preferencia se crea sin `back_urls`.
+ */
+export const getCheckoutReturnUrl = (): string | null =>
+    process.env.MERCADOPAGO_RETURN_URL?.trim().replace(/\/+$/, '') || null;
+
 export const getResendApiKey = (): string => {
     const key = process.env.RESEND_API_KEY;
     if (!key) {

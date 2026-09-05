@@ -102,12 +102,14 @@ export const listEntriesQuerySchema = z.object({
 });
 
 export const createInvoiceSchema = z.object({
-    supplierId: z.string().min(1),
-    invoiceNumber: z.string().trim().min(1).max(60),
+    supplierId: z.string().min(1, 'El proveedor es obligatorio'),
+    invoiceNumber: z.string().trim()
+        .min(1, 'El folio es obligatorio')
+        .max(60, 'El folio no puede superar 60 caracteres'),
     invoiceDate: isoDate,
     totalAmount: positiveMoney,
     hasInvoice: z.boolean(),
-    fileUrl: z.string().min(1).startsWith('uploads/'),
+    fileUrl: z.string().min(1, 'El comprobante es obligatorio').startsWith('uploads/'),
 });
 
 export const listInvoicesQuerySchema = z.object({

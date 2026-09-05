@@ -2,7 +2,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as admin from 'firebase-admin';
-import { migrateUsersToRoleIds, seedSystemRoles } from '../services/roles.service';
+import { RoleMigrationReport, runRoleMigration } from '../services/roles.service';
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const functionsDir = path.resolve(__dirname, '../..');
@@ -103,14 +103,60 @@ const initLocalAdmin = (): void => {
     }
 };
 
-const runLocalMigration = async (): Promise<void> => {
-    console.log('Sembrando roles del sistema...');
-    const roleIds = await seedSystemRoles();
-    console.log('Roles creados:', roleIds);
+/**
+ * Imprime el reporte tolerando respuestas incompletas: si la Function desplegada
+ * es anterior al reporte detallado, devuelve solo `{ roleIds, migrated }` y leer
+ * `report.rolesCreated.length` a ciegas truena el script *después* de que la
+ * migración ya corrió en el servidor.
+ */
+const printReport = (report: Partial<RoleMigrationReport> & { migrated?: number }): void => {
+    const rolesCreated = report.rolesCreated ?? [];
+    const rolesUpdated = report.rolesUpdated ?? [];
+    const rolesGrantedPos = report.rolesGrantedPos ?? [];
+    const usersSkipped = report.usersSkipped ?? [];
+    const usersMigrated = report.usersMigrated ?? report.migrated ?? 0;
 
-    console.log('Migrando usuarios...');
-    const migrated = await migrateUsersToRoleIds(roleIds);
-    console.log(`Usuarios migrados: ${migrated}`);
+    console.log('Roles:', report.roleIds ?? {});
+    if (rolesCreated.length > 0) {
+        console.log(`Roles creados: ${rolesCreated.join(', ')}`);
+    }
+    if (rolesUpdated.length > 0) {
+        console.log(
+            'Roles con permisos actualizados (claims reemitidos): ' +
+            `${rolesUpdated.join(', ')}`,
+        );
+    }
+    if (rolesGrantedPos.length > 0) {
+        console.log(
+            'Roles personalizados que recibieron pos:write: ' +
+            `${rolesGrantedPos.join(', ')}`,
+        );
+    }
+    if ((report.rolesBackfilled ?? 0) > 0) {
+        console.log(`Roles con versión inicial de permisos: ${report.rolesBackfilled}`);
+    }
+    console.log(`Usuarios migrados: ${usersMigrated}`);
+
+    // Un usuario sin rol no puede autenticarse: se lista para que el operador
+    // lo resuelva a mano en vez de descubrirlo cuando alguien queda bloqueado.
+    if (usersSkipped.length > 0) {
+        console.warn(`Usuarios sin migrar: ${usersSkipped.length}`);
+        usersSkipped.forEach(({ uid, reason }) => console.warn(`  - ${uid}: ${reason}`));
+    }
+
+    if (report.rolesCreated === undefined) {
+        console.warn(
+            '\nLa API respondió con el reporte viejo (sin rolesCreated/rolesGrantedPos): ' +
+            'la Function desplegada es anterior a esta versión del script.\n' +
+            'Corre `npm run deploy` y vuelve a ejecutar la migración para que se apliquen ' +
+            'el backfill de permissionsVersion y el de pos:write.',
+        );
+    }
+};
+
+const runLocalMigration = async (): Promise<void> => {
+    console.log('Ejecutando migración de roles...');
+    printReport(await runRoleMigration());
 };
 
 const runRemoteMigration = async (): Promise<void> => {
@@ -137,16 +183,15 @@ const runRemoteMigration = async (): Promise<void> => {
     });
 
     const body = await response.json() as {
-        data?: { roleIds: Record<string, string>; migrated: number };
+        data?: RoleMigrationReport;
         error?: { message?: string };
     };
 
-    if (!response.ok) {
+    if (!response.ok || !body.data) {
         throw new Error(body.error?.message ?? `Migración remota falló (${response.status})`);
     }
 
-    console.log('Roles creados:', body.data?.roleIds);
-    console.log(`Usuarios migrados: ${body.data?.migrated ?? 0}`);
+    printReport(body.data);
 };
 
 const printSetupHelp = (reason: string): void => {

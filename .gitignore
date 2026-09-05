@@ -70,3 +70,10 @@ node_modules/
 *-firebase-adminsdk-*.json
 *serviceAccount*.json
 *credentials*.json
+# El nombre exacto que busca functions/src/scripts/migrate-roles.ts
+service-account.json
+**/service-account.json
+
+# Service account key: el script de migración la busca en la raíz y en functions/
+service-account.json
+**/service-account.json

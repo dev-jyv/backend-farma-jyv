@@ -1,40 +1,8 @@
 import * as admin from 'firebase-admin';
-import { AuthUser, UserProfile } from '../types';
-import { badRequest, conflict, notFound } from '../utils/errors';
-import {
-    createUserProfile,
-    getUserProfile,
-    updateUserProfile,
-} from '../repositories/users.repository';
-import { getActiveRoleById, resolveActiveUserRole, syncUserClaims } from './roles.service';
-
-type UserProfileWithLegacyRole = UserProfile & { role?: string };
-
-export const getAuthenticatedUser = async (uid: string): Promise<AuthUser> => {
-    const profile = await getUserProfile(uid);
-    if (!profile || !profile.isActive) {
-        throw notFound('Usuario');
-    }
-
-    const legacyProfile = profile as UserProfileWithLegacyRole;
-    const role = await resolveActiveUserRole({
-        roleId: legacyProfile.roleId,
-        legacyRole: legacyProfile.role,
-    });
-
-    return {
-        uid: profile.id,
-        email: profile.email,
-        roleId: role.id,
-        role: {
-            id: role.id,
-            name: role.name,
-            slug: role.slug,
-        },
-        permissions: role.permissions,
-        displayName: profile.displayName,
-    };
-};
+import { AuthUser } from '../types';
+import { badRequest, conflict } from '../utils/errors';
+import { createUserProfile } from '../repositories/users.repository';
+import { getActiveRoleById, rolePermissionsVersion, syncUserClaims } from './roles.service';
 
 export const registerStaff = async (input: {
     email: string;
@@ -61,11 +29,12 @@ export const registerStaff = async (input: {
     }
 
     try {
-        await syncUserClaims(userRecord.uid, role.id, role.slug, role.permissions);
+        await syncUserClaims(userRecord.uid, role);
         await createUserProfile(userRecord.uid, {
             email: input.email,
             displayName: input.displayName,
             roleId: role.id,
+            permissionsVersion: rolePermissionsVersion(role),
             isActive: true,
         });
     } catch (error) {
@@ -89,13 +58,4 @@ export const registerStaff = async (input: {
         permissions: role.permissions,
         displayName: input.displayName,
     };
-};
-
-export const syncUserRole = async (
-    uid: string,
-    roleId: string,
-): Promise<void> => {
-    const role = await getActiveRoleById(roleId);
-    await syncUserClaims(uid, role.id, role.slug, role.permissions);
-    await updateUserProfile(uid, { roleId: role.id });
 };

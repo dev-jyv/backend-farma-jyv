@@ -56,8 +56,13 @@ export class SaleReturnsController {
     @RequirePermission('sales', 'read')
     async list(
         @Query(new ZodValidationPipe(listSaleReturnsQuerySchema)) query: ListSaleReturnsQuery,
+        @CurrentUser() user: AuthUser,
     ) {
-        const items = await saleReturnsService.listSaleReturns(query);
+        const items = await saleReturnsService.listSaleReturns({
+            ...query,
+            requesterId: user.uid,
+            requesterRoleSlug: user.role.slug,
+        });
         return { data: items };
     }
 

@@ -26,7 +26,10 @@ export const renderCashReportHtml = (input: {
     folio: string | null;
     session: CashSession;
     summary: CashSessionSummary;
+    /** Esperado de farmacia. */
     expectedCashAmount: number;
+    /** Esperado de servicios; solo se imprime si el turno cobró alguno. */
+    expectedServicesCashAmount?: number;
     countedCashAmount?: number | null;
     cashDifference?: number | null;
     issuedBy: string;
@@ -62,9 +65,42 @@ export const renderCashReportHtml = (input: {
         rows.push(['Ventas anuladas', `${input.summary.voidedCount}`]);
     }
 
+    /**
+     * Bloque de servicios: aparece **solo si hubo actividad de servicios** en el
+     * turno. Un corte de farmacia pura sale exactamente como salía antes.
+     */
+    const services = input.summary.services;
+    const hasServiceActivity = Boolean(
+        services && (services.count > 0 || services.voidedCount > 0),
+    );
+    const servicesRows: Array<[string, string]> = [];
+    if (services && hasServiceActivity) {
+        servicesRows.push(['Servicios cobrados', `${services.count}`]);
+        servicesRows.push(['Total servicios', formatCurrency(services.total)]);
+        servicesRows.push(['Comisiones', formatCurrency(services.commissionTotal)]);
+        servicesRows.push([
+            'Efectivo esperado servicios',
+            formatCurrency(input.expectedServicesCashAmount ?? services.cashInDrawer),
+        ]);
+        if (services.voidedCount > 0) {
+            servicesRows.push(['Servicios anulados', `${services.voidedCount}`]);
+        }
+    }
+
     const closingRows: Array<[string, string]> = [
-        ['Efectivo esperado', formatCurrency(input.expectedCashAmount)],
+        [
+            // El cajón es uno solo: cuando hay servicios se aclara de qué rama es
+            // cada esperado y se imprime el total, que es contra lo que se cuenta.
+            hasServiceActivity ? 'Efectivo esperado (farmacia)' : 'Efectivo esperado',
+            formatCurrency(input.expectedCashAmount),
+        ],
     ];
+    if (hasServiceActivity) {
+        closingRows.push([
+            'Efectivo esperado (total)',
+            formatCurrency(input.expectedCashAmount + (input.expectedServicesCashAmount ?? 0)),
+        ]);
+    }
     if (input.kind === 'Z') {
         closingRows.push(['Efectivo contado', formatCurrency(input.countedCashAmount ?? 0)]);
         closingRows.push(['Diferencia', formatCurrency(input.cashDifference ?? 0)]);
@@ -117,6 +153,9 @@ export const renderCashReportHtml = (input: {
     <div class="muted">${escapeHtml(input.issuedAt.toLocaleString('es-MX'))}</div>
     <hr>
     <table>${buildRows(rows)}</table>
+    ${servicesRows.length
+        ? `<hr><div class="center">SERVICIOS</div><table>${buildRows(servicesRows)}</table>`
+        : ''}
     <hr>
     <table>
         <tr class="total">

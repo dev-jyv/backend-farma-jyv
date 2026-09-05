@@ -4,10 +4,11 @@ import {
 } from '../constants/uploads';
 import { badRequest } from '../utils/errors';
 import { db } from '../utils/firestore';
+import { UploadedFile } from '../types/uploads';
 import { getFileUrl, sanitizeFileName, uploadFile } from '../utils/storage';
 
 export const uploadFileToStorage = async (
-    file: Express.Multer.File,
+    file: UploadedFile,
 ): Promise<{
     storagePath: string;
     fileName: string;

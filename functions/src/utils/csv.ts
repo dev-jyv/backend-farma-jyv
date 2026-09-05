@@ -8,8 +8,8 @@
  *    capturó el cajero (nombre del médico, cliente, motivo), un valor como
  *    `=HYPERLINK(...)` se ejecutaría al abrir el archivo. Se neutraliza con un
  *    apóstrofo al frente.
- * 2. **BOM.** Sin `﻿` al inicio, Excel en Windows abre el archivo como
- *    ANSI y los acentos salen rotos.
+ * 2. **BOM.** Sin el BOM (`\ufeff`) al inicio, Excel en Windows abre el archivo
+ *    como ANSI y los acentos salen rotos.
  */
 
 const FORMULA_PREFIXES = ['=', '+', '-', '@', '\t', '\r'];
@@ -39,5 +39,5 @@ export const buildCsvRow = (values: unknown[]): string =>
 /** Devuelve el CSV completo con BOM y CRLF (lo que espera Excel). */
 export const buildCsv = (headers: string[], rows: unknown[][]): string => {
     const lines = [buildCsvRow(headers), ...rows.map(buildCsvRow)];
-    return `﻿${lines.join('\r\n')}\r\n`;
+    return `\ufeff${lines.join('\r\n')}\r\n`;
 };

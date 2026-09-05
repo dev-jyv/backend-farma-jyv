@@ -22,8 +22,13 @@ service cloud.firestore {
       return hasRoleSlug('admin') || hasRoleSlug('manager');
     }
 
-    function canAccessSales() {
-      return hasRoleSlug('admin') || hasRoleSlug('cashier') || hasRoleSlug('manager');
+    // Auditar cortes de caja es exclusivo de administrador: es la misma
+    // exclusión que declaran `permissions.ts` (áreas `cashSessions`/`expenses`,
+    // que ni `manager` ni `cashier` tienen) y `assertCanAccessSession`. Las
+    // reglas no pueden hacer joins, así que donde el documento no lleva de quién
+    // es, se limita a admin en vez de dejarlo a todo el mostrador.
+    function canAuditCash() {
+      return hasRoleSlug('admin');
     }
 
     match /users/{userId} {
@@ -51,8 +56,12 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Los lotes llevan `costPrice`: es el costo de compra, no un dato de
+    // mostrador. `isStaff()` se lo daba a cualquier rol con claim, doctor
+    // incluido. La caja no lee de aquí: recibe el catálogo por
+    // `GET /products/sync`.
     match /batches/{batchId} {
-      allow read: if isStaff();
+      allow read: if canManageInventory();
       allow write: if false;
     }
 
@@ -66,8 +75,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Una venta la lee su propio cajero o un administrador. La regla anterior
+    // (admin/cashier/manager, sin mirar de quién era la venta)
+    // dejaba a cualquier cajero leer las ventas de todos sus compañeros con solo
+    // su ID token y el SDK cliente —incluidos `costAmount`/`costTotal`, o sea el
+    // margen— esquivando el control por turno de la API.
     match /sales/{saleId} {
-      allow read: if canAccessSales();
+      allow read: if hasRoleSlug('admin') ||
+        (isAuthenticated() && resource.data.cashierId == request.auth.uid);
       allow write: if false;
     }
 
@@ -88,14 +103,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Lecturas X del turno: mismas reglas que el turno.
+    // Lecturas X del turno: el documento no dice de quién es el turno (solo
+    // `cashSessionId`) y las reglas no pueden seguir la referencia, así que se
+    // limita a admin. El cajero las obtiene por la API, que sí comprueba el turno.
     match /cashReadings/{readingId} {
-      allow read: if canAccessSales();
+      allow read: if canAuditCash();
       allow write: if false;
     }
 
+    // Devoluciones: igual que las lecturas X, y son justo lo que descuadra un
+    // corte, así que no puede verlas cualquier cajero.
     match /saleReturns/{returnId} {
-      allow read: if canAccessSales();
+      allow read: if canAuditCash();
       allow write: if false;
     }
 
@@ -105,8 +124,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // El turno es de quien lo abrió: misma regla que `assertCanAccessSession`.
+    // Con la regla anterior (admin/cashier/manager) un cajero listaba TODOS los cortes de todos los
+    // cajeros (fondo, esperado, contado, diferencia, ajustes) desde el SDK
+    // cliente, que es exactamente lo que la API impide.
     match /cashSessions/{sessionId} {
-      allow read: if canAccessSales();
+      allow read: if canAuditCash() ||
+        (isAuthenticated() && resource.data.openedBy == request.auth.uid);
       allow write: if false;
     }
 
@@ -124,6 +148,19 @@ service cloud.firestore {
     }
 
     match /appointments/{appointmentId} {
+      allow read, write: if false;
+    }
+
+    // Servicios y padrón de doctores: solo por API. A diferencia del catálogo de
+    // productos —que el cliente sí lee directo— aquí el documento lleva la tasa
+    // de comisión, o sea cuánto se le paga al doctor, y el acceso se decide por
+    // el área `pharmacyServices` (lectura hasta cajero, escritura solo admin),
+    // que las reglas no pueden evaluar porque el claim solo trae el rol.
+    match /pharmacyServices/{serviceId} {
+      allow read, write: if false;
+    }
+
+    match /serviceProviders/{providerId} {
       allow read, write: if false;
     }
   }

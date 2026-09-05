@@ -1,12 +1,17 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { z } from 'zod';
-import { deadStockQuerySchema, reportPeriodQuerySchema } from '../../schemas';
+import {
+    commissionsQuerySchema,
+    deadStockQuerySchema,
+    reportPeriodQuerySchema,
+} from '../../schemas';
 import * as analyticsService from '../../services/analytics.service';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
 type ReportPeriodQuery = z.infer<typeof reportPeriodQuerySchema>;
 type DeadStockQuery = z.infer<typeof deadStockQuerySchema>;
+type CommissionsQuery = z.infer<typeof commissionsQuerySchema>;
 
 /**
  * Reportes de gestión, bajo el área de permiso `dashboard` (hasta ahora sin uso):
@@ -39,6 +44,36 @@ export class ReportsController {
         @Query(new ZodValidationPipe(reportPeriodQuerySchema)) query: ReportPeriodQuery,
     ) {
         const data = await analyticsService.getTopProducts(query);
+        return { data };
+    }
+
+    /** Servicios más cobrados; espejo de `top-products` para la otra rama. */
+    @Get('top-services')
+    @RequirePermission('dashboard', 'read')
+    async topServices(
+        @Query(new ZodValidationPipe(reportPeriodQuerySchema)) query: ReportPeriodQuery,
+    ) {
+        const data = await analyticsService.getTopServices(query);
+        return { data };
+    }
+
+    /** Comisiones por doctor; con `providerId` se acota a uno solo. */
+    @Get('commissions')
+    @RequirePermission('dashboard', 'read')
+    async commissions(
+        @Query(new ZodValidationPipe(commissionsQuerySchema)) query: CommissionsQuery,
+    ) {
+        const data = await analyticsService.getCommissionsByProvider(query);
+        return { data };
+    }
+
+    /** Corte de la rama de servicios, con desglose por naturaleza del servicio. */
+    @Get('services-summary')
+    @RequirePermission('dashboard', 'read')
+    async servicesSummary(
+        @Query(new ZodValidationPipe(reportPeriodQuerySchema)) query: ReportPeriodQuery,
+    ) {
+        const data = await analyticsService.getServicesSummary(query);
         return { data };
     }
 

@@ -1,9 +1,14 @@
 import { Role, RolePermission } from '../types';
 import { paginate } from '../utils/pagination';
+import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
 
 type RoleUpdateData = Partial<
-    Pick<Role, 'name' | 'slug' | 'description' | 'permissions' | 'isActive' | 'isSystem'>
+    Pick<
+        Role,
+        'name' | 'slug' | 'description' | 'permissions' |
+        'permissionsVersion' | 'isActive' | 'isSystem'
+    >
 >;
 
 const collection = () => db().collection('roles');
@@ -39,6 +44,18 @@ export const listRoles = async (filters: {
     const query = filters.activeOnly
         ? collection().where('isActive', '==', true)
         : collection();
+
+    // Sin búsqueda pagina Firestore (índice `[isActive, name]`); con búsqueda
+    // hay que ver el conjunto completo para no perder coincidencias.
+    if (!filters.search) {
+        return paginateQuery(
+            query.orderBy('name', 'asc'),
+            (doc) => ({ id: doc.id, ...doc.data() } as Role),
+            filters.page ?? 1,
+            filters.limit ?? 100,
+        );
+    }
+
     const snapshot = await query.get();
     let roles = snapshot.docs.map(
         (doc) => ({ id: doc.id, ...doc.data() } as Role),
@@ -65,6 +82,7 @@ export const createRole = async (data: {
     slug: string;
     description?: string;
     permissions: RolePermission[];
+    permissionsVersion?: number;
     isSystem: boolean;
     isActive: boolean;
 }): Promise<Role> => {

@@ -8,6 +8,7 @@ import {
     idParamSchema,
     listProductHistoryQuerySchema,
     listProductsQuerySchema,
+    syncProductsQuerySchema,
     updateProductPricesSchema,
     updateProductSchema,
 } from '../../schemas';
@@ -18,6 +19,7 @@ import { RequirePermission } from '../identity/decorators/require-permission.dec
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
 type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
+type SyncProductsQuery = z.infer<typeof syncProductsQuerySchema>;
 type ListProductHistoryQuery = z.infer<typeof listProductHistoryQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 type CreateProductInput = z.infer<typeof createProductSchema>;
@@ -34,10 +36,21 @@ export class ProductsController {
             categoryId: query.categoryId,
             search: query.search,
             activeOnly: query.activeOnly !== 'false',
+            updatedSince: query.updatedSince,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,
         });
         return { data: result.items, meta: result.meta };
+    }
+
+    /** Catálogo completo sin paginar, para el pull local-first del POS (SQLite). */
+    @Get('sync')
+    @RequirePermission('products', 'read')
+    async sync(@Query(new ZodValidationPipe(syncProductsQuerySchema)) query: SyncProductsQuery) {
+        const result = await productsService.listProductsForSync({
+            updatedSince: query.updatedSince,
+        });
+        return { data: result.items };
     }
 
     @Get(':id/purchase-history')

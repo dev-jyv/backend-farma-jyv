@@ -99,6 +99,11 @@ export const createPatient = async (input: CreatePatientInput): Promise<PatientW
     return withAge(patient);
 };
 
+/**
+ * El paciente no se borra: el expediente clínico debe conservarse (NOM-004 pide
+ * 5 años como mínimo). Darlo de baja del padrón es este mismo `update` con
+ * `isActive: false`, y por eso no existe una operación de borrado.
+ */
 export const updatePatient = async (
     id: string,
     input: UpdatePatientInput,
@@ -131,10 +136,3 @@ export const updatePatient = async (
     });
     return withAge(patient);
 };
-
-/**
- * El paciente no se borra: el expediente clínico debe conservarse (NOM-004 pide
- * 5 años como mínimo). Se marca inactivo y desaparece del padrón por defecto.
- */
-export const deactivatePatient = async (id: string): Promise<PatientWithAge> =>
-    updatePatient(id, { isActive: false });

@@ -1,19 +1,7 @@
 import { StockMovement, StockMovementType } from '../types';
-import { db, now, toTimestamp } from '../utils/firestore';
+import { db, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('stockMovements');
-
-export const createStockMovement = async (
-    data: Omit<StockMovement, 'id' | 'createdAt'>,
-): Promise<StockMovement> => {
-    const timestamp = now();
-    const payload = {
-        ...data,
-        createdAt: timestamp,
-    };
-    const ref = await collection().add(payload);
-    return { id: ref.id, ...payload };
-};
 
 export const listStockMovements = async (filters: {
     productId?: string;

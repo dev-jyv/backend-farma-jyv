@@ -42,6 +42,34 @@ export const zonedDayRangeMs = (
     endMs: zonedStartOfDayMs(addDaysYmd(ymd, 1), timeZone),
 });
 
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Normaliza un extremo de rango recibido por query string.
+ *
+ * Un cliente que manda una fecha pelada (`2026-08-07`) espera "ese día en la
+ * farmacia", pero `new Date('2026-08-07')` es medianoche **UTC**, que en Ciudad
+ * de México son las 18:00 del día anterior; y `2026-08-07T23:59:59.999` sin zona
+ * se interpreta como hora local del proceso, que en Cloud Functions es UTC. En
+ * ambos casos la ventana se corre ~6 h: entran movimientos de la tarde anterior
+ * y se pierden los de la tarde del último día.
+ *
+ * Con offset o `Z` explícitos se respeta el instante tal cual: el cliente ya dijo
+ * exactamente qué quería.
+ */
+export const resolveRangeBoundary = (
+    value: string,
+    timeZone: string,
+    edge: 'start' | 'end',
+): Date => {
+    if (!BARE_DATE.test(value)) {
+        return new Date(value);
+    }
+    const { startMs, endMs } = zonedDayRangeMs(value, timeZone);
+    // `endMs` es el inicio del día siguiente; el rango del libro es inclusivo.
+    return new Date(edge === 'start' ? startMs : endMs - 1);
+};
+
 /** Minutos transcurridos del día local para un instante dado. */
 export const zonedMinutesOfDay = (ms: number, timeZone: string): number => {
     const parts = new Intl.DateTimeFormat('en-GB', {

@@ -1,18 +1,18 @@
 import { z } from 'zod';
 import { paginationFields } from './common';
+import { ALL_PERMISSION_AREAS } from '../constants/permissions';
+import { PermissionArea } from '../types';
 
-const permissionAreaSchema = z.enum([
-    'dashboard',
-    'users',
-    'sales',
-    'categories',
-    'products',
-    'suppliers',
-    'inventory',
-    'invoices',
-    'uploads',
-    'doctor',
-]);
+/**
+ * Derivado de `ALL_PERMISSION_AREAS` a propósito: cuando esto era una lista
+ * literal aparte, cada área nueva (`patients`, `medicalRecords`,
+ * `appointments`, `directCharges`, `pos`) quedaba fuera y la API rechazaba con
+ * 400 cualquier rol personalizado que la usara, aunque el guard sí la
+ * reconociera. Una sola fuente evita que se vuelvan a separar.
+ */
+const permissionAreaSchema = z.enum(
+    ALL_PERMISSION_AREAS as [PermissionArea, ...PermissionArea[]],
+);
 
 const rolePermissionSchema = z.object({
     area: permissionAreaSchema,

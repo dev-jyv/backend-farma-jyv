@@ -4,6 +4,7 @@ import {
     ReceiptTaxLine,
     Sale,
     SaleReturn,
+    saleItemName,
 } from '../types';
 import { getReceiptStore } from '../config/env';
 import { formatCurrency } from '../utils/currency';
@@ -57,8 +58,10 @@ const buildTaxLines = (
 };
 
 const buildSaleReceipt = (sale: Sale): Receipt => {
+    // El ticket imprime mercancía y servicios en el mismo cuerpo: para el
+    // cliente es un solo cobro, aunque el corte los separe.
     const lines: ReceiptLine[] = sale.items.map((item) => ({
-        productName: item.productName,
+        productName: saleItemName(item),
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount + (item.saleDiscountShare ?? 0),

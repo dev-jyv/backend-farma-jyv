@@ -4,8 +4,11 @@ import {
     ControlledGroup,
     RefundMethod,
     Sale,
+    SaleProductItem,
     SaleReturn,
     SaleReturnItem,
+    isSaleProductItem,
+    isSaleServiceItem,
 } from '../types';
 import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
 import { db, now } from '../utils/firestore';
@@ -85,7 +88,7 @@ const resolveRefundMethod = (
  * distinto rompería la trazabilidad de caducidad (el lote es la unidad FEFO).
  */
 const planAllocations = (
-    saleItem: Sale['items'][number],
+    saleItem: SaleProductItem,
     quantity: number,
     alreadyReturnedByBatch: Map<string, number>,
 ): Array<{ batchId: string; quantity: number }> => {
@@ -209,8 +212,16 @@ export const createSaleReturn = async (input: {
         }
     }
 
-    const soldByProduct = new Map<string, Sale['items'][number]>();
+    const soldByProduct = new Map<string, SaleProductItem>();
+    // Ids de servicio de la venta: se guardan para poder rechazar la devolución
+    // con un motivo claro en vez de un "no forma parte de la venta" que miente.
+    const soldServiceIds = new Set(
+        sale.items.filter(isSaleServiceItem).map((item) => item.serviceId),
+    );
     for (const item of sale.items) {
+        if (!isSaleProductItem(item)) {
+            continue;
+        }
         const existing = soldByProduct.get(item.productId);
         if (existing) {
             // Dos partidas del mismo producto: se consolidan para validar cantidades.
@@ -240,6 +251,12 @@ export const createSaleReturn = async (input: {
 
         if (!Number.isInteger(requested.quantity) || requested.quantity <= 0) {
             throw badRequest('Cantidad inválida en un ítem de devolución');
+        }
+
+        if (soldServiceIds.has(requested.productId)) {
+            throw badRequest(
+                'Los servicios no se devuelven; anula la venta completa',
+            );
         }
 
         const saleItem = soldByProduct.get(requested.productId);
@@ -429,12 +446,15 @@ export const createSaleReturn = async (input: {
                 (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
             );
         }
-        for (const [productId, delta] of stockDeltaByProduct) {
+        returnedProductIds.forEach((productId, index) => {
+            const delta = stockDeltaByProduct.get(productId) ?? 0;
+            const denorm = productDocs[index].data()?.totalStock;
+            const baseline = typeof denorm === 'number' ? denorm : 0;
             transaction.update(firestore.collection('products').doc(productId), {
-                totalStock: FieldValue.increment(delta),
+                totalStock: Math.max(0, baseline + delta),
                 updatedAt: timestamp,
             });
-        }
+        });
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
         transaction.update(saleRef, {
@@ -536,4 +556,19 @@ export const listSaleReturns = async (filters: {
     from?: string;
     to?: string;
     cashSessionId?: string;
-}): Promise<SaleReturn[]> => returnsRepo.listSaleReturns(filters);
+    /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
+    requesterId?: string;
+    requesterRoleSlug?: string | null;
+}): Promise<SaleReturn[]> => {
+    // Igual que en `listSales`: filtrar por turno es leer el turno, y las
+    // devoluciones son justo lo que descuadra un corte. Sin esto un cajero
+    // audita los reembolsos de otro pasando su `cashSessionId`.
+    if (filters.cashSessionId) {
+        const session = await cashSessionsRepo.getCashSessionById(filters.cashSessionId);
+        if (!session) {
+            throw notFound('Turno de caja');
+        }
+        assertCanAccessSession(session, filters.requesterId ?? '', filters.requesterRoleSlug);
+    }
+    return returnsRepo.listSaleReturns(filters);
+};

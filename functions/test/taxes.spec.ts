@@ -125,9 +125,9 @@ describe('utils/csv', () => {
     it('neutraliza fórmulas para que Excel no las ejecute', () => {
         expect(escapeCsvValue('=HYPERLINK("http://mal.example")'))
             .toBe('"\'=HYPERLINK(""http://mal.example"")"');
-        expect(escapeCsvValue('+1')).toBe("'+1");
-        expect(escapeCsvValue('-1')).toBe("'-1");
-        expect(escapeCsvValue('@sum')).toBe("'@sum");
+        expect(escapeCsvValue('+1')).toBe('\'+1');
+        expect(escapeCsvValue('-1')).toBe('\'-1');
+        expect(escapeCsvValue('@sum')).toBe('\'@sum');
     });
 
     it('entrecomilla y duplica comillas cuando hace falta', () => {

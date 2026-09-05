@@ -11,6 +11,7 @@ import { buildCsv } from '../utils/csv';
 import { CONTROLLED_GROUP_RULES as GROUP_RULES } from '../constants/controlled';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { db } from '../utils/firestore';
+import { resolveRangeBoundary } from '../utils/timezone';
 import * as ledgerRepo from '../repositories/controlled-ledger.repository';
 
 export const CONTROLLED_LEDGER_COLLECTION = 'controlledSalesLedger';
@@ -20,6 +21,25 @@ export const CONTROLLED_LEDGER_COLLECTION = 'controlledSalesLedger';
  * así que este listado admite un tope mayor que los 100 del resto de la API.
  */
 export const CONTROLLED_LEDGER_MAX_LIMIT = 1000;
+
+/** El libro es de la farmacia: un "día" es el día local, no el de UTC. */
+export const CONTROLLED_LEDGER_TIME_ZONE = 'America/Mexico_City';
+
+/**
+ * Ajusta los extremos del rango a días locales cuando el cliente manda fechas
+ * peladas. Sin esto la ventana se corría ~6 h y la hoja no cuadraba con el
+ * periodo que declara: entraban movimientos de la tarde anterior y se perdían
+ * los de la tarde del último día.
+ */
+const normalizeLedgerRange = <T extends { from?: string; to?: string }>(filters: T): T => ({
+    ...filters,
+    from: filters.from
+        ? resolveRangeBoundary(filters.from, CONTROLLED_LEDGER_TIME_ZONE, 'start').toISOString()
+        : undefined,
+    to: filters.to
+        ? resolveRangeBoundary(filters.to, CONTROLLED_LEDGER_TIME_ZONE, 'end').toISOString()
+        : undefined,
+});
 
 export interface ControlledRequirements {
     /** Grupos controlados presentes en la venta (los que exigen registro). */
@@ -180,7 +200,7 @@ export const exportControlledLedger = async (filters: {
 }): Promise<{ filename: string; csv: string; rows: number }> => {
     assertCanExportControlledLedger(filters.roleSlug);
 
-    let entries = await ledgerRepo.listLedgerEntries(filters);
+    let entries = await ledgerRepo.listLedgerEntries(normalizeLedgerRange(filters));
     if (filters.group) {
         entries = entries.filter((entry) => entry.controlledGroup === filters.group);
     }
@@ -190,7 +210,9 @@ export const exportControlledLedger = async (filters: {
         LEDGER_TYPE_LABELS[entry.type],
         entry.saleFolio,
         entry.referenceFolio ?? '',
-        GROUP_RULES[entry.controlledGroup].label,
+        // Un renglón sin grupo válido no puede tumbar la exportación entera —es el
+        // entregable de una visita— ni presentarse como si tuviera grupo.
+        GROUP_RULES[entry.controlledGroup]?.label ?? 'Sin grupo registrado',
         entry.productName,
         entry.quantity,
         entry.lotNumbers.join(' | '),
@@ -226,7 +248,7 @@ export const listControlledLedger = async (filters: {
     const { page, limit } = parsePagination(filters.page, filters.limit, {
         maxLimit: CONTROLLED_LEDGER_MAX_LIMIT,
     });
-    let entries = await ledgerRepo.listLedgerEntries(filters);
+    let entries = await ledgerRepo.listLedgerEntries(normalizeLedgerRange(filters));
 
     if (filters.group) {
         entries = entries.filter((entry) => entry.controlledGroup === filters.group);

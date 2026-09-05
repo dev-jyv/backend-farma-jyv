@@ -1,6 +1,7 @@
 import { Product } from '../types';
 import { conflict } from '../utils/errors';
-import { db, now } from '../utils/firestore';
+import { paginateQuery } from '../utils/firestore-pagination';
+import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('products');
 
@@ -51,6 +52,8 @@ export const listProducts = async (filters: {
     categoryId?: string;
     activeOnly?: boolean;
     limit?: number;
+    /** Solo productos con `updatedAt` posterior a esta fecha (sync incremental). */
+    updatedSince?: string;
 }): Promise<Product[]> => {
     let query: FirebaseFirestore.Query = collection();
 
@@ -58,6 +61,10 @@ export const listProducts = async (filters: {
         query = query.where('categoryId', '==', filters.categoryId);
     } else if (filters.activeOnly !== false) {
         query = query.where('isActive', '==', true);
+    }
+
+    if (filters.updatedSince) {
+        query = query.where('updatedAt', '>=', toTimestamp(filters.updatedSince));
     }
 
     if (filters.limit) {
@@ -74,6 +81,41 @@ export const listProducts = async (filters: {
     products.sort((a, b) => a.name.localeCompare(b.name));
 
     return products;
+};
+
+/**
+ * Página del catálogo resuelta **en Firestore**, no en memoria.
+ *
+ * El listado sin búsqueda traía todos los productos activos y paginaba 20 en
+ * memoria: con 5,000 productos eran 5,000 lecturas facturadas para devolver 20,
+ * en cada carga de la pantalla. Ver `paginateQuery` para el mecanismo y sus
+ * dos condiciones.
+ *
+ * Los índices necesarios ya existen (`products [isActive, name]`,
+ * `[isActive, categoryId, name]`, `[categoryId, name]`), así que los dos
+ * filtros van a la consulta y no queda nada por descartar en memoria.
+ */
+export const listProductsPage = async (filters: {
+    categoryId?: string;
+    activeOnly?: boolean;
+    page: number;
+    limit: number;
+}): Promise<{ items: Product[]; total: number }> => {
+    let query: FirebaseFirestore.Query = collection();
+
+    if (filters.activeOnly !== false) {
+        query = query.where('isActive', '==', true);
+    }
+    if (filters.categoryId) {
+        query = query.where('categoryId', '==', filters.categoryId);
+    }
+
+    return paginateQuery(
+        query.orderBy('name', 'asc'),
+        (doc) => ({ id: doc.id, ...doc.data() } as Product),
+        filters.page,
+        filters.limit,
+    );
 };
 
 export const findProductBySkuOrBarcode = async (term: string): Promise<Product | null> => {

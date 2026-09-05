@@ -1,4 +1,4 @@
-import { PaymentMethod, Sale } from '../types';
+import { PaymentMethod, Sale, isSaleProductItem } from '../types';
 import * as salesRepo from '../repositories/sales.repository';
 
 export const REPORTS_TIME_ZONE = 'America/Mexico_City';
@@ -136,7 +136,8 @@ const buildTopProducts = (sales: Sale[], limit = 10): ReportTopProduct[] => {
         if (sale.voidedAt) {
             continue;
         }
-        for (const item of sale.items) {
+        // Top de **productos**: las partidas de servicio tienen su propio corte.
+        for (const item of sale.items.filter(isSaleProductItem)) {
             const entry = byProduct.get(item.productId) ?? {
                 productId: item.productId,
                 name: item.productName,

@@ -1,6 +1,7 @@
 import { Supplier } from '../types';
 import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
+import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
 
 const collection = () => db().collection('suppliers');
@@ -14,17 +15,19 @@ export const listSuppliers = async (filters: {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 100;
 
+    // Igual que en categorías: sin búsqueda pagina Firestore
+    // (índice `[isActive, name]`); con búsqueda, memoria.
     if (!filters.search) {
         let query: FirebaseFirestore.Query = collection();
         if (filters.activeOnly) {
             query = query.where('isActive', '==', true);
         }
-        query = query.orderBy('name', 'asc');
-        const snapshot = await query.get();
-        const suppliers = snapshot.docs.map(
+        return paginateQuery(
+            query.orderBy('name', 'asc'),
             (doc) => ({ id: doc.id, ...doc.data() } as Supplier),
+            page,
+            limit,
         );
-        return paginate(suppliers, page, limit);
     }
 
     const query = filters.activeOnly

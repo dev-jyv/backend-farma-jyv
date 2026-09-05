@@ -1,7 +1,7 @@
 import { Invoice, InvoiceWithDetails, Supplier } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
-import { assertFileExists, getFileMetadata, getFileUrl } from '../utils/storage';
+import { getFileMetadata, getFileUrl } from '../utils/storage';
 import { toTimestamp } from '../utils/firestore';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
@@ -119,7 +119,7 @@ export const createInvoice = async (input: {
         throw badRequest('La ruta del archivo no es válida');
     }
 
-    await assertFileExists(storagePath);
+    // `getFileMetadata` rechaza el archivo inexistente: una llamada, no dos.
     const { fileName, mimeType } = await getFileMetadata(storagePath);
 
     const invoiceId = invoicesRepo.generateInvoiceId();

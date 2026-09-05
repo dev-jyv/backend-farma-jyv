@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import { positiveMoney } from './common';
+import { idempotencyKeySchema } from './sales';
+
+const nullable = <T extends z.ZodTypeAny>(schema: T) =>
+    schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
 
 export const listPointDevicesQuerySchema = z.object({
     storeId: z.string().min(1).optional(),
@@ -34,10 +38,18 @@ export const createPointPosSchema = z.object({
 export const createPointOrderSchema = z.object({
     deviceId: z.string().min(1),
     amount: positiveMoney,
-    externalReference: z.string().min(1).max(64),
+    externalReference: z
+        .string()
+        .min(1)
+        .max(64)
+        .regex(
+            /^[A-Za-z0-9_-]+$/,
+            'externalReference solo admite letras, números, guion (-) y guion bajo (_)',
+        ),
     description: z.string().min(1).max(150).optional(),
     expirationTime: z.string().min(1).optional(),
     printOnTerminal: z.enum(['no_ticket', 'seller_ticket', 'buyer_ticket']).optional(),
+    idempotencyKey: nullable(idempotencyKeySchema),
 });
 
 export const refundPointOrderSchema = z.preprocess(

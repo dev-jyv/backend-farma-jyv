@@ -1,6 +1,7 @@
 import { Category } from '../types';
 import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
+import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
 
 const collection = () => db().collection('categories');
@@ -14,17 +15,20 @@ export const listCategories = async (filters: {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 100;
 
+    // Sin búsqueda la página la resuelve Firestore (índice `[isActive, name]`).
+    // La rama de búsqueda sigue leyendo y filtrando en memoria a propósito:
+    // recortar antes de filtrar perdería coincidencias fuera de la página.
     if (!filters.search) {
         let query: FirebaseFirestore.Query = collection();
         if (filters.activeOnly !== false) {
             query = query.where('isActive', '==', true);
         }
-        query = query.orderBy('name', 'asc');
-        const snapshot = await query.get();
-        const categories = snapshot.docs.map(
+        return paginateQuery(
+            query.orderBy('name', 'asc'),
             (doc) => ({ id: doc.id, ...doc.data() } as Category),
+            page,
+            limit,
         );
-        return paginate(categories, page, limit);
     }
 
     const query = filters.activeOnly !== false

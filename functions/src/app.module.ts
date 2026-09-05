@@ -20,6 +20,9 @@ import { CashSessionsModule } from './modules/cash-sessions/cash-sessions.module
 import { PaymentsModule } from './modules/payments/payments.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { ClinicModule } from './modules/clinic/clinic.module';
+import { DirectChargesModule } from './modules/direct-charges/direct-charges.module';
+import { StockEntriesModule } from './modules/stock-entries/stock-entries.module';
+import { PharmacyServicesModule } from './modules/pharmacy-services/pharmacy-services.module';
 
 @Module({
     imports: [
@@ -38,6 +41,9 @@ import { ClinicModule } from './modules/clinic/clinic.module';
         PaymentsModule,
         CustomersModule,
         ClinicModule,
+        DirectChargesModule,
+        StockEntriesModule,
+        PharmacyServicesModule,
     ],
     controllers: [HealthController],
     providers: [

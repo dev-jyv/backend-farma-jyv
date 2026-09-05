@@ -10,7 +10,12 @@ import {
 } from '../repositories/users.repository';
 import * as rolesRepo from '../repositories/roles.repository';
 import { recordAudit } from './audit.service';
-import { getActiveRoleById, getAdminRoleId, syncUserClaims } from './roles.service';
+import {
+    getActiveRoleById,
+    getAdminRoleId,
+    rolePermissionsVersion,
+    syncUserClaims,
+} from './roles.service';
 
 const toRoleSummary = (role: { id: string; name: string; slug: string }): RoleSummary => ({
     id: role.id,
@@ -134,18 +139,28 @@ export const updateUser = async (
     }
 
     let roleToSync = existing.roleId;
+    let permissionsVersionToSync: number | undefined;
     if (input.roleId !== undefined && input.roleId !== existing.roleId) {
         const role = await getActiveRoleById(input.roleId);
         roleToSync = role.id;
-        await syncUserClaims(id, role.id, role.slug, role.permissions);
+        permissionsVersionToSync = rolePermissionsVersion(role);
+        await syncUserClaims(id, role);
     }
 
-    const profileUpdate: Partial<Pick<UserProfile, 'displayName' | 'roleId' | 'isActive'>> = {};
+    const profileUpdate: Partial<
+        Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
+    > = {};
     if (input.displayName !== undefined) {
         profileUpdate.displayName = input.displayName;
     }
     if (input.roleId !== undefined) {
         profileUpdate.roleId = roleToSync;
+        // El sello tiene que viajar junto con el roleId: si el perfil apunta al
+        // rol nuevo pero conserva la versión vieja, el guard descarta los claims
+        // recién emitidos y paga una lectura de `roles` en cada request.
+        if (permissionsVersionToSync !== undefined) {
+            profileUpdate.permissionsVersion = permissionsVersionToSync;
+        }
     }
     if (input.isActive !== undefined) {
         profileUpdate.isActive = input.isActive;

@@ -1,3 +1,6 @@
 {
-  "dependencies": {}
+  "dependencies": {},
+  "scripts": {
+    "test:rules": "firebase emulators:exec --only firestore --project farma-jyv-rules \"npm --prefix functions run test:rules\""
+  }
 }

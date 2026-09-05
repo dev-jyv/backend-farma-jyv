@@ -10,6 +10,7 @@ import * as cashSessionsService from '../src/services/cash-sessions.service';
 import * as mercadoPagoService from '../src/services/mercado-pago.service';
 import { AppError } from '../src/utils/errors';
 import { toTimestamp } from '../src/utils/firestore';
+import { productItem } from './sale-item.helpers';
 
 jest.mock('../src/services/mercado-pago.service', () => ({
     getOrder: jest.fn(),
@@ -120,7 +121,7 @@ describe('sales.service - createSale (FEFO)', () => {
 
         expect(sale.total).toBe(70);
         expect(sale.change).toBe(0);
-        expect(sale.items[0].batchAllocations).toEqual(
+        expect(productItem(sale, 0).batchAllocations).toEqual(
             expect.arrayContaining([
                 { batchId: earlyBatch.id, quantity: 5 },
                 { batchId: lateBatch.id, quantity: 2 },

@@ -9,11 +9,11 @@ import { createMedicalRecordSchema, updateMedicalRecordSchema } from '../schemas
 import { ClinicActor, MedicalRecord, MedicalRecordAttachment, Vitals } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { now } from '../utils/firestore';
+import { UploadedFile } from '../types/uploads';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
 import {
-    assertFileExists,
     getFileMetadata,
-    getFileUrl,
+    getSignedFileUrl,
     sanitizeFileName,
     uploadFile,
 } from '../utils/storage';
@@ -90,7 +90,8 @@ const resolveAttachments = async (
 
     const timestamp = now();
     return Promise.all(attachments.map(async (attachment) => {
-        await assertFileExists(attachment.storagePath);
+        // Un solo viaje a Storage: `getFileMetadata` ya rechaza el archivo
+        // inexistente, así que no hace falta comprobar la existencia aparte.
         const metadata = await getFileMetadata(attachment.storagePath);
         if (!ALLOWED_UPLOAD_MIME_TYPES.has(metadata.mimeType)) {
             throw badRequest(ALLOWED_UPLOAD_MIME_MESSAGE);
@@ -222,7 +223,7 @@ export const updateMedicalRecord = async (
  */
 export const addAttachment = async (
     id: string,
-    file: Express.Multer.File,
+    file: UploadedFile,
     actor: ClinicActor,
 ): Promise<MedicalRecord> => {
     if (!ALLOWED_UPLOAD_MIME_TYPES.has(file.mimetype)) {
@@ -260,9 +261,10 @@ export const addAttachment = async (
 };
 
 /**
- * URL de descarga de un adjunto, resuelta bajo demanda. No se guarda en el
- * documento: listar el expediente no debería pegarle a Storage una vez por
- * archivo, y una URL persistida es un enlace público que sobrevive al permiso.
+ * URL de descarga de un adjunto, resuelta bajo demanda y firmada con caducidad
+ * corta. No se guarda en el documento: listar el expediente no debería pegarle
+ * a Storage una vez por archivo, y una URL persistida es un enlace que
+ * sobrevive al permiso que la otorgó.
  */
 export const getAttachmentUrl = async (
     id: string,
@@ -277,7 +279,7 @@ export const getAttachmentUrl = async (
     return {
         fileName: attachment.fileName,
         mimeType: attachment.mimeType,
-        fileUrl: await getFileUrl(attachment.storagePath),
+        fileUrl: await getSignedFileUrl(attachment.storagePath),
     };
 };
 

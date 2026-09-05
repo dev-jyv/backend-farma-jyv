@@ -13,3 +13,15 @@ node_modules/
 # Service account credentials
 src/assets/*.json
 lib/assets/
+
+# Service account key que buscan los scripts (migrate-roles, backfill)
+service-account.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+
+# Salida de herramientas de análisis
+graphify-out/
+coverage/
+
+# Service account key (la busca scripts/migrate-roles.ts)
+service-account.json

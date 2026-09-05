@@ -96,6 +96,39 @@ const assertWithinWorkingHours = (startMs: number, durationMinutes: number): voi
     }
 };
 
+const toClockTime = (minuteOfDay: number): string => {
+    const hours = Math.floor(minuteOfDay / 60);
+    const minutes = minuteOfDay % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+export interface ClinicSettings {
+    timeZone: string;
+    defaultDurationMinutes: number;
+    slotGridMinutes: number;
+    maxCalendarRangeDays: number;
+    /** Un elemento por bloque de atención; `weekday` 0 = domingo. Los días cerrados no aparecen. */
+    workingHours: Array<{ weekday: number; startTime: string; endTime: string }>;
+}
+
+/**
+ * Parámetros de operación del consultorio para que el front pinte el calendario
+ * con el mismo horario que valida el servidor, en vez de repetirlo a mano. Sale
+ * de `constants/clinic.ts`; el día que el horario se vuelva configurable, solo
+ * cambia esta función y el front no se entera.
+ */
+export const getClinicSettings = (): ClinicSettings => ({
+    timeZone: CLINIC_TIME_ZONE,
+    defaultDurationMinutes: DEFAULT_APPOINTMENT_MINUTES,
+    slotGridMinutes: SLOT_GRID_MINUTES,
+    maxCalendarRangeDays: MAX_CALENDAR_RANGE_DAYS,
+    workingHours: WORKING_HOURS.flatMap((blocks, weekday) => blocks.map((block) => ({
+        weekday,
+        startTime: toClockTime(block.startMinute),
+        endTime: toClockTime(block.endMinute),
+    }))),
+});
+
 export const listAppointments = async (filters: {
     patientId?: string;
     doctorId?: string;
@@ -431,12 +464,4 @@ export const listDoctors = async (): Promise<Array<{ id: string; displayName: st
         limit: 100,
     });
     return items.map((user) => ({ id: user.id, displayName: user.displayName }));
-};
-
-/** Enlaza la nota del expediente creada al cerrar la consulta. */
-export const attachMedicalRecord = async (
-    id: string,
-    medicalRecordId: string,
-): Promise<void> => {
-    await appointmentsRepo.updateAppointment(id, { medicalRecordId });
 };

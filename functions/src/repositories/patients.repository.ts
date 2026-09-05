@@ -2,6 +2,7 @@ import { Timestamp } from 'firebase-admin/firestore';
 import { Patient } from '../types';
 import { conflict, notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
+import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
 
 const PATIENTS_COUNTER_ID = 'patients';
@@ -64,6 +65,22 @@ export const listPatients = async (filters: {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
 
+    // El padrón se ordena por nombre completo. Sin búsqueda la página la
+    // resuelve Firestore (índice `[isActive, fullName]` cuando se excluye a los
+    // inactivos, que es el caso por defecto); la búsqueda por nombre/CURP/
+    // teléfono sigue en memoria porque Firestore no hace coincidencia parcial.
+    if (!filters.search) {
+        const query = filters.includeInactive
+            ? collection()
+            : collection().where('isActive', '==', true);
+        return paginateQuery(
+            query.orderBy('fullName', 'asc'),
+            (doc) => mapPatient(doc.id, doc.data()),
+            page,
+            limit,
+        );
+    }
+
     const snapshot = await collection().orderBy('fullName', 'asc').get();
     let patients = snapshot.docs.map((doc) => mapPatient(doc.id, doc.data()));
 
@@ -71,10 +88,8 @@ export const listPatients = async (filters: {
         patients = patients.filter((patient) => patient.isActive);
     }
 
-    if (filters.search) {
-        const term = filters.search.trim().toLowerCase();
-        patients = patients.filter((patient) => matchesSearch(patient, term));
-    }
+    const term = filters.search.trim().toLowerCase();
+    patients = patients.filter((patient) => matchesSearch(patient, term));
 
     return paginate(patients, page, limit);
 };
@@ -85,12 +100,6 @@ export const getPatientById = async (id: string): Promise<Patient | null> => {
         return null;
     }
     return mapPatient(doc.id, doc.data()!);
-};
-
-export const findPatientByCurp = async (curp: string): Promise<Patient | null> => {
-    const snapshot = await collection().where('curp', '==', curp).limit(1).get();
-    const doc = snapshot.docs[0];
-    return doc ? mapPatient(doc.id, doc.data()) : null;
 };
 
 type PatientWriteData = Omit<Patient, 'id' | 'folio' | 'fullName' | 'createdAt' | 'updatedAt'>;

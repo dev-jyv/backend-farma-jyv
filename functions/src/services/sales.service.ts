@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { Timestamp } from 'firebase-admin/firestore';
 import {
     ControlledGroup,
     PaymentMethod,
@@ -7,8 +7,11 @@ import {
     Product,
     Sale,
     SaleBilling,
-    SaleItem,
+    SaleLineItem,
     SalePrescription,
+    isSaleProductItem,
+    isSaleServiceItem,
+    saleItemName,
 } from '../types';
 import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
@@ -23,7 +26,10 @@ import {
 import { db, now } from '../utils/firestore';
 import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
+import * as pharmacyServicesRepo from '../repositories/pharmacy-services.repository';
+import * as serviceProvidersRepo from '../repositories/service-providers.repository';
 import * as salesRepo from '../repositories/sales.repository';
+import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as customersRepo from '../repositories/customers.repository';
 import * as mercadoPagoService from './mercado-pago.service';
 import {
@@ -35,11 +41,24 @@ import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
 import { assertCanAccessSession } from './cash-sessions.service';
 
-interface SaleItemInput {
+interface SaleProductItemInput {
+    /** Ausente en los payloads del POS anterior a los servicios: se lee como mercancía. */
+    kind?: 'product';
     productId: string;
     quantity: number;
     discountAmount?: number;
 }
+
+interface SaleServiceItemInput {
+    kind: 'service';
+    serviceId: string;
+    quantity: number;
+    discountAmount?: number;
+    /** Doctor del catálogo `serviceProviders`, **no** un uid del sistema. */
+    providerId?: string | null;
+}
+
+export type SaleItemInput = SaleProductItemInput | SaleServiceItemInput;
 
 const SALES_COUNTER_ID = 'sales';
 const MAX_SALE_LINE_ITEMS = 100;
@@ -62,18 +81,29 @@ const buildIdempotencyDocId = (cashierId: string, key: string): string =>
  * cliente (llave reciclada), no un retry: mejor fallar que devolver otra venta.
  */
 const buildRequestFingerprint = (input: {
-    items: SaleItem[];
+    items: SaleLineItem[];
     total: number;
     paymentMethod: PaymentMethod;
     cashSessionId: string;
 }): string => createHash('sha256')
     .update(JSON.stringify({
-        items: input.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            unitPrice: toCents(item.unitPrice),
-            discountAmount: toCents(item.discountAmount),
-        })),
+        // La partida de mercancía conserva **exactamente** la forma de siempre:
+        // cambiarla invalidaría las llaves vivas (48 h de TTL) y un retry legítimo
+        // de una venta ya registrada respondería "llave usada para otra venta".
+        items: input.items.map((item) => (isSaleServiceItem(item)
+            ? {
+                kind: 'service',
+                serviceId: item.serviceId,
+                quantity: item.quantity,
+                unitPrice: toCents(item.unitPrice),
+                discountAmount: toCents(item.discountAmount),
+            }
+            : {
+                productId: item.productId,
+                quantity: item.quantity,
+                unitPrice: toCents(item.unitPrice),
+                discountAmount: toCents(item.discountAmount),
+            })),
         total: toCents(input.total),
         paymentMethod: input.paymentMethod,
         cashSessionId: input.cashSessionId,
@@ -147,11 +177,10 @@ const resolveTender = (input: TenderInput): TenderResult => {
     const { paymentMethod, total, amountReceived, cardPaymentReference } = input;
 
     if (paymentMethod === 'card' || paymentMethod === 'transfer') {
-        if (paymentMethod === 'card' && !cardPaymentReference) {
-            throw badRequest(
-                'El pago con tarjeta requiere el id de la order de Mercado Pago Point',
-            );
-        }
+        // Sin `cardPaymentReference` la venta queda como **registro** del cobro con
+        // tarjeta, igual que el efectivo: nadie prueba que el dinero entró, lo
+        // afirma el cajero. Cuando hay terminal Point emparejada, la order sí lo
+        // prueba y se sigue exigiendo (ver `resolvePointPayment`).
         return {
             amountReceived: null,
             change: null,
@@ -179,11 +208,8 @@ const resolveTender = (input: TenderInput): TenderResult => {
     }
 
     // mixed
-    if (!cardPaymentReference) {
-        throw badRequest(
-            'El pago mixto requiere el id de la order de Mercado Pago Point',
-        );
-    }
+    // Lo que el mixto necesita es el **reparto**, no la order: con terminal viene
+    // del monto de la order; sin terminal lo captura el cajero.
     if (input.cardAmount === undefined) {
         throw badRequest('El pago mixto requiere el monto cobrado con tarjeta');
     }
@@ -211,7 +237,9 @@ const resolveTender = (input: TenderInput): TenderResult => {
         change: fromCents(toCents(amountReceived) - cashCents),
         cashAmount: fromCents(cashCents),
         cardAmount: fromCents(cardCents),
-        cardPaymentReference,
+        // Sin terminal Point no hay referencia que guardar: el mixto queda como
+        // registro del reparto, igual que la parte en efectivo.
+        cardPaymentReference: cardPaymentReference ?? null,
     };
 };
 
@@ -224,9 +252,9 @@ const resolvePointPayment = async (input: {
         return null;
     }
     if (!input.orderId) {
-        throw badRequest(
-            'El pago con tarjeta requiere el id de la order de Mercado Pago Point',
-        );
+        // Cobro con tarjeta registrado a mano (sin terminal emparejada): no hay
+        // order que validar. El tender resuelve el reparto con lo que mandó el POS.
+        return null;
     }
 
     const existing = await salesRepo.findSaleByPointOrderId(input.orderId);
@@ -274,6 +302,8 @@ export const createSale = async (input: {
     paymentMethod: PaymentMethod;
     amountReceived?: number;
     cardPaymentReference?: string;
+    /** Reparto con tarjeta en mixto sin terminal Point (ver `resolveTender`). */
+    cardAmount?: number;
     cashSessionId: string;
     cashierId: string;
     customerId?: string;
@@ -299,19 +329,92 @@ export const createSale = async (input: {
     const counterRef = firestore.collection('counters').doc(SALES_COUNTER_ID);
     const timestamp = now();
 
-    const saleItems: SaleItem[] = [];
+    const saleItems: SaleLineItem[] = [];
     let subtotal = 0;
     let lineDiscountTotal = 0;
 
     type CachedProduct = Awaited<ReturnType<typeof productsRepo.getProductById>>;
     type CachedBatches = Awaited<ReturnType<typeof batchesRepo.listBatchesByProduct>>;
+    type CachedService = Awaited<
+        ReturnType<typeof pharmacyServicesRepo.getPharmacyServiceById>
+    >;
 
     const productCache = new Map<string, CachedProduct>();
     const batchCache = new Map<string, CachedBatches>();
+    // Catálogo de servicios de la venta: el desglose fiscal y la comisión se
+    // resuelven después de prorratear el descuento, así que hace falta volver a
+    // consultarlo por partida sin pagar otra lectura.
+    const serviceCache = new Map<string, CachedService>();
+    // Suma de lotes ANTES de asignar FEFO. Si `products.totalStock` no existe
+    // (productos previos a la denormalización), FieldValue.increment(-n) parte
+    // de 0 y deja stock negativo aunque los lotes sí tenían piezas.
+    const batchStockBefore = new Map<string, number>();
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
             throw badRequest('Cantidad inválida en un ítem de venta');
+        }
+
+        // Rama de servicio: no toca inventario, no entra al libro de controlados y
+        // congela la comisión del doctor. Todo lo demás (descuentos, impuestos,
+        // reparto del efectivo) sigue el mismo camino que la mercancía.
+        if (item.kind === 'service') {
+            let service = serviceCache.get(item.serviceId);
+            if (!service) {
+                service = await pharmacyServicesRepo.getPharmacyServiceById(item.serviceId);
+                serviceCache.set(item.serviceId, service);
+            }
+            if (!service || !service.isActive) {
+                throw notFound(`Servicio ${item.serviceId}`);
+            }
+            if (service.hasIeps && service.iepsRate === undefined) {
+                throw badRequest(
+                    `El servicio ${service.name} tiene IEPS sin tasa configurada (iepsRate)`,
+                );
+            }
+
+            // El doctor se valida siempre que venga; que sea **obligatorio** lo
+            // decide el catálogo (`requiresPerformer`), no el payload.
+            let provider = null;
+            if (item.providerId) {
+                provider = await serviceProvidersRepo.getServiceProviderById(item.providerId);
+                if (!provider || !provider.isActive) {
+                    throw notFound(`Doctor ${item.providerId}`);
+                }
+            }
+            if (service.requiresPerformer && !provider) {
+                throw badRequest(
+                    `El servicio ${service.name} requiere indicar quién lo realizó`,
+                );
+            }
+
+            // Comisión congelada al cobrar: manda la del servicio y, solo si es 0,
+            // se cae a la del doctor. El catálogo puede cambiar mañana; esta venta no.
+            const commissionRate = service.commissionRate > 0
+                ? service.commissionRate
+                : provider?.defaultCommissionRate ?? 0;
+
+            const itemSubtotal = service.price * item.quantity;
+            const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
+            subtotal += itemSubtotal;
+            lineDiscountTotal += discountAmount;
+
+            saleItems.push({
+                kind: 'service',
+                serviceId: service.id,
+                serviceName: service.name,
+                quantity: item.quantity,
+                unitPrice: service.price,
+                discountAmount,
+                subtotal: itemSubtotal,
+                providerId: provider?.id ?? null,
+                providerName: provider?.name ?? null,
+                commissionRate,
+                // Se calcula sobre el importe **neto**, que aún no se conoce: el
+                // descuento a nivel venta se prorratea más abajo.
+                commissionAmount: 0,
+            });
+            continue;
         }
 
         let product = productCache.get(item.productId);
@@ -336,6 +439,10 @@ export const createSale = async (input: {
         if (!batches) {
             batches = await batchesRepo.listBatchesByProduct(item.productId);
             batchCache.set(item.productId, batches);
+            batchStockBefore.set(
+                item.productId,
+                batches.reduce((sum, batch) => sum + batch.quantity, 0),
+            );
         }
 
         let allocations;
@@ -361,6 +468,7 @@ export const createSale = async (input: {
         lineDiscountTotal += discountAmount;
 
         saleItems.push({
+            kind: 'product',
             productId: product.id,
             productName: product.name,
             quantity: item.quantity,
@@ -424,10 +532,29 @@ export const createSale = async (input: {
     );
 
     saleItems.forEach((item, index) => {
-        const product = productCache.get(item.productId)!;
         const netAmount = lineNetsBeforeSaleDiscount[index] - saleDiscountShares[index];
         item.saleDiscountShare = saleDiscountShares[index];
         item.netAmount = netAmount;
+
+        if (isSaleServiceItem(item)) {
+            const service = serviceCache.get(item.serviceId)!;
+            item.taxes = breakdownLineTaxes({
+                grossAmount: netAmount,
+                // El `taxMode` del servicio se traduce a las mismas banderas
+                // fiscales del producto: `exempt` y `zero` ⇒ IVA 0, `iva16` ⇒ 16 %.
+                hasIva: service.taxMode === 'iva16',
+                hasIvaZero: service.taxMode === 'zero',
+                hasIeps: service.hasIeps,
+                iepsRate: service.iepsRate,
+            });
+            // La comisión se acredita sobre lo realmente cobrado por la partida.
+            item.commissionAmount = fromCents(
+                Math.round((toCents(netAmount) * item.commissionRate) / 100),
+            );
+            return;
+        }
+
+        const product = productCache.get(item.productId)!;
         item.taxes = breakdownLineTaxes({
             grossAmount: netAmount,
             hasIva: product.hasIva,
@@ -439,16 +566,22 @@ export const createSale = async (input: {
 
     const taxSummary = sumTaxSummary(saleItems.map((item) => item.taxes!));
 
+    // Las dos ramas de la venta. Son referencias a las mismas partidas de
+    // `saleItems`, no copias: lo que se les escriba sigue viéndose en el documento.
+    const productItems = saleItems.filter(isSaleProductItem);
+    const serviceItems = saleItems.filter(isSaleServiceItem);
+
     // COGS por partida desde el costo de los lotes asignados. Si a un lote le falta
     // `costPrice`, la partida queda en `null` y el reporte de margen lo reporta como
-    // "sin costo" en lugar de inflar la utilidad con un cero.
+    // "sin costo" en lugar de inflar la utilidad con un cero. Un servicio no tiene
+    // costo de mercancía: queda fuera del cálculo, no cuenta como "sin costo".
     const costByBatchId = new Map<string, number | undefined>();
     for (const batches of batchCache.values()) {
         for (const batch of batches) {
             costByBatchId.set(batch.id, batch.costPrice);
         }
     }
-    for (const item of saleItems) {
+    for (const item of productItems) {
         let costCents = 0;
         let costKnown = true;
         for (const allocation of item.batchAllocations) {
@@ -461,8 +594,8 @@ export const createSale = async (input: {
         }
         item.costAmount = costKnown ? costCents / 100 : null;
     }
-    const costTotal = saleItems.every((item) => item.costAmount !== null)
-        ? saleItems.reduce((total, item) => total + (item.costAmount ?? 0), 0)
+    const costTotal = productItems.every((item) => item.costAmount !== null)
+        ? productItems.reduce((total, item) => total + (item.costAmount ?? 0), 0)
         : null;
 
     const overCapLines = saleItems.filter(
@@ -480,7 +613,7 @@ export const createSale = async (input: {
         if (lineOverCap) {
             throw forbidden(
                 'Solo un administrador puede aplicar descuentos mayores al ' +
-                `${MAX_NON_ADMIN_DISCOUNT_RATE * 100}% (${lineOverCap.productName})`,
+                `${MAX_NON_ADMIN_DISCOUNT_RATE * 100}% (${saleItemName(lineOverCap)})`,
             );
         }
         if (toCents(discountTotal) > toCents(subtotal * MAX_NON_ADMIN_DISCOUNT_RATE)) {
@@ -529,14 +662,59 @@ export const createSale = async (input: {
         total,
         amountReceived: input.amountReceived,
         cardPaymentReference: input.cardPaymentReference,
-        ...(pointPayment ? { cardAmount: Number(pointPayment.amount) } : {}),
+        // La order manda cuando existe; si no, el reparto capturado en el POS.
+        ...(pointPayment
+            ? { cardAmount: Number(pointPayment.amount) }
+            : input.cardAmount !== undefined && input.cardAmount !== null
+                ? { cardAmount: input.cardAmount }
+                : {}),
     });
+
+    /**
+     * Denormalizados del cobro de servicios. **Los decide el servidor**: el
+     * payload propone partidas, no totales.
+     *
+     * `pharmacyTotal` se obtiene restando en centavos, no sumando la rama de
+     * mercancía, para que `pharmacyTotal + servicesTotal === total` se cumpla
+     * exacto y no dependa del redondeo de cada partida.
+     */
+    const servicesTotalCents = serviceItems.reduce(
+        (sum, item) => sum + toCents(item.netAmount ?? 0),
+        0,
+    );
+    const servicesTotal = fromCents(servicesTotalCents);
+    const pharmacyTotal = fromCents(toCents(total) - servicesTotalCents);
+    const commissionTotalCents = serviceItems.reduce(
+        (sum, item) => sum + toCents(item.commissionAmount),
+        0,
+    );
+    const commissionByProviderCents = new Map<string, number>();
+    for (const item of serviceItems) {
+        if (!item.providerId) {
+            continue;
+        }
+        commissionByProviderCents.set(
+            item.providerId,
+            (commissionByProviderCents.get(item.providerId) ?? 0) +
+                toCents(item.commissionAmount),
+        );
+    }
+
+    /**
+     * Reparto del efectivo: **servicios primero**. El efectivo cubre los
+     * servicios y lo que sobra es de farmacia; no se prorratea. Es una regla del
+     * negocio, no una aproximación.
+     */
+    const cashAmountCents = toCents(tender.cashAmount ?? 0);
+    const servicesCashCents = Math.min(cashAmountCents, servicesTotalCents);
+    const servicesCashAmount = fromCents(servicesCashCents);
+    const pharmacyCashAmount = fromCents(cashAmountCents - servicesCashCents);
 
     // Firestore exige que todas las lecturas de una transacción ocurran antes
     // que cualquier escritura: cuando una venta reparte stock entre 2+ lotes
     // (lo normal en FEFO) hay que leer todos los lotes primero y recién luego
-    // escribir todos los updates/movimientos.
-    const allocationRefs = saleItems.flatMap((item) =>
+    // escribir todos los updates/movimientos. Solo la mercancía mueve lotes.
+    const allocationRefs = productItems.flatMap((item) =>
         item.batchAllocations.map((allocation) => ({
             item,
             allocation,
@@ -583,11 +761,26 @@ export const createSale = async (input: {
             return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
         }
 
-        const [cashSessionDoc, counterDoc, ...batchDocs] = await Promise.all([
+        // Solo mercancía: los reportes resuelven cada id de `productIds` contra
+        // `products`, así que un id de servicio aquí los revienta.
+        const productIds = [...new Set(productItems.map((item) => item.productId))];
+        const stockDeltaByProduct = new Map<string, number>();
+        for (const item of productItems) {
+            stockDeltaByProduct.set(
+                item.productId,
+                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
+            );
+        }
+
+        const [cashSessionDoc, counterDoc, ...batchAndProductDocs] = await Promise.all([
             transaction.get(cashSessionRef),
             transaction.get(counterRef),
             ...uniqueBatchEntries.map(([, entry]) => transaction.get(entry.batchRef)),
+            ...productIds.map((productId) =>
+                transaction.get(firestore.collection('products').doc(productId))),
         ]);
+        const batchDocs = batchAndProductDocs.slice(0, uniqueBatchEntries.length);
+        const productDocs = batchAndProductDocs.slice(uniqueBatchEntries.length);
 
         if (!cashSessionDoc.exists) {
             throw notFound('Turno de caja');
@@ -638,21 +831,17 @@ export const createSale = async (input: {
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
 
-        const productIds = [...new Set(saleItems.map((item) => item.productId))];
-        const stockDeltaByProduct = new Map<string, number>();
-        for (const item of saleItems) {
-            stockDeltaByProduct.set(
-                item.productId,
-                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
-            );
-        }
-
-        for (const [productId, delta] of stockDeltaByProduct) {
+        productIds.forEach((productId, index) => {
+            const delta = stockDeltaByProduct.get(productId) ?? 0;
+            const denorm = productDocs[index].data()?.totalStock;
+            const baseline = typeof denorm === 'number'
+                ? denorm
+                : (batchStockBefore.get(productId) ?? delta);
             transaction.update(firestore.collection('products').doc(productId), {
-                totalStock: FieldValue.increment(-delta),
+                totalStock: Math.max(0, baseline - delta),
                 updatedAt: timestamp,
             });
-        }
+        });
 
         const saleData = {
             folio,
@@ -678,6 +867,20 @@ export const createSale = async (input: {
             prescription,
             prescriptionRetained: Boolean(input.prescriptionRetained),
             controlledGroups: controlled.groups,
+            hasServices: serviceItems.length > 0,
+            serviceIds: [...new Set(serviceItems.map((item) => item.serviceId))],
+            providerIds: [...commissionByProviderCents.keys()],
+            commissionTotal: fromCents(commissionTotalCents),
+            commissionByProvider: Object.fromEntries(
+                [...commissionByProviderCents].map(([providerId, cents]) => [
+                    providerId,
+                    fromCents(cents),
+                ]),
+            ),
+            pharmacyTotal,
+            servicesTotal,
+            pharmacyCashAmount,
+            servicesCashAmount,
             billing,
             invoiceStatus: billing ? ('pending' as const) : null,
             voidedAt: null,
@@ -700,8 +903,9 @@ export const createSale = async (input: {
         }
 
         // Libro de control: un renglón por partida de grupo controlado, en la misma
-        // transacción que la venta.
-        for (const item of saleItems) {
+        // transacción que la venta. Un servicio no es una sustancia controlada:
+        // la rama de servicios no entra al libro.
+        for (const item of productItems) {
             const rule = getControlledRule(productCache.get(item.productId)?.controlledGroup);
             if (!rule?.requiresLedger) {
                 continue;
@@ -746,8 +950,8 @@ export const createSale = async (input: {
                 subtotal,
                 discountTotal,
                 lineOverCap: overCapLines.map((item) => ({
-                    productId: item.productId,
-                    productName: item.productName,
+                    productId: isSaleServiceItem(item) ? item.serviceId : item.productId,
+                    productName: saleItemName(item),
                     discountAmount: item.discountAmount,
                 })),
             },
@@ -757,7 +961,18 @@ export const createSale = async (input: {
     return sale;
 };
 
-export const voidSale = async (id: string, voidedBy: string, roleSlug?: string): Promise<Sale> => {
+export const voidSale = async (
+    id: string,
+    voidedBy: string,
+    roleSlug?: string,
+    /**
+     * Datos que reporta el POS cuando la anulación ocurrió **sin red** y se está
+     * cerrando en el siguiente sync: el instante y el cajero de entonces. Sin
+     * esto, la venta quedaría anulada con la hora del sync y a nombre de quien
+     * sincronizó, que puede ser otro turno y otra persona.
+     */
+    reported?: { voidedAt?: string; voidedBy?: string },
+): Promise<Sale> => {
     const firestore = db();
     const saleRef = firestore.collection('sales').doc(id);
 
@@ -778,7 +993,15 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
             );
         }
 
-        const batchRefs = existing.items.flatMap((item) =>
+        /**
+         * La anulación solo revierte la rama de mercancía: reposición de lotes,
+         * movimientos negativos y contra-asiento del libro. Las partidas de
+         * servicio no dejaron rastro que revertir —solo quedan marcadas por el
+         * `voidedAt`/`voidedBy` de la venta.
+         */
+        const voidedProductItems = existing.items.filter(isSaleProductItem);
+
+        const batchRefs = voidedProductItems.flatMap((item) =>
             item.batchAllocations.map((allocation) => ({
                 item,
                 allocation,
@@ -803,7 +1026,7 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
         }
         const uniqueRestores = [...restoreByBatchId.entries()];
 
-        const productIds = [...new Set(existing.items.map((item) => item.productId))];
+        const productIds = [...new Set(voidedProductItems.map((item) => item.productId))];
         const [batchDocs, productDocs] = await Promise.all([
             Promise.all(uniqueRestores.map(([, entry]) => transaction.get(entry.batchRef))),
             Promise.all(productIds.map((productId) =>
@@ -818,7 +1041,19 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
             );
         });
 
-        const timestamp = now();
+        /**
+         * Instante de la anulación. Se acepta el reportado por la caja solo si
+         * es coherente —no futuro y no anterior a la venta—: un reloj desfasado
+         * en el equipo no debe escribir una línea de tiempo imposible en la
+         * bitácora ni en el libro de control.
+         */
+        const serverNow = now();
+        const reportedAt = reported?.voidedAt ? Timestamp.fromDate(new Date(reported.voidedAt)) : null;
+        const reportedIsSane = reportedAt !== null &&
+            reportedAt.toMillis() <= serverNow.toMillis() &&
+            reportedAt.toMillis() >= existing.createdAt.toMillis();
+        const timestamp = reportedIsSane ? reportedAt : serverNow;
+        const author = reported?.voidedBy ?? voidedBy;
 
         uniqueRestores.forEach(([, entry], index) => {
             const batchDoc = batchDocs[index];
@@ -840,28 +1075,31 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
                 batchId: allocation.batchId,
                 quantity: -allocation.quantity,
                 referenceId: saleRef.id,
-                userId: voidedBy,
+                userId: author,
                 createdAt: timestamp,
             });
         });
 
         const stockDeltaByProduct = new Map<string, number>();
-        for (const item of existing.items) {
+        for (const item of voidedProductItems) {
             stockDeltaByProduct.set(
                 item.productId,
                 (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
             );
         }
-        for (const [productId, delta] of stockDeltaByProduct) {
+        productIds.forEach((productId, index) => {
+            const delta = stockDeltaByProduct.get(productId) ?? 0;
+            const denorm = productDocs[index].data()?.totalStock;
+            const baseline = typeof denorm === 'number' ? denorm : 0;
             transaction.update(firestore.collection('products').doc(productId), {
-                totalStock: FieldValue.increment(delta),
+                totalStock: Math.max(0, baseline + delta),
                 updatedAt: timestamp,
             });
-        }
+        });
 
         // Reversa en el libro de control: cantidad negativa, un renglón por partida
         // controlada. El libro nunca se borra, se contra-asienta.
-        for (const item of existing.items) {
+        for (const item of voidedProductItems) {
             const group = productGroupById.get(item.productId);
             const rule = getControlledRule(group);
             if (!rule?.requiresLedger) {
@@ -880,14 +1118,14 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
                 prescription: existing.prescription,
                 prescriptionRetained: Boolean(existing.prescriptionRetained),
                 customerName: existing.customerName,
-                userId: voidedBy,
+                userId: author,
                 createdAt: timestamp,
             });
         }
 
-        transaction.update(saleRef, { voidedAt: timestamp, voidedBy });
+        transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author });
 
-        return { ...existing, voidedAt: timestamp, voidedBy };
+        return { ...existing, voidedAt: timestamp, voidedBy: author };
     });
 
     await recordAudit({
@@ -902,6 +1140,15 @@ export const voidSale = async (id: string, voidedBy: string, roleSlug?: string):
             total: sale.total,
             paymentMethod: sale.paymentMethod,
             items: sale.items.length,
+            // Anulación hecha sin red y cerrada en el sync: quién la hizo en la
+            // caja y cuándo, frente a quién la sincronizó (`userId`).
+            ...(reported?.voidedBy || reported?.voidedAt
+                ? {
+                    offlineVoid: true,
+                    reportedVoidedBy: reported?.voidedBy ?? null,
+                    reportedVoidedAt: reported?.voidedAt ?? null,
+                }
+                : {}),
         },
     });
 
@@ -916,6 +1163,34 @@ export const getSale = async (id: string): Promise<Sale> => {
     return sale;
 };
 
+/**
+ * Comprueba que quien pregunta tenga derecho a ver ESTA venta, aplicando al
+ * turno de la venta la misma regla que el resto del módulo de caja: el cajero
+ * que lo abrió, o un administrador.
+ *
+ * Sin esto, `sales:read` (que tiene el mostrador) era una lectura universal por
+ * id: cualquier cajero podía leer el detalle —partidas, cliente, forma de pago,
+ * totales— de cualquier venta de cualquier compañero, y el ticket completo por
+ * `/:id/receipt`. Se separa de `getSale` a propósito para no cambiar las
+ * llamadas internas del propio backend, que ya validan por su cuenta.
+ */
+export const assertCanReadSale = async (
+    sale: Sale,
+    requesterId: string,
+    roleSlug?: string | null,
+): Promise<void> => {
+    if (!sale.cashSessionId) {
+        // Venta sin turno (cobro directo, migración): no hay pertenencia que
+        // comprobar, así que solo la ve un administrador.
+        assertCanAccessSession({ openedBy: '' }, requesterId, roleSlug);
+        return;
+    }
+    const session = await cashSessionsRepo.getCashSessionById(sale.cashSessionId);
+    // Turno inexistente: no se puede acreditar la pertenencia, así que se niega
+    // a todo el que no sea administrador en vez de dejarlo pasar.
+    assertCanAccessSession({ openedBy: session?.openedBy ?? '' }, requesterId, roleSlug);
+};
+
 export const listSales = async (filters: {
     from?: string;
     to?: string;
@@ -924,13 +1199,30 @@ export const listSales = async (filters: {
     search?: string;
     page?: number;
     limit?: number;
+    /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
+    requesterId?: string;
+    requesterRoleSlug?: string | null;
 }): Promise<{ items: Sale[]; meta: ListMeta }> => {
+    // Filtrar por turno es leer el turno: si no se comprueba la pertenencia, un
+    // cajero reconstruye el corte de otro pasando su `cashSessionId` y se salta
+    // el `assertCanAccessSession` de `GET /cash-sessions/:id/summary`.
+    if (filters.cashSessionId) {
+        const session = await cashSessionsRepo.getCashSessionById(filters.cashSessionId);
+        if (!session) {
+            throw notFound('Turno de caja');
+        }
+        assertCanAccessSession(session, filters.requesterId ?? '', filters.requesterRoleSlug);
+    }
+
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const { items: sales } = await salesRepo.listSales({
         from: filters.from,
         to: filters.to,
         cashSessionId: filters.cashSessionId,
         includeVoided: filters.includeVoided,
+        // Con búsqueda de texto el filtro corre en memoria y necesita ver toda
+        // la ventana; sin ella basta traer hasta la profundidad de página pedida.
+        maxDocs: filters.search ? undefined : page * limit,
     });
 
     let filtered = sales;
@@ -939,10 +1231,13 @@ export const listSales = async (filters: {
         const term = filters.search.toLowerCase();
         filtered = filtered.filter((sale) =>
             sale.folio.toLowerCase().includes(term) ||
-            sale.items.some((item) => item.productName.toLowerCase().includes(term)),
+            sale.items.some((item) => saleItemName(item).toLowerCase().includes(term)),
         );
     }
 
+    // Sin búsqueda, `filtered.length` es solo lo leído hasta `page * limit` (no
+    // el total real de la ventana): correcto para `items`, pero `meta.total`
+    // subestima si hay más páginas atrás sin pedir.
     const paginated = paginate(filtered, page, limit);
     return {
         items: paginated.items,
@@ -951,6 +1246,51 @@ export const listSales = async (filters: {
 };
 
 /** Anulación de ventas: solo el rol de sistema `admin` (no un área de permiso). */
+/**
+ * Refresca la foto del cobro Point de la venta a partir del aviso de Mercado
+ * Pago. La venta ya está registrada y no se toca: lo que cambia es el estado del
+ * cobro del otro lado (reembolso, cancelación, contracargo), y sin esto la venta
+ * seguiría diciendo `processed` para siempre.
+ *
+ * Devuelve `null` si la orden no corresponde a ninguna venta —puede ser de un
+ * cobro directo, o de un cobro aprobado cuya venta nunca se registró (esa
+ * huérfana se reporta en el log: es justo lo que busca la conciliación diaria).
+ */
+export const syncPointPaymentFromOrder = async (orderId: string): Promise<Sale | null> => {
+    const sale = await salesRepo.findSaleByPointOrderId(orderId);
+    if (!sale) {
+        return null;
+    }
+
+    const order = await mercadoPagoService.getOrder(orderId);
+    if (sale.pointPayment?.status === order.status) {
+        return sale;
+    }
+
+    const pointPayment: PointPaymentSnapshot = {
+        orderId: order.id,
+        paymentId: order.paymentId,
+        status: order.status,
+        amount: order.amount,
+        terminalId: order.terminalId,
+        externalReference: order.externalReference,
+    };
+    await salesRepo.updateSalePointPayment(sale.id, pointPayment);
+
+    if (order.status !== 'processed') {
+        // El dinero de una venta cobrada dejó de estar: no se anula sola (eso
+        // devolvería stock sin decisión de nadie), pero tiene que verse.
+        console.warn('El cobro Point de una venta cambió de estado en Mercado Pago', {
+            saleId: sale.id,
+            folio: sale.folio,
+            orderId,
+            status: order.status,
+        });
+    }
+
+    return { ...sale, pointPayment };
+};
+
 export const assertCanVoidSale = (roleSlug: string): void => {
     if (roleSlug !== 'admin') {
         throw forbidden('Solo un administrador puede anular una venta');

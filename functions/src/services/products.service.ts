@@ -1,4 +1,5 @@
 import {
+    Batch,
     BulkCreateProductsResult,
     ControlledGroup,
     InvoiceSummary,
@@ -10,6 +11,7 @@ import {
     ProductWithCategory,
     Supplier,
     SupplierSummary,
+    isSaleProductItem,
 } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import {
@@ -123,7 +125,9 @@ const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryIt
 
     for (const sale of sales) {
         for (const item of sale.items) {
-            if (item.productId !== productId) {
+            // Una venta mixta trae partidas de servicio: no tienen `productId`
+            // ni historial de inventario que mostrar.
+            if (!isSaleProductItem(item) || item.productId !== productId) {
                 continue;
             }
             history.push({
@@ -207,18 +211,174 @@ const loadInvoiceHistory = async (
         .sort((a, b) => b.invoiceDate.toMillis() - a.invoiceDate.toMillis());
 };
 
+const attachStockAndCategory = async (
+    products: Product[],
+): Promise<Array<ProductWithCategory & { stock: number }>> => {
+    const categoryIds = [...new Set(products.map((product) => product.categoryId))];
+    const categories = await categoriesRepo.getCategoriesByIds(categoryIds);
+
+    return Promise.all(
+        products.map(async (product) => {
+            const category = categories.get(product.categoryId);
+            if (!category) {
+                throw notFound('Categoría');
+            }
+            const stock = Math.max(
+                0,
+                product.totalStock ?? await batchesRepo.getTotalStock(product.id),
+            );
+            return {
+                ...product,
+                stock,
+                category,
+            };
+        }),
+    );
+};
+
+/**
+ * Producto tal como lo guarda el SQLite local del POS. **Es exactamente lo que
+ * persiste `electron/db/products.js`, ni un campo más**: el pull completo viaja
+ * por la red de la farmacia y se guarda entero, así que mandar el documento de
+ * Firestore tal cual (categoría embebida, costos por proveedor, timestamps de
+ * auditoría) es peso que nadie lee.
+ */
+export interface SyncProduct {
+    id: string;
+    sku: string;
+    barcode?: string;
+    name: string;
+    activeIngredient?: string;
+    concentration?: string;
+    categoryId: string;
+    unit: string;
+    salePrice: number;
+    minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    iepsRate?: number;
+    controlledGroup?: ControlledGroup;
+    requiresPrescription: boolean;
+    isActive: boolean;
+    /** Existencia total; el local la usa como foto hasta el siguiente pull. */
+    stock: number;
+    /** Cursor del pull incremental (`updatedSince` de la siguiente corrida). */
+    updatedAt: Timestamp;
+    batches: SyncBatch[];
+}
+
+/** Lote reducido a lo que el local necesita para FEFO y caducidad. */
+export interface SyncBatch {
+    id: string;
+    lotNumber: string;
+    expiryDate: Timestamp;
+    quantity: number;
+}
+
+const toSyncBatch = (batch: Batch): SyncBatch => ({
+    id: batch.id,
+    lotNumber: batch.lotNumber,
+    expiryDate: batch.expiryDate,
+    quantity: batch.quantity,
+});
+
+const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
+    const sumFromBatches = batches.reduce((total, batch) => total + batch.quantity, 0);
+    return {
+        id: product.id,
+        sku: product.sku,
+        ...(product.barcode ? { barcode: product.barcode } : {}),
+        name: product.name,
+        ...(product.activeIngredient ? { activeIngredient: product.activeIngredient } : {}),
+        ...(product.concentration ? { concentration: product.concentration } : {}),
+        categoryId: product.categoryId,
+        unit: product.unit,
+        salePrice: product.salePrice,
+        minStock: product.minStock,
+        hasIva: product.hasIva,
+        hasIvaZero: product.hasIvaZero,
+        hasIeps: product.hasIeps,
+        ...(product.iepsRate === undefined ? {} : { iepsRate: product.iepsRate }),
+        ...(product.controlledGroup ? { controlledGroup: product.controlledGroup } : {}),
+        requiresPrescription: Boolean(product.requiresPrescription),
+        isActive: product.isActive,
+        // `totalStock` es el denormalizado que mantienen ventas y entradas; si el
+        // producto es anterior a la denormalización se suma de los lotes que ya
+        // se leyeron, en vez de pagar una consulta extra por producto.
+        stock: Math.max(0, product.totalStock ?? sumFromBatches),
+        updatedAt: product.updatedAt,
+        batches: batches.map(toSyncBatch),
+    };
+};
+
+/**
+ * Catálogo para el pull local-first del POS: una sola llamada trae todo (o todo
+ * lo cambiado desde `updatedSince`) en vez de recorrer `listProducts` página por
+ * página. Incluye inactivos a propósito — el catálogo local necesita reflejar
+ * bajas, no solo altas.
+ *
+ * Costo: 1 consulta de productos + N/30 de lotes. No lee categorías (el local
+ * solo guarda `categoryId`) ni cae a `getTotalStock` por producto, que eran
+ * lecturas por producto en cada sync.
+ */
+export const listProductsForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: SyncProduct[] }> => {
+    const products = await productsRepo.listProducts({
+        activeOnly: false,
+        updatedSince: filters.updatedSince,
+    });
+    // El SQLite local necesita los lotes (caducidad, FEFO) para no pegarle a
+    // `GET /inventory/batches` al agregar al carrito: sin red eso no existe.
+    const batchesByProduct = await batchesRepo.listBatchesWithStockByProductIds(
+        products.map((product) => product.id),
+    );
+
+    return {
+        items: products.map((product) =>
+            toSyncProduct(product, batchesByProduct.get(product.id) ?? []),
+        ),
+    };
+};
+
 export const listProducts = async (filters: {
     categoryId?: string;
     search?: string;
     activeOnly?: boolean;
     page?: number;
     limit?: number;
+    /** Solo productos con `updatedAt` posterior (sync incremental del catálogo local del POS). */
+    updatedSince?: string;
 }): Promise<{
     items: Array<ProductWithCategory & { stock: number }>;
     meta: ListMeta;
 }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const search = filters.search?.trim();
+
+    /**
+     * Camino normal de la pantalla de catálogo: sin término de búsqueda,
+     * Firestore resuelve orden y página. Antes se leía la colección completa
+     * para devolver 20 productos.
+     *
+     * `updatedSince` (sync incremental del POS) no entra aquí: ese flujo quiere
+     * todo lo cambiado, no una página, y su propio filtro ya acota la lectura.
+     */
+    if (!search && !filters.updatedSince) {
+        const { items: pageItems, total } = await productsRepo.listProductsPage({
+            categoryId: filters.categoryId,
+            activeOnly: filters.activeOnly,
+            page,
+            limit,
+        });
+
+        return {
+            items: await attachStockAndCategory(pageItems),
+            meta: buildListMeta(page, limit, total),
+        };
+    }
+
     let items: Product[];
 
     if (search) {
@@ -242,27 +402,12 @@ export const listProducts = async (filters: {
         items = await productsRepo.listProducts({
             categoryId: filters.categoryId,
             activeOnly: filters.activeOnly,
+            updatedSince: filters.updatedSince,
         });
     }
 
     const { items: paginated, total } = paginate(items, page, limit);
-    const categoryIds = [...new Set(paginated.map((product) => product.categoryId))];
-    const categories = await categoriesRepo.getCategoriesByIds(categoryIds);
-
-    const withDetails = await Promise.all(
-        paginated.map(async (product) => {
-            const category = categories.get(product.categoryId);
-            if (!category) {
-                throw notFound('Categoría');
-            }
-            const stock = product.totalStock ?? await batchesRepo.getTotalStock(product.id);
-            return {
-                ...product,
-                stock,
-                category,
-            };
-        }),
-    );
+    const withDetails = await attachStockAndCategory(paginated);
 
     return {
         items: withDetails,
@@ -283,7 +428,7 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
         throw notFound('Producto');
     }
 
-    const [stock, suppliers, category] = await Promise.all([
+    const [stockRaw, suppliers, category] = await Promise.all([
         product.totalStock !== undefined
             ? Promise.resolve(product.totalStock)
             : batchesRepo.getTotalStock(id),
@@ -294,6 +439,8 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
     if (!category) {
         throw notFound('Categoría');
     }
+
+    const stock = Math.max(0, stockRaw);
 
     const { lastCostPriceBySupplier: _, ...productData } = product;
     return {

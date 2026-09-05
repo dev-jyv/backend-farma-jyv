@@ -51,23 +51,6 @@ export const getInvoiceById = async (id: string): Promise<Invoice | null> => {
     return mapInvoice(doc);
 };
 
-export const findInvoiceBySupplierAndNumber = async (
-    supplierId: string,
-    invoiceNumber: string,
-): Promise<Invoice | null> => {
-    const snapshot = await collection()
-        .where('supplierId', '==', supplierId)
-        .where('invoiceNumber', '==', invoiceNumber)
-        .limit(1)
-        .get();
-
-    if (snapshot.empty) {
-        return null;
-    }
-
-    return mapInvoice(snapshot.docs[0]);
-};
-
 export const createInvoice = async (
     id: string,
     data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,

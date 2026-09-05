@@ -1,10 +1,13 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import {
-    sendDailySalesReport,
-    sendMonthlySalesReport,
-} from '../services/sales-report-sender.service';
-import { sendInventoryAlertsReport } from '../services/inventory-alerts-sender.service';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+
+/**
+ * Los servicios de envío se importan **dentro** de cada handler, no arriba.
+ * `index.ts` reexporta este módulo, así que un import estático aquí también se
+ * carga en el arranque en frío de la function `api`, que nunca manda correo:
+ * arrastraba Resend, React y React Email por nada. Cada función programada
+ * paga solo lo que usa, la primera vez que corre.
+ */
 
 const SCHEDULE_OPTIONS = {
     region: 'us-central1',
@@ -16,6 +19,9 @@ const SCHEDULE_OPTIONS = {
 export const dailySalesReport = onSchedule(
     { ...SCHEDULE_OPTIONS, schedule: '10 0 * * *' },
     async () => {
+        const { sendDailySalesReport } = await import(
+            '../services/sales-report-sender.service'
+        );
         const { date } = await sendDailySalesReport();
         console.log(`Reporte diario de ventas enviado (${date})`);
     },
@@ -35,6 +41,9 @@ export const dailyInventoryAlerts = onSchedule(
         schedule: '0 7 * * *',
     },
     async () => {
+        const { sendInventoryAlertsReport } = await import(
+            '../services/inventory-alerts-sender.service'
+        );
         const { sent, totals } = await sendInventoryAlertsReport();
         console.log(
             sent
@@ -47,6 +56,9 @@ export const dailyInventoryAlerts = onSchedule(
 export const monthlySalesReport = onSchedule(
     { ...SCHEDULE_OPTIONS, schedule: '20 0 1 * *' },
     async () => {
+        const { sendMonthlySalesReport } = await import(
+            '../services/sales-report-sender.service'
+        );
         const { year, month } = await sendMonthlySalesReport();
         console.log(`Reporte mensual de ventas enviado (${year}-${month})`);
     },

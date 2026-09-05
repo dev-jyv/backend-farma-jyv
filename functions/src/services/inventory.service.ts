@@ -124,27 +124,63 @@ const loadProductWithCategory = async (product: Product): Promise<ProductWithCat
     return { ...product, category };
 };
 
+/**
+ * Los enriquecidos se ejecutan con `Promise.all`, así que guardar el valor ya
+ * resuelto no evita nada: todas las llamadas concurrentes fallan la caché a la
+ * vez y leen el mismo documento N veces. Guardando la *promesa* la primera
+ * llamada gana y el resto se cuelga de ella, con una sola lectura por id.
+ */
+type PromiseCache<T> = Map<string, Promise<T>>;
+
+const cached = <T>(cache: PromiseCache<T>, key: string, load: () => Promise<T>): Promise<T> => {
+    const pending = cache.get(key);
+    if (pending) {
+        return pending;
+    }
+    const promise = load();
+    cache.set(key, promise);
+    return promise;
+};
+
+/** Caches compartidos por una operación de listado; ver `PromiseCache`. */
+export interface EnrichCaches {
+    suppliers: PromiseCache<Supplier | null>;
+    products: PromiseCache<ProductWithCategory | null>;
+    invoices: PromiseCache<InvoiceSummary | null>;
+}
+
+const createEnrichCaches = (): EnrichCaches => ({
+    suppliers: new Map(),
+    products: new Map(),
+    invoices: new Map(),
+});
+
+const loadCachedProduct = (
+    productId: string,
+    caches: EnrichCaches,
+): Promise<ProductWithCategory | null> =>
+    cached(caches.products, productId, async () => {
+        const baseProduct = await productsRepo.getProductById(productId);
+        return baseProduct ? loadProductWithCategory(baseProduct) : null;
+    });
+
 const enrichEntry = async (
     entry: InventoryEntry,
-    supplierCache = new Map<string, Supplier | null>(),
-    productCache = new Map<string, ProductWithCategory | null>(),
-    invoiceCache = new Map<string, InvoiceSummary | null>(),
+    caches: EnrichCaches = createEnrichCaches(),
 ): Promise<InventoryEntryWithDetails> => {
-    let supplier = supplierCache.get(entry.supplierId);
-    if (supplier === undefined) {
-        supplier = await suppliersRepo.getSupplierById(entry.supplierId);
-        supplierCache.set(entry.supplierId, supplier);
-    }
+    const supplier = await cached(caches.suppliers, entry.supplierId, () =>
+        suppliersRepo.getSupplierById(entry.supplierId),
+    );
     if (!supplier) {
         throw notFound('Proveedor');
     }
 
     let invoice: InvoiceSummary | null = null;
     if (entry.invoiceId) {
-        let cached = invoiceCache.get(entry.invoiceId);
-        if (cached === undefined) {
-            const invoiceDoc = await invoicesRepo.getInvoiceById(entry.invoiceId);
-            cached = invoiceDoc
+        const invoiceId = entry.invoiceId;
+        invoice = await cached(caches.invoices, invoiceId, async () => {
+            const invoiceDoc = await invoicesRepo.getInvoiceById(invoiceId);
+            return invoiceDoc
                 ? {
                     id: invoiceDoc.id,
                     invoiceNumber: invoiceDoc.invoiceNumber,
@@ -152,19 +188,12 @@ const enrichEntry = async (
                     supplier: { id: supplier.id, name: supplier.name },
                 }
                 : null;
-            invoiceCache.set(entry.invoiceId, cached);
-        }
-        invoice = cached;
+        });
     }
 
     const items = await Promise.all(
         entry.items.map(async (item) => {
-            let product = productCache.get(item.productId);
-            if (product === undefined) {
-                const baseProduct = await productsRepo.getProductById(item.productId);
-                product = baseProduct ? await loadProductWithCategory(baseProduct) : null;
-                productCache.set(item.productId, product);
-            }
+            const product = await loadCachedProduct(item.productId, caches);
             if (!product) {
                 throw notFound('Producto');
             }
@@ -177,14 +206,9 @@ const enrichEntry = async (
 
 const enrichMovement = async (
     movement: StockMovement,
-    productCache = new Map<string, ProductWithCategory | null>(),
+    caches: EnrichCaches = createEnrichCaches(),
 ): Promise<StockMovementWithDetails> => {
-    let product = productCache.get(movement.productId);
-    if (product === undefined) {
-        const baseProduct = await productsRepo.getProductById(movement.productId);
-        product = baseProduct ? await loadProductWithCategory(baseProduct) : null;
-        productCache.set(movement.productId, product);
-    }
+    const product = await loadCachedProduct(movement.productId, caches);
     if (!product) {
         throw notFound('Producto');
     }
@@ -203,21 +227,20 @@ export const listEntries = async (filters: {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const entries = await entriesRepo.listInventoryEntries(filters);
 
+    const caches = createEnrichCaches();
+
     if (!filters.search) {
         const paginated = paginate(entries, page, limit);
-        const items = await Promise.all(paginated.items.map((entry) => enrichEntry(entry)));
+        const items = await Promise.all(
+            paginated.items.map((entry) => enrichEntry(entry, caches)),
+        );
         return {
             items,
             meta: buildListMeta(page, limit, paginated.total),
         };
     }
 
-    const supplierCache = new Map<string, Supplier | null>();
-    const productCache = new Map<string, ProductWithCategory | null>();
-    const invoiceCache = new Map<string, InvoiceSummary | null>();
-    let items = await Promise.all(
-        entries.map((entry) => enrichEntry(entry, supplierCache, productCache, invoiceCache)),
-    );
+    let items = await Promise.all(entries.map((entry) => enrichEntry(entry, caches)));
 
     const term = filters.search.toLowerCase();
     items = items.filter(
@@ -698,10 +721,12 @@ export const listMovements = async (filters: {
         to: filters.to,
     });
 
+    const caches = createEnrichCaches();
+
     if (!filters.search) {
         const paginated = paginate(movements, page, limit);
         const items = await Promise.all(
-            paginated.items.map((movement) => enrichMovement(movement)),
+            paginated.items.map((movement) => enrichMovement(movement, caches)),
         );
         return {
             items,
@@ -709,9 +734,8 @@ export const listMovements = async (filters: {
         };
     }
 
-    const productCache = new Map<string, ProductWithCategory | null>();
     let items = await Promise.all(
-        movements.map((movement) => enrichMovement(movement, productCache)),
+        movements.map((movement) => enrichMovement(movement, caches)),
     );
 
     const term = filters.search.toLowerCase();

@@ -9,6 +9,7 @@ import * as analyticsService from '../src/services/analytics.service';
 import * as scanService from '../src/services/scan.service';
 import { toTimestamp } from '../src/utils/firestore';
 import { toCents } from '../src/utils/taxes';
+import { productItem } from './sale-item.helpers';
 
 jest.mock('../src/services/mercado-pago.service', () => ({
     getOrder: jest.fn(),
@@ -225,7 +226,7 @@ describe('analytics.service - reportes', () => {
             cashierId: session.openedBy,
         });
 
-        expect(sale.items[0].costAmount).toBe(60);
+        expect(productItem(sale, 0).costAmount).toBe(60);
         expect(sale.costTotal).toBe(60);
 
         // Límite alto: el reporte corta el top-N y otras suites también venden.
@@ -250,7 +251,7 @@ describe('analytics.service - reportes', () => {
             cashierId: session.openedBy,
         });
 
-        expect(sale.items[0].costAmount).toBeNull();
+        expect(productItem(sale, 0).costAmount).toBeNull();
         expect(sale.costTotal).toBeNull();
 
         const profit = await analyticsService.getProfitReport(period());

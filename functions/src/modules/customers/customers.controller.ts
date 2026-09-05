@@ -40,7 +40,8 @@ export class CustomersController {
     }
 
     @Post()
-    @RequirePermission('sales')
+    // Alta de cliente en caja, al momento de cobrar.
+    @RequirePermission('pos')
     @HttpCode(201)
     async create(@Body(new ZodValidationPipe(createCustomerSchema)) body: CreateCustomerInput) {
         const customer = await customersService.createCustomer(body);
@@ -48,7 +49,7 @@ export class CustomersController {
     }
 
     @Patch(':id')
-    @RequirePermission('sales')
+    @RequirePermission('pos')
     async update(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(updateCustomerSchema)) body: UpdateCustomerInput,
