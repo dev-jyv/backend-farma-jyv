@@ -922,11 +922,18 @@ describe('sales.service - assertCanVoidSale', () => {
             typeof salesService.assertCanVoidSale
         >[0];
 
-    it('el cajero puede anular: es rutina de mostrador, no atribución de admin', () => {
-        // Exigir un admin obligaba a escalar cada error de cobro y empujaba a la
-        // práctica peor: dejar la venta mal registrada y cuadrarla a mano.
+    it('el cajero puede anular con `pos:write`, que es lo que realmente tiene', () => {
+        // El rol `cashier` NO lleva `sales:write` —eso cubre devoluciones y
+        // reembolsos, donde sale dinero hacia el cliente—. Anular sí es rutina de
+        // mostrador: el error se detecta con la fila enfrente.
         expect(() =>
-            salesService.assertCanVoidSale(usuario('cashier', [{ area: 'sales', level: 'write' }])),
+            salesService.assertCanVoidSale(usuario('cashier', [{ area: 'pos', level: 'write' }])),
+        ).not.toThrow();
+    });
+
+    it('también con `sales:write` (roles de administración de ventas)', () => {
+        expect(() =>
+            salesService.assertCanVoidSale(usuario('manager', [{ area: 'sales', level: 'write' }])),
         ).not.toThrow();
     });
 
@@ -934,7 +941,7 @@ describe('sales.service - assertCanVoidSale', () => {
         expect(() => salesService.assertCanVoidSale(usuario('admin', []))).not.toThrow();
     });
 
-    it('un rol sin `sales:write` no puede', () => {
+    it('un rol sin `pos:write` ni `sales:write` no puede', () => {
         expect(() =>
             salesService.assertCanVoidSale(usuario('doctor', [{ area: 'doctor', level: 'write' }])),
         ).toThrow(expect.objectContaining({ code: 'FORBIDDEN' }));

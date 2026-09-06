@@ -88,10 +88,12 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
          * Ese permiso es `pos`, no `sales`: vender y administrar lo vendido son
          * atribuciones distintas. `pos:write` cubre levantar la venta, cobrar con
          * la terminal, mover y cerrar el turno y dar de alta al cliente en caja.
-         * Anular, devolver, reembolsar en Mercado Pago y configurar terminales
-         * se quedan en `sales:write`, fuera del mostrador: con un área sola,
-         * habilitar la caja le daba al cajero el poder de cancelar y reembolsar
-         * sus propias ventas. El turno ajeno lo sigue bloqueando
+         * Devolver, reembolsar en Mercado Pago y configurar terminales se quedan
+         * en `sales:write`, fuera del mostrador: ahí sale dinero de la caja hacia
+         * el cliente. **Anular sí es de mostrador** (2026-09-05): equivocarse de
+         * producto pasa con la fila enfrente, y exigir un admin empujaba a dejar
+         * la venta mal registrada. Lo cubre `pos:write` y queda firmado con
+         * `voidedBy`/`voidedAt` (ver `assertCanVoidSale`). El turno ajeno lo sigue bloqueando
          * `assertCanAccessSession`, aunque el área alcance.
          *
          * `sales:read` se conserva para consultar ventas y reimprimir tickets.

@@ -1330,18 +1330,29 @@ export const syncPointPaymentFromOrder = async (orderId: string): Promise<Sale |
  * mal registrada y "arreglarla" a mano en el corte—, que es justo lo que un
  * rastro auditable debe evitar.
  *
- * Basta `sales:write` (el permiso con el que se cobra). La protección no es
- * negar la anulación, sino que quede firmada: `voidedAt`, `voidedBy` y el
- * renglón de anulación en el libro de control.
+ * Basta `pos:write` —el permiso con el que se cobra— o `sales:write`.
  *
- * La excepción está en `voidSale`: tocar una venta de un turno **ya cerrado**
- * cambia un arqueo firmado, y eso sí sigue siendo de admin.
+ * `sales:write` se había reservado para anular, devolver y reembolsar, fuera
+ * del mostrador, por un motivo real: un cajero que anula sus propias ventas
+ * puede quedarse el efectivo. Pero negarlo no elimina ese riesgo, solo empuja a
+ * la salida peor —dejar la venta mal registrada y cuadrar el corte a mano—, que
+ * además no deja rastro. Aquí el control compensatorio es la firma: `voidedAt`,
+ * `voidedBy`, el renglón de anulación y el contra-asiento del libro de control.
+ *
+ * **Devolver y reembolsar siguen en `sales:write`**: ahí sí sale dinero de la
+ * caja hacia el cliente, y eso no es rutina de mostrador.
+ *
+ * La otra excepción está en `voidSale`: tocar una venta de un turno **ya
+ * cerrado** cambia un arqueo firmado, y eso sigue siendo de admin.
  */
 export const assertCanVoidSale = (user: {
     role: { slug: string };
     permissions: RolePermission[];
 }): void => {
-    if (!hasPermission(user.permissions, 'sales', 'write', user.role.slug)) {
+    const puede =
+        hasPermission(user.permissions, 'pos', 'write', user.role.slug) ||
+        hasPermission(user.permissions, 'sales', 'write', user.role.slug);
+    if (!puede) {
         throw forbidden('Tu rol no tiene permiso para anular ventas');
     }
 };

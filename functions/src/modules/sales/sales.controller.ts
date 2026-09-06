@@ -197,7 +197,14 @@ export class SalesController {
     }
 
     @Post(':id/void')
-    @RequirePermission('sales')
+    /**
+     * Piso mínimo: ver ventas. Quién puede anular de verdad lo decide
+     * `assertCanVoidSale` (`pos:write` del mostrador **o** `sales:write`),
+     * porque el decorador solo admite un área y aquí valen dos. Con
+     * `RequirePermission('sales')` —que asume nivel `write`— el guard rechazaba
+     * al cajero con 403 antes de llegar al handler.
+     */
+    @RequirePermission('sales', 'read')
     async void(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @CurrentUser() user: AuthUser,
