@@ -1,6 +1,5 @@
 import {
     Body,
-    Column,
     Container,
     Head,
     Heading,
@@ -13,156 +12,262 @@ import {
 } from '@react-email/components';
 import { SalesReport } from '../services/sales-reports.service';
 import { formatCurrency } from '../utils/currency';
+import {
+    BranchCard,
+    DataRow,
+    DataTable,
+    EmptyState,
+    HeroMetric,
+    MetricRow,
+    ReportSection,
+    TotalRow,
+    palette,
+    text,
+} from './components/report-ui';
 
-const styles = {
-    body: {
-        backgroundColor: '#f4f7f5',
-        fontFamily: 'Helvetica, Arial, sans-serif',
-        margin: 0,
-        padding: '24px 0',
-    },
-    container: {
-        backgroundColor: '#ffffff',
-        borderRadius: '8px',
-        margin: '0 auto',
-        maxWidth: '560px',
-        padding: '32px',
-    },
-    brand: {
-        color: '#166534',
-        fontSize: '13px',
-        fontWeight: 700 as const,
-        letterSpacing: '1px',
-        margin: 0,
-        textTransform: 'uppercase' as const,
-    },
-    title: {
-        color: '#111827',
-        fontSize: '22px',
-        margin: '4px 0 0',
-    },
-    period: {
-        color: '#6b7280',
-        fontSize: '14px',
-        margin: '4px 0 0',
-        textTransform: 'capitalize' as const,
-    },
-    metricValue: {
-        color: '#111827',
-        fontSize: '20px',
-        fontWeight: 700 as const,
-        margin: 0,
-    },
-    metricLabel: {
-        color: '#6b7280',
-        fontSize: '12px',
-        margin: '2px 0 0',
-    },
-    sectionTitle: {
-        color: '#111827',
-        fontSize: '15px',
-        margin: '0 0 8px',
-    },
-    rowLabel: {
-        color: '#374151',
-        fontSize: '13px',
-        margin: '2px 0',
-    },
-    rowValue: {
-        color: '#111827',
-        fontSize: '13px',
-        margin: '2px 0',
-        textAlign: 'right' as const,
-    },
-    note: {
-        color: '#6b7280',
-        fontSize: '12px',
-        margin: '16px 0 0',
-    },
-};
+/**
+ * Correo del reporte diario y mensual.
+ *
+ * Jerarquía deliberada: primero **cuánto quedó** (resultado neto), luego de dónde
+ * vino (farmacia vs consultorio), luego a dónde se fue (gastos por categoría) y
+ * al final el detalle. El admin lee esto en el teléfono a las 00:10; el orden
+ * está pensado para que las tres primeras pantallas ya respondan la pregunta.
+ */
 
 export interface SalesReportEmailProps {
     report: SalesReport;
 }
 
-export const SalesReportEmail = ({ report }: SalesReportEmailProps) => (
-    <Html lang="es">
-        <Head />
-        <Preview>
-            {`${report.title} — ${report.periodLabel}: ` +
-                `${formatCurrency(report.totals.totalAmount)}`}
-        </Preview>
-        <Body style={styles.body}>
-            <Container style={styles.container}>
-                <Text style={styles.brand}>FarmaJyV</Text>
-                <Heading as="h1" style={styles.title}>{report.title}</Heading>
-                <Text style={styles.period}>{report.periodLabel}</Text>
+const percentLabel = (value: number | null): string =>
+    value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
-                <Hr />
+export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
+    const { totals, branches, expenses } = report;
+    const netTone = report.netResult >= 0 ? palette.positive : palette.negative;
 
-                <Row>
-                    <Column>
-                        <Text style={styles.metricValue}>
-                            {formatCurrency(report.totals.totalAmount)}
+    const expenseRows: DataRow[] = expenses.byCategory.map((entry) => ({
+        key: entry.category,
+        label: entry.label,
+        sublabel: `${entry.count} ${entry.count === 1 ? 'movimiento' : 'movimientos'}`,
+        value: formatCurrency(entry.amount),
+        percent: entry.share,
+        color: palette.expense,
+    }));
+
+    const maxProduct = report.topProducts[0]?.amount ?? 0;
+    const productRows: DataRow[] = report.topProducts.map((product, index) => ({
+        key: product.productId,
+        rank: index + 1,
+        label: product.name,
+        sublabel: `${product.quantity} u`,
+        value: formatCurrency(product.amount),
+        percent: maxProduct > 0 ? (product.amount / maxProduct) * 100 : 0,
+        color: palette.pharmacy,
+    }));
+
+    const paymentRows: DataRow[] = totals.byPaymentMethod.map((entry) => ({
+        key: entry.method,
+        label: entry.label,
+        sublabel: `${entry.count} ${entry.count === 1 ? 'venta' : 'ventas'}`,
+        value: formatCurrency(entry.amount),
+    }));
+
+    return (
+        <Html lang="es">
+            <Head />
+            <Preview>
+                {`${report.periodLabel}: ${formatCurrency(totals.totalAmount)} vendido · ` +
+                    `${formatCurrency(expenses.total)} en gastos · ` +
+                    `neto ${formatCurrency(report.netResult)}`}
+            </Preview>
+            <Body
+                style={{
+                    backgroundColor: palette.canvas,
+                    fontFamily: 'Helvetica, Arial, sans-serif',
+                    margin: 0,
+                    padding: '24px 0',
+                }}
+            >
+                <Container
+                    style={{
+                        backgroundColor: palette.surface,
+                        borderRadius: '12px',
+                        margin: '0 auto',
+                        maxWidth: '600px',
+                        padding: '32px',
+                    }}
+                >
+                    <Text style={text.brand}>FarmaJyV</Text>
+                    <Heading as="h1" style={text.title}>{report.title}</Heading>
+                    <Text style={text.period}>{report.periodLabel}</Text>
+
+                    <HeroMetric
+                        label="Resultado del periodo (vendido − devoluciones − gastos)"
+                        value={formatCurrency(report.netResult)}
+                        tone={netTone}
+                        caption={
+                            `${formatCurrency(totals.totalAmount)} vendido · ` +
+                            `${formatCurrency(report.refundTotal)} devuelto · ` +
+                            `${formatCurrency(expenses.total)} gastado`
+                        }
+                    />
+
+                    <MetricRow
+                        metrics={[
+                            { label: 'Ventas', value: String(totals.salesCount) },
+                            {
+                                label: 'Ticket promedio',
+                                value: formatCurrency(report.ticketAverage),
+                            },
+                            {
+                                label: 'Anuladas',
+                                value: String(totals.voidedCount),
+                                tone: totals.voidedCount > 0 ? palette.negative : palette.ink,
+                            },
+                        ]}
+                    />
+
+                    {report.kind === 'monthly' ? (
+                        <MetricRow
+                            metrics={[
+                                {
+                                    label: `vs ${report.previousMonth.periodLabel}`,
+                                    value: percentLabel(report.previousMonth.changeRate),
+                                    tone: (report.previousMonth.changeRate ?? 0) >= 0
+                                        ? palette.positive
+                                        : palette.negative,
+                                },
+                                {
+                                    label: 'Promedio por día con ventas',
+                                    value: formatCurrency(report.dailyAverage),
+                                },
+                                {
+                                    label: report.bestDay
+                                        ? `Mejor día · ${report.bestDay.dateLabel}`
+                                        : 'Mejor día',
+                                    value: report.bestDay
+                                        ? formatCurrency(report.bestDay.amount)
+                                        : '—',
+                                },
+                            ]}
+                        />
+                    ) : null}
+
+                    <ReportSection title="Farmacia vs consultorio">
+                        <Row>
+                            <BranchCard
+                                label="Farmacia"
+                                total={branches.pharmacy.total}
+                                share={branches.pharmacy.share}
+                                caption={`${branches.pharmacy.salesCount} ventas con mercancía`}
+                                color={palette.pharmacy}
+                            />
+                            <BranchCard
+                                label="Consultorio"
+                                total={branches.services.total}
+                                share={branches.services.share}
+                                caption={
+                                    `${branches.services.salesCount} con servicios · ` +
+                                    `${formatCurrency(branches.services.commissionTotal)} ` +
+                                    'en comisiones'
+                                }
+                                color={palette.services}
+                            />
+                        </Row>
+                    </ReportSection>
+
+                    <ReportSection title="Gastos por categoría">
+                        {expenseRows.length > 0 ? (
+                            <>
+                                <DataTable rows={expenseRows} />
+                                <TotalRow
+                                    label={`Total gastado (${expenses.count})`}
+                                    value={formatCurrency(expenses.total)}
+                                    tone={palette.expense}
+                                />
+                            </>
+                        ) : (
+                            <EmptyState>Sin gastos registrados en el periodo.</EmptyState>
+                        )}
+                    </ReportSection>
+
+                    {paymentRows.length > 0 ? (
+                        <ReportSection title="Cobro por método de pago">
+                            <DataTable rows={paymentRows} />
+                        </ReportSection>
+                    ) : null}
+
+                    <ReportSection
+                        title={
+                            report.kind === 'monthly'
+                                ? 'Top 10 productos del mes'
+                                : 'Productos más vendidos'
+                        }
+                    >
+                        {productRows.length > 0 ? (
+                            <DataTable rows={productRows} />
+                        ) : (
+                            <EmptyState>Sin ventas de mercancía en el periodo.</EmptyState>
+                        )}
+                    </ReportSection>
+
+                    {report.kind === 'monthly' && report.topServices.length > 0 ? (
+                        <ReportSection title="Servicios más cobrados">
+                            <DataTable
+                                rows={report.topServices.map((service, index) => ({
+                                    key: service.serviceId,
+                                    rank: index + 1,
+                                    label: service.name,
+                                    sublabel: `${service.quantity} servicios`,
+                                    value: formatCurrency(service.amount),
+                                    color: palette.services,
+                                }))}
+                            />
+                        </ReportSection>
+                    ) : null}
+
+                    {report.kind === 'daily' && report.expenseRows.length > 0 ? (
+                        <ReportSection title="Detalle de gastos del día">
+                            <DataTable
+                                rows={report.expenseRows.map((expense, index) => ({
+                                    key: `${expense.time}-${index}`,
+                                    label: `${expense.time} · ${expense.categoryLabel}`,
+                                    sublabel: [
+                                        expense.reason,
+                                        expense.description,
+                                        expense.createdByLabel,
+                                    ].filter(Boolean).join(' · '),
+                                    value: formatCurrency(expense.amount),
+                                }))}
+                            />
+                        </ReportSection>
+                    ) : null}
+
+                    {report.kind === 'monthly' && report.byDay.length > 0 ? (
+                        <ReportSection title="Ventas por día">
+                            <DataTable
+                                rows={report.byDay.map((day) => ({
+                                    key: day.dateLabel,
+                                    label: day.dateLabel,
+                                    sublabel: `${day.count} ventas`,
+                                    value: formatCurrency(day.amount),
+                                }))}
+                            />
+                        </ReportSection>
+                    ) : null}
+
+                    <Section>
+                        <Hr style={{ borderColor: palette.line, margin: '24px 0 0' }} />
+                        <Text style={text.note}>
+                            El detalle completo va en el PDF adjunto. Los gastos son
+                            movimientos de caja de tipo gasto: los retiros y depósitos
+                            mueven efectivo entre cajón y bóveda y no cuentan como gasto.
                         </Text>
-                        <Text style={styles.metricLabel}>Total vendido</Text>
-                    </Column>
-                    <Column>
-                        <Text style={styles.metricValue}>{report.totals.salesCount}</Text>
-                        <Text style={styles.metricLabel}>Ventas</Text>
-                    </Column>
-                    <Column>
-                        <Text style={styles.metricValue}>{report.totals.voidedCount}</Text>
-                        <Text style={styles.metricLabel}>Anuladas</Text>
-                    </Column>
-                </Row>
-
-                {report.totals.byPaymentMethod.length > 0 && (
-                    <Section>
-                        <Hr />
-                        <Text style={styles.sectionTitle}>Por método de pago</Text>
-                        {report.totals.byPaymentMethod.map((entry) => (
-                            <Row key={entry.method}>
-                                <Column>
-                                    <Text style={styles.rowLabel}>
-                                        {entry.label} ({entry.count})
-                                    </Text>
-                                </Column>
-                                <Column>
-                                    <Text style={styles.rowValue}>
-                                        {formatCurrency(entry.amount)}
-                                    </Text>
-                                </Column>
-                            </Row>
-                        ))}
                     </Section>
-                )}
+                </Container>
+            </Body>
+        </Html>
+    );
+};
 
-                {report.kind === 'monthly' && report.byDay.length > 0 && (
-                    <Section>
-                        <Hr />
-                        <Text style={styles.sectionTitle}>Ventas por día</Text>
-                        {report.byDay.map((day) => (
-                            <Row key={day.dateLabel}>
-                                <Column>
-                                    <Text style={styles.rowLabel}>
-                                        {day.dateLabel} ({day.count})
-                                    </Text>
-                                </Column>
-                                <Column>
-                                    <Text style={styles.rowValue}>
-                                        {formatCurrency(day.amount)}
-                                    </Text>
-                                </Column>
-                            </Row>
-                        ))}
-                    </Section>
-                )}
-
-                <Text style={styles.note}>
-                    El detalle completo de las ventas está en el PDF adjunto.
-                </Text>
-            </Container>
-        </Body>
-    </Html>
-);
+export default SalesReportEmail;

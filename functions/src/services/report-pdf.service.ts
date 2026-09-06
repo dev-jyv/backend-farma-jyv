@@ -31,11 +31,32 @@ const buildSummaryRows = (report: SalesReport): string => {
     const rows = [
         ['Ventas registradas', String(report.totals.salesCount)],
         ['Total vendido', formatCurrency(report.totals.totalAmount)],
+        ['Ticket promedio', formatCurrency(report.ticketAverage)],
+        ['Devoluciones', `- ${formatCurrency(report.refundTotal)}`],
+        ['Gastos del periodo', `- ${formatCurrency(report.expenses.total)}`],
+        ['Resultado (vendido - devoluciones - gastos)', formatCurrency(report.netResult)],
         ...report.totals.byPaymentMethod.map((entry) => [
             `${entry.label} (${entry.count})`,
             formatCurrency(entry.amount),
         ]),
     ];
+    if (report.kind === 'monthly') {
+        rows.push([
+            `Mes anterior (${report.previousMonth.periodLabel})`,
+            formatCurrency(report.previousMonth.total),
+        ]);
+        if (report.previousMonth.changeRate !== null) {
+            const rate = report.previousMonth.changeRate;
+            rows.push(['Variación mensual', `${rate > 0 ? '+' : ''}${rate.toFixed(1)} %`]);
+        }
+        if (report.bestDay) {
+            rows.push([
+                `Mejor día (${report.bestDay.dateLabel})`,
+                formatCurrency(report.bestDay.amount),
+            ]);
+        }
+        rows.push(['Promedio por día con ventas', formatCurrency(report.dailyAverage)]);
+    }
     if (report.totals.voidedCount > 0) {
         rows.push([
             `Ventas anuladas (${report.totals.voidedCount})`,
@@ -120,8 +141,11 @@ const buildTopProductsSection = (report: SalesReport): string => {
             </tr>`,
         )
         .join('');
+    const title = report.kind === 'monthly'
+        ? 'Top 10 productos del mes'
+        : 'Productos más vendidos';
     return `
-        <h2>Productos más vendidos</h2>
+        <h2>${escapeHtml(title)}</h2>
         <table>
             <thead>
                 <tr>
@@ -129,6 +153,144 @@ const buildTopProductsSection = (report: SalesReport): string => {
                     <th>Cantidad</th>
                     <th>Importe</th>
                 </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+};
+
+/** Farmacia vs consultorio: la separación que pidió la administración. */
+const buildBranchesSection = (report: SalesReport): string => {
+    const { pharmacy, services } = report.branches;
+    return `
+        <h2>Farmacia y consultorio</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Rama</th>
+                    <th class="num">Ventas</th>
+                    <th class="num">Importe</th>
+                    <th class="num">Participación</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Farmacia (mercancía)</td>
+                    <td class="num">${pharmacy.salesCount}</td>
+                    <td class="num">${escapeHtml(formatCurrency(pharmacy.total))}</td>
+                    <td class="num">${pharmacy.share.toFixed(1)} %</td>
+                </tr>
+                <tr>
+                    <td>Consultorio (servicios)</td>
+                    <td class="num">${services.salesCount}</td>
+                    <td class="num">${escapeHtml(formatCurrency(services.total))}</td>
+                    <td class="num">${services.share.toFixed(1)} %</td>
+                </tr>
+                <tr>
+                    <td>Comisiones de prestadores</td>
+                    <td class="num">-</td>
+                    <td class="num">${escapeHtml(formatCurrency(services.commissionTotal))}</td>
+                    <td class="num">-</td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="empty">
+            Una venta puede incluir mercancía y servicio: por eso las ventas de cada
+            rama pueden sumar más que el total de ventas del periodo.
+        </p>`;
+};
+
+const buildExpensesSection = (report: SalesReport): string => {
+    if (!report.expenses.byCategory.length) {
+        return '<h2>Gastos</h2><p class="empty">Sin gastos registrados en el periodo.</p>';
+    }
+
+    const rows = report.expenses.byCategory
+        .map(
+            (entry) => `
+            <tr>
+                <td>${escapeHtml(entry.label)}</td>
+                <td class="num">${entry.count}</td>
+                <td class="num">${escapeHtml(formatCurrency(entry.amount))}</td>
+                <td class="num">${entry.share.toFixed(1)} %</td>
+            </tr>`,
+        )
+        .join('');
+
+    const detailRows = report.kind === 'daily'
+        ? report.expenseRows.map((expense) => {
+            const concept = [expense.reason, expense.description].filter(Boolean).join(' — ');
+            return `
+                <tr>
+                    <td>${escapeHtml(expense.time)}</td>
+                    <td>${escapeHtml(expense.categoryLabel)}</td>
+                    <td>${escapeHtml(concept)}</td>
+                    <td>${escapeHtml(expense.createdByLabel ?? '-')}</td>
+                    <td class="num">${escapeHtml(formatCurrency(expense.amount))}</td>
+                </tr>`;
+        }).join('')
+        : '';
+
+    const detail = detailRows
+        ? `
+        <h2>Detalle de gastos</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Hora</th>
+                    <th>Categoría</th>
+                    <th>Concepto</th>
+                    <th>Registró</th>
+                    <th class="num">Importe</th>
+                </tr>
+            </thead>
+            <tbody>${detailRows}</tbody>
+        </table>`
+        : '';
+
+    return `
+        <h2>Gastos por categoría</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Categoría</th>
+                    <th class="num">Movimientos</th>
+                    <th class="num">Importe</th>
+                    <th class="num">Participación</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${rows}
+                <tr>
+                    <td><strong>Total</strong></td>
+                    <td class="num"><strong>${report.expenses.count}</strong></td>
+                    <td class="num">
+                        <strong>${escapeHtml(formatCurrency(report.expenses.total))}</strong>
+                    </td>
+                    <td class="num">100 %</td>
+                </tr>
+            </tbody>
+        </table>${detail}`;
+};
+
+const buildTopServicesSection = (report: SalesReport): string => {
+    if (report.kind !== 'monthly' || !report.topServices.length) {
+        return '';
+    }
+    const rows = report.topServices
+        .map(
+            (service) => `
+            <tr>
+                <td>${escapeHtml(service.name)}</td>
+                <td class="num">${service.quantity}</td>
+                <td class="num">${escapeHtml(formatCurrency(service.amount))}</td>
+            </tr>`,
+        )
+        .join('');
+    return `
+        <h2>Servicios más cobrados</h2>
+        <table>
+            <thead>
+                <tr><th>Servicio</th><th class="num">Cantidad</th><th class="num">Importe</th></tr>
             </thead>
             <tbody>${rows}</tbody>
         </table>`;
@@ -203,9 +365,12 @@ const buildReportHtml = (report: SalesReport): string => {
     </thead>
     <tbody>${buildSummaryRows(report)}</tbody>
   </table>
+  ${buildBranchesSection(report)}
+  ${buildExpensesSection(report)}
+  ${buildTopProductsSection(report)}
+  ${buildTopServicesSection(report)}
   <h2>${escapeHtml(detailTitle)}</h2>
   ${buildDetailSection(report)}
-  ${buildTopProductsSection(report)}
 </body>
 </html>`;
 };

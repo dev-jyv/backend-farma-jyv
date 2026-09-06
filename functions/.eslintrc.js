@@ -15,8 +15,13 @@ module.exports = {
     },
     ignorePatterns: [
         '/lib/**/*',
+        // Artefactos generados: no son fuente y no están en el tsconfig del lint,
+        // así que el parser con `parserOptions.project` truena al tocarlos.
+        '/coverage/**/*',
+        '/graphify-out/**/*',
         '.eslintrc.js',
         'jest.config.js',
+        'jest.rules.config.js',
     ],
     plugins: [
         '@typescript-eslint',
