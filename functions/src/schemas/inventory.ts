@@ -114,7 +114,19 @@ export const createInvoiceSchema = z.object({
      * nunca, cuando el proveedor solo dejó ticket). Lo que sí se valida es la
      * ruta cuando viene, para que no entre un path arbitrario al Storage.
      */
-    fileUrl: z.string().startsWith('uploads/', 'La ruta del comprobante no es válida').optional(),
+    /**
+     * `facturas/` es Cloudflare R2 (los comprobantes nuevos); `uploads/` es
+     * Firebase Storage, donde siguen los de antes de la migración. Se aceptan
+     * los dos y **solo** esos dos: `fileUrl` es una ruta que propone el cliente,
+     * y sin este ancla nombraría cualquier objeto del bucket.
+     */
+    fileUrl: z
+        .string()
+        .refine(
+            (ruta) => ruta.startsWith('facturas/') || ruta.startsWith('uploads/'),
+            'La ruta del comprobante no es válida',
+        )
+        .optional(),
 });
 
 export const listInvoicesQuerySchema = z.object({

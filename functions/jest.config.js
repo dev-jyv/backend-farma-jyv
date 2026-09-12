@@ -1,7 +1,9 @@
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
-    testMatch: ['<rootDir>/test/**/*.spec.ts'],
+    // `.tsx` también: las plantillas de correo son componentes y se prueban
+    // renderizándolas, no simulando su salida.
+    testMatch: ['<rootDir>/test/**/*.spec.ts', '<rootDir>/test/**/*.spec.tsx'],
     setupFiles: ['<rootDir>/test/setup-env.ts'],
     setupFilesAfterEnv: ['<rootDir>/test/teardown-admin.ts'],
     testTimeout: 30000,

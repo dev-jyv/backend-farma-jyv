@@ -38,7 +38,8 @@ export const recordUnreconciledSale = async (input: {
         action: 'sale.unreconciled',
         entity: 'unreconciledSale',
         entityId: sale.id,
-        summary: `Venta cobrada en caja por ${input.total.toFixed(2)} sin registrar: ${input.reason}`,
+        summary: `Venta cobrada en caja por ${input.total.toFixed(2)} ` +
+            `sin registrar: ${input.reason}`,
         userId: input.cashierId,
         roleSlug: input.roleSlug ?? null,
         metadata: {

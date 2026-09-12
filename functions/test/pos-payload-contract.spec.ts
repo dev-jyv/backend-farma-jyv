@@ -29,16 +29,50 @@ const base = {
     billing: null,
 };
 
-const partidaProducto = { kind: 'product', productId: 'remote-p1', quantity: 2, discountAmount: 0 };
+/**
+ * Copia literal de lo que emite `buildPayload`, `unitPrice` incluido: el POS
+ * manda el precio **cobrado** en las dos ramas para que el backend no retarife al
+ * sincronizar. Este spec no lo llevaba y por eso no detectó que la rama de
+ * servicio se quedó sin ese campo durante varias versiones.
+ */
+const partidaProducto = {
+    kind: 'product',
+    productId: 'remote-p1',
+    quantity: 2,
+    discountAmount: 0,
+    unitPrice: 45.5,
+};
 const partidaServicio = {
     kind: 'service',
     serviceId: 'sv-1',
     quantity: 1,
     discountAmount: 0,
+    unitPrice: 250,
     providerId: 'dr-1',
 };
 
 describe('contrato: el payload del POS pasa el schema del backend', () => {
+    /**
+     * Si el schema dejara de aceptar `unitPrice`, Zod lo **descartaría en
+     * silencio** (no es `strict`) y el backend volvería a tarifar con el catálogo
+     * del momento del push: una venta cobrada horas antes se rechazaría por
+     * "monto recibido menor al total", o se registraría por otro importe.
+     */
+    it('conserva el precio cobrado de las dos ramas, no solo lo valida', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            items: [partidaProducto, partidaServicio],
+        });
+
+        expect(resultado.success).toBe(true);
+        if (!resultado.success) {
+            return;
+        }
+        const [mercancia, servicio] = resultado.data.items;
+        expect(mercancia).toMatchObject({ unitPrice: 45.5 });
+        expect(servicio).toMatchObject({ unitPrice: 250 });
+    });
+
     /**
      * Caso real de producción: con la terminal Point desactivada el POS registra
      * tarjeta y mixto sin order, y el schema los rechazaba con 400. La venta ya
@@ -120,7 +154,10 @@ describe('contrato: el payload del POS pasa el schema del backend', () => {
 
         expect(resultado.success).toBe(true);
         if (resultado.success) {
-            expect(resultado.data.items[0]).toMatchObject({ kind: 'product', productId: 'remote-p1' });
+            expect(resultado.data.items[0]).toMatchObject({
+                kind: 'product',
+                productId: 'remote-p1',
+            });
         }
     });
 
@@ -148,7 +185,13 @@ describe('contrato: el payload del POS pasa el schema del backend', () => {
     it('rechaza una partida híbrida: un `kind` decide qué campos aplican', () => {
         const resultado = createSaleSchema.safeParse({
             ...base,
-            items: [{ kind: 'service', serviceId: 'sv-1', productId: 'remote-p1', quantity: 1, discountAmount: 0 }],
+            items: [{
+                kind: 'service',
+                serviceId: 'sv-1',
+                productId: 'remote-p1',
+                quantity: 1,
+                discountAmount: 0,
+            }],
         });
 
         // Zod ignora las llaves extra por omisión; lo que no puede pasar es que

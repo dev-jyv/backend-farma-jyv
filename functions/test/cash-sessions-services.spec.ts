@@ -183,6 +183,37 @@ describe('corte de caja - no regresión con ventas históricas', () => {
         expect(expectedServicesCashAmount).toBe(0);
     });
 
+    /**
+     * Regresión (QA-4): `round` se añadió con la rama de servicios y la de
+     * farmacia se quedó fuera. `expectedCashAmount` es contra lo que el cajero
+     * compara el efectivo que cuenta a mano: una fracción de centavo ahí es un
+     * descuadre que nadie puede cerrar, porque el cajón no tiene milésimas.
+     */
+    it('redondea a centavos el efectivo esperado de farmacia', async () => {
+        const turno = await abrirTurno(0.1);
+        for (const total of [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]) {
+            await ventaHistorica({
+                cashSessionId: turno.id,
+                total,
+                paymentMethod: 'cash',
+                amountReceived: total,
+                change: 0,
+                cashAmount: total,
+            });
+        }
+
+        const { summary, expectedCashAmount } = await cashSessionsService.getSessionSummary(
+            turno.id,
+            turno.openedBy,
+            'cashier',
+        );
+
+        // 0.1 × 8 en coma flotante da 0.7999999999999999.
+        expect(expectedCashAmount).toBe(0.8);
+        expect(summary.cashInDrawer).toBe(0.8);
+        expect(summary.grandTotal).toBe(0.7);
+    });
+
     it('cierra un turno histórico con la misma diferencia de siempre', async () => {
         const turno = await abrirTurno(500);
         await ventaHistorica({

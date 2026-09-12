@@ -82,6 +82,7 @@ export const getInventoryAlerts = async (options: {
 
     const lowStock: StockAlert[] = [];
     const outOfStock: StockAlert[] = [];
+    const unstocked: StockAlert[] = [];
 
     for (const product of products) {
         const totalStock = resolveStock(product, stockByProduct);
@@ -92,8 +93,19 @@ export const getInventoryAlerts = async (options: {
             minStock: product.minStock,
             totalStock,
         };
+
+        /**
+         * El mínimo es lo que separa un faltante de una ficha de catálogo.
+         *
+         * `outOfStock` no exigía `minStock > 0` —`lowStock` sí— y por eso
+         * recogía **todo** producto activo que hoy estuviera en cero: 211 en
+         * producción contra media docena de faltantes reales. Un producto con
+         * mínimo 0 y stock 0 no es una alerta: nadie declaró que debiera estar
+         * en existencia. Enterraba lo accionable y entrenaba al personal a
+         * ignorar el aviso diario.
+         */
         if (totalStock <= 0) {
-            outOfStock.push(alert);
+            (product.minStock > 0 ? outOfStock : unstocked).push(alert);
         } else if (product.minStock > 0 && totalStock <= product.minStock) {
             lowStock.push(alert);
         }
@@ -113,7 +125,11 @@ export const getInventoryAlerts = async (options: {
         expired: expired.sort((a, b) => a.daysToExpiry - b.daysToExpiry),
         expiring,
         lowStock: lowStock.sort((a, b) => a.totalStock - b.totalStock),
-        outOfStock: outOfStock.sort((a, b) => a.productName.localeCompare(b.productName)),
+        // Por mínimo descendente: lo que más falta primero. Alfabético ponía
+        // arriba lo que empieza con A, no lo que urge.
+        outOfStock: outOfStock.sort((a, b) => b.minStock - a.minStock),
+        // Alfabético sí: es una lista para depurar catálogo, no para actuar.
+        unstocked: unstocked.sort((a, b) => a.productName.localeCompare(b.productName)),
         totals: {
             expiredBatches: expired.length,
             expiredUnits: sumUnits(expired),
@@ -121,11 +137,18 @@ export const getInventoryAlerts = async (options: {
             expiringUnits: sumUnits(expiringItems),
             lowStockProducts: lowStock.length,
             outOfStockProducts: outOfStock.length,
+            unstockedProducts: unstocked.length,
         },
     };
 };
 
-/** ¿Vale la pena mandar el correo? Sin nada que reportar, no se manda. */
+/**
+ * ¿Vale la pena mandar el correo? Sin nada que reportar, no se manda.
+ *
+ * `unstocked` **no** cuenta: el catálogo en cero no cambia de un día para otro
+ * y bastaba para disparar el correo todos los días con nada que hacer, que es
+ * justo cómo una alerta deja de leerse.
+ */
 export const hasActionableAlerts = (alerts: InventoryAlerts): boolean =>
     alerts.totals.expiredBatches > 0 ||
     alerts.totals.expiringBatches > 0 ||

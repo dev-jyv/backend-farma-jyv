@@ -147,21 +147,26 @@ const buildSummary = (
         }
     }
 
-    const cashInDrawer = openingAmount + cashInDrawerNet;
     // Redondeo a centavos: el corte se suma partida por partida en coma flotante y
     // sin esto salen cifras tipo 439.99999999999994 en pantalla y en el ticket.
     const round = (value: number): number => Math.round(value * 100) / 100;
+    // El de farmacia se quedó sin redondear cuando se añadió el de servicios: la
+    // rama nueva pasó por `round` y la vieja no. `expectedCashAmount` es lo que el
+    // cajero compara contra el efectivo que cuenta a mano, así que una fracción de
+    // centavo aquí es un descuadre que nadie puede cerrar: el cajón no tiene
+    // milésimas.
+    const cashInDrawer = round(openingAmount + cashInDrawerNet);
     return {
         expectedCashAmount: cashInDrawer,
         expectedServicesCashAmount: round(servicesCashInDrawer),
-        cashInDrawerNet,
+        cashInDrawerNet: round(cashInDrawerNet),
         summary: {
             salesCount,
             voidedCount,
-            returns: returnTotals,
+            returns: { ...returnTotals, total: round(returnTotals.total), cashTotal: round(returnTotals.cashTotal) },
             byMethod,
             movements: movementTotals,
-            grandTotal: grandTotal - returnTotals.total,
+            grandTotal: round(grandTotal - returnTotals.total),
             cashInDrawer,
             // El bloque solo existe si el turno vio servicios: un corte de un turno
             // sin ellos queda **byte a byte** como el de antes.

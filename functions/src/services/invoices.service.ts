@@ -126,7 +126,9 @@ export const createInvoice = async (input: {
             if (!storagePath) {
                 return undefined;
             }
-            if (!storagePath.startsWith('uploads/')) {
+            // Mismo ancla que el schema, repetido a propósito: el schema cubre
+            // HTTP, no a otros llamadores del servicio.
+            if (!storagePath.startsWith('facturas/') && !storagePath.startsWith('uploads/')) {
                 throw badRequest('La ruta del archivo no es válida');
             }
             // `getFileMetadata` rechaza el archivo inexistente: una llamada, no dos.

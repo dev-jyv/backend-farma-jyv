@@ -142,6 +142,60 @@ describe('inventory-alerts.service', () => {
         expect(alerts.lowStock.map((item) => item.productId)).not.toContain(empty.id);
     });
 
+    /**
+     * El mínimo es lo que separa un faltante de una ficha de catálogo. Sin esta
+     * división, `outOfStock` recogía todo producto activo en cero —211 en
+     * producción— y la alerta diaria dejaba de leerse.
+     */
+    it('un producto en cero sin mínimo no es un faltante', async () => {
+        const sinMinimo = await createProductFixture({ minStock: 0 });
+
+        const alerts = await alertsService.getInventoryAlerts();
+
+        expect(alerts.unstocked.map((item) => item.productId)).toContain(sinMinimo.id);
+        expect(alerts.outOfStock.map((item) => item.productId)).not.toContain(sinMinimo.id);
+        expect(alerts.totals.unstockedProducts).toBe(alerts.unstocked.length);
+    });
+
+    it('los agotados vienen ordenados por mínimo, lo que más falta primero', async () => {
+        const poco = await createProductFixture({ minStock: 2 });
+        const mucho = await createProductFixture({ minStock: 90 });
+
+        const { outOfStock } = await alertsService.getInventoryAlerts();
+        const ids = outOfStock.map((item) => item.productId);
+
+        expect(ids.indexOf(mucho.id)).toBeGreaterThanOrEqual(0);
+        expect(ids.indexOf(mucho.id)).toBeLessThan(ids.indexOf(poco.id));
+    });
+
+    /**
+     * El catálogo en cero no cambia de un día para otro: si disparara el correo,
+     * llegaría todos los días sin nada que hacer, que es como una alerta se
+     * vuelve ruido.
+     */
+    it('el catálogo en cero por sí solo no dispara el correo', async () => {
+        const alerts = await alertsService.getInventoryAlerts();
+        const soloCatalogo = {
+            ...alerts,
+            expired: [],
+            expiring: alerts.expiring.map((window) => ({ ...window, items: [] })),
+            lowStock: [],
+            outOfStock: [],
+            totals: {
+                ...alerts.totals,
+                expiredBatches: 0,
+                expiredUnits: 0,
+                expiringBatches: 0,
+                expiringUnits: 0,
+                lowStockProducts: 0,
+                outOfStockProducts: 0,
+                unstockedProducts: 205,
+            },
+        };
+
+        expect(alertsService.hasActionableAlerts(soloCatalogo)).toBe(false);
+    });
+
     it('no manda correo cuando no hay nada que reportar', async () => {
         const alerts = await alertsService.getInventoryAlerts();
         const empty = {
@@ -157,6 +211,7 @@ describe('inventory-alerts.service', () => {
                 expiringUnits: 0,
                 lowStockProducts: 0,
                 outOfStockProducts: 0,
+                unstockedProducts: 0,
             },
         };
         expect(alertsService.hasActionableAlerts(empty)).toBe(false);

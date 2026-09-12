@@ -191,6 +191,55 @@ describe('createSaleSchema - compatibilidad de la unión discriminada', () => {
     });
 });
 
+/**
+ * Precio congelado al cobrar, igual que en mercancía.
+ *
+ * El POS es local-first: una consulta se cobra a las 11:00 y su venta puede
+ * subir a las 20:00. Si el backend la retarifaba con el catálogo del momento del
+ * push, un cambio de precio en el medio rechazaba la venta con "el monto
+ * recibido es menor al total" — dinero ya cobrado que quedaba bloqueado en la
+ * cola — o la registraba por menos de lo que había en el cajón.
+ */
+describe('createSale - precio del servicio cobrado', () => {
+    it('respeta el `unitPrice` del POS cuando el catálogo ya cambió', async () => {
+        const cajero = unique('cajero');
+        const servicio = await crearServicio({ price: 80, commissionRate: 0 });
+        const turno = await abrirTurno(cajero);
+
+        // Se cobró a $50; el admin subió el precio a $80 antes del sync.
+        const venta = await salesService.createSale({
+            items: [{ kind: 'service', serviceId: servicio.id, quantity: 1, unitPrice: 50 }],
+            paymentMethod: 'cash',
+            amountReceived: 50,
+            cashSessionId: turno.id,
+            cashierId: cajero,
+        });
+
+        expect(venta.total).toBe(50);
+        expect(serviceItem(venta).unitPrice).toBe(50);
+        // Rastro auditable de que se tarifó distinto del catálogo.
+        expect(serviceItem(venta).catalogUnitPrice).toBe(80);
+    });
+
+    it('sin `unitPrice` (cliente viejo) manda el catálogo', async () => {
+        const cajero = unique('cajero');
+        const servicio = await crearServicio({ price: 80, commissionRate: 0 });
+        const turno = await abrirTurno(cajero);
+
+        const venta = await salesService.createSale({
+            items: [{ kind: 'service', serviceId: servicio.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 80,
+            cashSessionId: turno.id,
+            cashierId: cajero,
+        });
+
+        expect(venta.total).toBe(80);
+        expect(serviceItem(venta).unitPrice).toBe(80);
+        expect(serviceItem(venta).catalogUnitPrice).toBeUndefined();
+    });
+});
+
 describe('createSale - venta 100 % producto (no regresión)', () => {
     it('descuenta lotes, mueve stock y no denormaliza servicios', async () => {
         const cajero = unique('cajero');

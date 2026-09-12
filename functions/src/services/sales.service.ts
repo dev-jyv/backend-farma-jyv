@@ -58,6 +58,8 @@ interface SaleServiceItemInput {
     serviceId: string;
     quantity: number;
     discountAmount?: number;
+    /** Precio cobrado; ausente en clientes anteriores (manda el catálogo). */
+    unitPrice?: number;
     /** Doctor del catálogo `serviceProviders`, **no** un uid del sistema. */
     providerId?: string | null;
 }
@@ -398,7 +400,11 @@ export const createSale = async (input: {
                 ? service.commissionRate
                 : provider?.defaultCommissionRate ?? 0;
 
-            const itemSubtotal = service.price * item.quantity;
+            // Precio cobrado, no el del catálogo de ahora: el POS pudo cobrar
+            // esta consulta horas antes y el precio pudo cambiar en el medio.
+            // Mismo criterio que las partidas de mercancía.
+            const unitPrice = item.unitPrice ?? service.price;
+            const itemSubtotal = unitPrice * item.quantity;
             const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
             subtotal += itemSubtotal;
             lineDiscountTotal += discountAmount;
@@ -408,7 +414,9 @@ export const createSale = async (input: {
                 serviceId: service.id,
                 serviceName: service.name,
                 quantity: item.quantity,
-                unitPrice: service.price,
+                unitPrice,
+                // Señal auditable de que se tarifó distinto del catálogo.
+                ...(unitPrice !== service.price ? { catalogUnitPrice: service.price } : {}),
                 discountAmount,
                 subtotal: itemSubtotal,
                 providerId: provider?.id ?? null,
@@ -1080,7 +1088,9 @@ export const voidSale = async (
          * bitácora ni en el libro de control.
          */
         const serverNow = now();
-        const reportedAt = reported?.voidedAt ? Timestamp.fromDate(new Date(reported.voidedAt)) : null;
+        const reportedAt = reported?.voidedAt
+            ? Timestamp.fromDate(new Date(reported.voidedAt))
+            : null;
         const reportedIsSane = reportedAt !== null &&
             reportedAt.toMillis() <= serverNow.toMillis() &&
             reportedAt.toMillis() >= existing.createdAt.toMillis();

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { money, qty } from './common';
 import { createProductSchema, updateProductSchema } from './catalog';
+import { idempotencyKeySchema } from './sales';
 
 /**
  * Entrada de stock desde la caja: **una** partida contra una factura ya
@@ -37,6 +38,13 @@ export const createStockEntrySchema = z
         productUpdate: updateProductSchema.optional(),
         /** Alta de un producto que no está en el catálogo. */
         product: createProductSchema.optional(),
+        /**
+         * Igual que en las ventas: la caja genera la llave una vez por entrada y
+         * la reenvía sin cambios en cada reintento. Sin ella, un timeout tras un
+         * alta que **sí** se aplicó duplicaba el lote al reintentar — stock
+         * fantasma que nadie cuadra contra la factura.
+         */
+        idempotencyKey: idempotencyKeySchema.optional(),
     })
     .refine((data) => Boolean(data.productId) !== Boolean(data.product), {
         message: 'La entrada debe incluir productId o product, no ambos',

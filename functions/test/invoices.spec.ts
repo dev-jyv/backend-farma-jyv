@@ -10,7 +10,10 @@ import { createInvoiceSchema } from '../src/schemas/inventory';
  */
 
 jest.mock('../src/utils/storage', () => ({
-    getFileMetadata: jest.fn(async () => ({ fileName: 'factura.pdf', mimeType: 'application/pdf' })),
+    getFileMetadata: jest.fn(async () => ({
+        fileName: 'factura.pdf',
+        mimeType: 'application/pdf',
+    })),
     getFileUrl: jest.fn(async () => 'https://signed.example/factura.pdf'),
 }));
 
@@ -39,7 +42,10 @@ describe('createInvoiceSchema: el comprobante es opcional', () => {
     });
 
     it('acepta una factura con comprobante', () => {
-        const resultado = createInvoiceSchema.safeParse({ ...base, fileUrl: 'uploads/x/factura.pdf' });
+        const resultado = createInvoiceSchema.safeParse({
+            ...base,
+            fileUrl: 'uploads/x/factura.pdf',
+        });
 
         expect(resultado.success).toBe(true);
     });
@@ -75,7 +81,10 @@ describe('createInvoice: persistencia sin comprobante', () => {
     let supplierId: string;
 
     beforeAll(async () => {
-        const supplier = await suppliersRepo.createSupplier({ name: unique('Proveedor'), isActive: true });
+        const supplier = await suppliersRepo.createSupplier({
+            name: unique('Proveedor'),
+            isActive: true,
+        });
         supplierId = supplier.id;
     });
 

@@ -103,6 +103,15 @@ const saleServiceItemSchema = z.object({
     quantity: qty,
     discountAmount: money.optional(),
     /**
+     * Precio cobrado por unidad, igual que en las partidas de mercancía. Lo manda
+     * el POS para que una consulta cobrada sin conexión se registre con el precio
+     * del momento y no con el del catálogo al sincronizar: si el admin subía el
+     * precio entre el cobro y el sync, la venta se rechazaba con "el monto
+     * recibido es menor al total" y quedaba bloqueada con el dinero ya cobrado.
+     * Ausente en clientes viejos: entonces manda el catálogo.
+     */
+    unitPrice: positiveMoney.optional(),
+    /**
      * Doctor al que se le acredita la comisión. Opcional aquí porque solo los
      * servicios con `requiresPerformer` lo exigen, y eso lo sabe el catálogo, no
      * el payload: quien lo valida es `createSale`.
@@ -194,7 +203,8 @@ export const createSaleSchema = z.object({
         ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message:
-                'El pago mixto requiere el monto cobrado con tarjeta (o la order de Mercado Pago Point)',
+                'El pago mixto requiere el monto cobrado con tarjeta ' +
+                '(o la order de Mercado Pago Point)',
             path: ['cardAmount'],
         });
     }

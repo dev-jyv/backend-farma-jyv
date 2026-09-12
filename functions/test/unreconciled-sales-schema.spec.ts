@@ -28,7 +28,8 @@ describe('createUnreconciledSaleSchema', () => {
     });
 
     it('exige el motivo: sin él el documento no explica nada', () => {
-        expect(createUnreconciledSaleSchema.safeParse({ ...base, reason: '   ' }).success).toBe(false);
+        const vacio = createUnreconciledSaleSchema.safeParse({ ...base, reason: '   ' });
+        expect(vacio.success).toBe(false);
     });
 
     it('exige el vínculo con la venta de la caja', () => {

@@ -1,5 +1,6 @@
 import { ControlledGroup, InventoryEntryWithDetails, InvoiceWithDetails, Product } from '../types';
-import { notFound } from '../utils/errors';
+import { db } from '../utils/firestore';
+import { conflict, notFound } from '../utils/errors';
 import { AuditActor } from './audit.service';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as invoicesService from '../services/invoices.service';
@@ -37,6 +38,21 @@ export const listRecentInvoices = async (limit?: number): Promise<InvoiceWithDet
     return items;
 };
 
+/**
+ * Llaves de idempotencia de las entradas, con el mismo patrón que las ventas
+ * (`saleIdempotencyKeys`): documento por `usuario:llave`, creado **antes** de
+ * tocar catálogo e inventario.
+ *
+ * El fallo real que esto cubre no es el doble clic —el formulario ya se
+ * deshabilita— sino el reintento de la cola: el alta se aplicó, la respuesta se
+ * perdió en la red, y el siguiente flush volvía a mandarla. El resultado era un
+ * segundo lote con el mismo número y la misma factura, es decir, existencias que
+ * no existen.
+ */
+const IDEMPOTENCY_COLLECTION = 'stockEntryIdempotencyKeys';
+
+const buildIdempotencyDocId = (userId: string, key: string): string => `${userId}:${key}`;
+
 export const createStockEntry = async (input: {
     invoiceId: string;
     lotNumber: string;
@@ -48,12 +64,41 @@ export const createStockEntry = async (input: {
     product?: Omit<Parameters<typeof productsService.createProduct>[0], 'actor'>;
     userId: string;
     roleSlug?: string | null;
+    idempotencyKey?: string;
 }): Promise<StockEntryResult> => {
     // Se comprueba antes de tocar el catálogo: dar de alta un producto para una
     // factura que no existe deja basura en `products` sin nada que la respalde.
     const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
     if (!invoice) {
         throw notFound('Factura');
+    }
+
+    const idempotencyRef = input.idempotencyKey
+        ? db()
+            .collection(IDEMPOTENCY_COLLECTION)
+            .doc(buildIdempotencyDocId(input.userId, input.idempotencyKey))
+        : null;
+
+    if (idempotencyRef) {
+        const previo = await idempotencyRef.get();
+        if (previo.exists) {
+            const entryId = previo.data()?.entryId as string | undefined;
+            if (!entryId) {
+                // Se reservó la llave y el proceso murió antes de terminar. No se
+                // reintenta solo: la entrada pudo quedar aplicada a medias y
+                // duplicarla es peor que pedir que alguien la revise.
+                throw conflict(
+                    'Esta entrada quedó a medio registrar en un intento anterior. ' +
+                        'Revisa el lote en inventario antes de volver a capturarla.',
+                );
+            }
+            const replay = await inventoryService.getEntry(entryId);
+            const producto = await productsService.getProduct(replay.items[0]!.productId);
+            return { entry: replay, product: producto as unknown as Product, stock: producto.stock };
+        }
+        // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
+        // paralelo no pueden aplicar la misma entrada dos veces.
+        await idempotencyRef.create({ userId: input.userId, createdAt: new Date() });
     }
 
     const actor: AuditActor = { userId: input.userId, roleSlug: input.roleSlug ?? null };
@@ -79,6 +124,12 @@ export const createStockEntry = async (input: {
     // `recordEntry` ya incrementó `totalStock` dentro de su transacción; se relee
     // para devolver la cifra con la que la caja pinta "quedará en N".
     const stock = await productsService.getProduct(product.id);
+
+    if (idempotencyRef) {
+        // Cierra la llave: de aquí en adelante el reintento devuelve esta entrada
+        // en vez de crear otra.
+        await idempotencyRef.set({ entryId: entry.id }, { merge: true });
+    }
 
     return { entry, product, stock: stock.stock };
 };

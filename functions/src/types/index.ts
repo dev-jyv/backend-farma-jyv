@@ -269,7 +269,8 @@ export type CashMovementType = 'deposit' | 'withdrawal' | 'expense';
 
 /** Solo aplica cuando `CashMovement.type === 'expense'`. */
 export type ExpenseCategory =
-    | 'salary' | 'food' | 'rent' | 'contingency' | 'electricity' | 'supplies' | 'supplier' | 'other';
+    | 'salary' | 'food' | 'rent' | 'contingency' | 'electricity'
+    | 'supplies' | 'supplier' | 'other';
 
 export interface CashMovement {
     id: string;
@@ -404,14 +405,31 @@ export interface InventoryAlerts {
     /** Lotes por vencer agrupados por ventana (30/60/90 días por omisión). */
     expiring: Array<{ windowDays: number; items: ExpiringBatchAlert[] }>;
     lowStock: StockAlert[];
+    /**
+     * Agotados **con mínimo definido**: falta mercancía que alguien decidió que
+     * no puede faltar. Es la lista de pedido, ordenada por el mínimo (lo que más
+     * se necesita primero).
+     */
     outOfStock: StockAlert[];
+    /**
+     * Productos en cero **sin mínimo definido**.
+     *
+     * No son un faltante: nadie declaró que debieran estar en existencia. Van
+     * aparte porque mezclarlos con `outOfStock` convertía la alerta en un
+     * volcado del catálogo —211 renglones en producción contra un puñado de
+     * faltantes reales— y una alerta que no se puede leer no se lee. Lo que
+     * piden es depuración de catálogo: asignarles mínimo o darlos de baja.
+     */
+    unstocked: StockAlert[];
     totals: {
         expiredBatches: number;
         expiredUnits: number;
         expiringBatches: number;
         expiringUnits: number;
         lowStockProducts: number;
+        /** Solo los agotados con mínimo definido. */
         outOfStockProducts: number;
+        unstockedProducts: number;
     };
 }
 
@@ -607,6 +625,12 @@ export interface SaleProductItem extends SaleItemCommon {
  * `serviceProviders` y no un uid.
  */
 export interface SaleServiceItem extends SaleItemCommon {
+    /**
+     * Precio del catálogo al registrar, cuando difiere del cobrado. Misma señal
+     * auditable que en mercancía: deja rastro de que el POS tarifó distinto
+     * (precio cambiado entre el cobro y el sync, o payload manipulado).
+     */
+    catalogUnitPrice?: number;
     kind: 'service';
     serviceId: string;
     serviceName: string;
@@ -882,7 +906,10 @@ export interface CashSession {
     adjustmentReviewedBy?: string | null;
     adjustmentReviewedAt?: Timestamp | null;
     adjustmentNote?: string | null;
-    /** `true` si el turno se cerró solo por expiración de sesión (24:00 CDMX), sin cajero presente. */
+    /**
+     * `true` si el turno se cerró solo por expiración de sesión (24:00 CDMX),
+     * sin cajero presente.
+     */
     autoClosedByExpiry?: boolean;
 }
 

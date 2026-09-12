@@ -36,7 +36,8 @@ export class PermissionsGuard implements CanActivate {
         // "aquí no hace falta permiso" a propósito.
         if (!required) {
             throw forbidden(
-                'Este endpoint no declara permisos requeridos (@RequirePermission / @AnyAuthenticated / @Public).',
+                'Este endpoint no declara permisos requeridos ' +
+                '(@RequirePermission / @AnyAuthenticated / @Public).',
             );
         }
 

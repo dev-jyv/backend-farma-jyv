@@ -34,7 +34,9 @@ export class CashSessionsController {
     /** Auditoría (solo admin): todas las cajas, no solo la propia. */
     @Get()
     @RequirePermission('cashSessions', 'read')
-    async list(@Query(new ZodValidationPipe(listCashSessionsQuerySchema)) query: ListCashSessionsQuery) {
+    async list(
+        @Query(new ZodValidationPipe(listCashSessionsQuerySchema)) query: ListCashSessionsQuery,
+    ) {
         const result = await cashSessionsService.listCashSessions({
             from: query.from,
             to: query.to,

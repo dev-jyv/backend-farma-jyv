@@ -142,7 +142,8 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
     },
     manager: {
         name: 'Gerente',
-        description: 'Acceso operativo completo excepto usuarios, dashboard, expediente clínico y auditoría de caja',
+        description: 'Acceso operativo completo excepto usuarios, dashboard, ' +
+            'expediente clínico y auditoría de caja',
         /**
          * `medicalRecords` se excluye a propósito: la nota clínica es dato
          * sensible del paciente (NOM-004) y el gerente de farmacia no la

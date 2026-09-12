@@ -25,6 +25,13 @@ import { AuthUser, RolePermission } from '../src/types';
 
 type Handler = (...args: unknown[]) => unknown;
 
+/**
+ * Clase de módulo o de controller, que es lo que Nest guarda en sus metadatos.
+ * Concreta y no `Function`: el tipo global no dice nada de lo que se construye
+ * y deja pasar cualquier cosa invocable.
+ */
+type ClaseNest = (new (...args: never[]) => object) & { prototype: object };
+
 /** Contexto mínimo: al guard solo le importan handler, clase y `req.authUser`. */
 function contextoDe(handler: Handler, clase: object, authUser?: AuthUser): ExecutionContext {
     return {
@@ -102,16 +109,18 @@ describe('PermissionsGuard', () => {
 });
 
 /** Recorre `imports` recursivamente y junta todos los `controllers`. */
-function controllersDelGrafo(root: object): Function[] {
+function controllersDelGrafo(root: object): ClaseNest[] {
     const vistos = new Set<object>();
-    const controllers: Function[] = [];
+    const controllers: ClaseNest[] = [];
 
     const visitar = (modulo: unknown) => {
         if (typeof modulo !== 'function' || vistos.has(modulo)) {
             return;
         }
         vistos.add(modulo);
-        for (const controller of (Reflect.getMetadata('controllers', modulo) as Function[]) ?? []) {
+        const declarados =
+            (Reflect.getMetadata('controllers', modulo) as ClaseNest[]) ?? [];
+        for (const controller of declarados) {
             if (!controllers.includes(controller)) {
                 controllers.push(controller);
             }
@@ -126,7 +135,7 @@ function controllersDelGrafo(root: object): Function[] {
 }
 
 /** Handlers HTTP de un controller: los que Nest marcó con path y método. */
-function rutasDe(controller: Function): { nombre: string; handler: Handler }[] {
+function rutasDe(controller: ClaseNest): { nombre: string; handler: Handler }[] {
     const proto = controller.prototype as Record<string, Handler>;
     return Object.getOwnPropertyNames(proto)
         .filter((nombre) => nombre !== 'constructor')

@@ -10,7 +10,7 @@ import {
     Section,
     Text,
 } from '@react-email/components';
-import { SalesReport } from '../services/sales-reports.service';
+import { MonthlySalesReport, SalesReport } from '../services/sales-reports.service';
 import { formatCurrency } from '../utils/currency';
 import {
     BranchCard,
@@ -41,6 +41,15 @@ export interface SalesReportEmailProps {
 const percentLabel = (value: number | null): string =>
     value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
+/** Diferencia en pesos contra el mes anterior. */
+const monthDelta = (report: MonthlySalesReport): number =>
+    report.totals.totalAmount - report.previousMonth.total;
+
+const monthDeltaLabel = (report: MonthlySalesReport): string => {
+    const delta = monthDelta(report);
+    return `${delta >= 0 ? '+' : '−'}${formatCurrency(Math.abs(delta))}`;
+};
+
 export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
     const { totals, branches, expenses } = report;
     const netTone = report.netResult >= 0 ? palette.positive : palette.negative;
@@ -55,6 +64,10 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
     }));
 
     const maxProduct = report.topProducts[0]?.amount ?? 0;
+    // Escala de la gráfica de días: el mejor día del mes es la barra llena.
+    const maxDay = report.kind === 'monthly'
+        ? Math.max(0, ...report.byDay.map((day) => day.amount))
+        : 0;
     const productRows: DataRow[] = report.topProducts.map((product, index) => ({
         key: product.productId,
         rank: index + 1,
@@ -120,8 +133,13 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                                 value: formatCurrency(report.ticketAverage),
                             },
                             {
+                                // El conteo solo no dice nada: dos anuladas de
+                                // $80 y dos de $9,000 se leen igual. Va el importe.
                                 label: 'Anuladas',
-                                value: String(totals.voidedCount),
+                                value: totals.voidedCount > 0
+                                    ? `${totals.voidedCount} · ` +
+                                        `${formatCurrency(totals.voidedAmount)}`
+                                    : '0',
                                 tone: totals.voidedCount > 0 ? palette.negative : palette.ink,
                             },
                         ]}
@@ -131,14 +149,25 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                         <MetricRow
                             metrics={[
                                 {
-                                    label: `vs ${report.previousMonth.periodLabel}`,
-                                    value: percentLabel(report.previousMonth.changeRate),
-                                    tone: (report.previousMonth.changeRate ?? 0) >= 0
+                                    /**
+                                     * La pregunta de un reporte mensual es "¿mejor
+                                     * o peor?". Un porcentaje solo no se puede
+                                     * juzgar —+12 % sobre un mes malo sigue siendo
+                                     * un mes malo—, así que va con la diferencia
+                                     * en pesos, que es la cifra que se compara
+                                     * contra la renta y la nómina.
+                                     */
+                                    label: `vs ${report.previousMonth.periodLabel} ` +
+                                        `(${formatCurrency(report.previousMonth.total)})`,
+                                    value: `${monthDeltaLabel(report)} · ` +
+                                        percentLabel(report.previousMonth.changeRate),
+                                    tone: monthDelta(report) >= 0
                                         ? palette.positive
                                         : palette.negative,
                                 },
                                 {
-                                    label: 'Promedio por día con ventas',
+                                    label: 'Promedio por día con ventas ' +
+                                        `(${report.byDay.length})`,
                                     value: formatCurrency(report.dailyAverage),
                                 },
                                 {
@@ -245,14 +274,33 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
 
                     {report.kind === 'monthly' && report.byDay.length > 0 ? (
                         <ReportSection title="Ventas por día">
+                            {/*
+                              * Con barra proporcional en vez de treinta importes
+                              * sueltos: la forma del mes —qué semana cargó, qué
+                              * día se cayó— se ve de un vistazo y no hay que
+                              * comparar cifras a mano. La escala es contra el
+                              * mejor día, así que la barra llena es ese día.
+                              */}
                             <DataTable
                                 rows={report.byDay.map((day) => ({
                                     key: day.dateLabel,
                                     label: day.dateLabel,
                                     sublabel: `${day.count} ventas`,
                                     value: formatCurrency(day.amount),
+                                    percent: maxDay > 0 ? (day.amount / maxDay) * 100 : 0,
+                                    color: palette.pharmacy,
                                 }))}
                             />
+                            {/*
+                              * `byDay` solo trae días con ventas: un día cerrado
+                              * desaparece de la tabla en vez de salir en cero. Se
+                              * dice, para que nadie cuente renglones y crea que el
+                              * mes tuvo esos días.
+                              */}
+                            <Text style={text.note}>
+                                {`Solo se listan los ${report.byDay.length} días con ventas; ` +
+                                    'los días sin movimiento no aparecen.'}
+                            </Text>
                         </ReportSection>
                     ) : null}
 

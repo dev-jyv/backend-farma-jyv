@@ -112,3 +112,46 @@ export const getAllowedOrigins = (): string[] => {
         .map((origin) => origin.trim())
         .filter(Boolean);
 };
+
+/**
+ * Cloudflare R2 para los comprobantes de factura.
+ *
+ * El `accountId` **es** el subdominio del endpoint S3
+ * (`https://<accountId>.r2.cloudflarestorage.com`), así que se deriva de él en
+ * vez de configurarse aparte: dos valores que tienen que coincidir y se
+ * escriben a mano son dos valores que acaban sin coincidir.
+ *
+ * Devuelve `null` si falta cualquiera de las cuatro piezas. Con `null`, las
+ * subidas siguen yendo a Firebase Storage: preferible a tumbar la caja porque
+ * un secreto no está puesto, y es lo que deja el emulador funcionando sin
+ * credenciales de R2.
+ */
+export interface R2Config {
+    accountId: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+    /** Derivado, nunca configurado a mano. */
+    endpoint: string;
+}
+
+export const getR2Config = (): R2Config | null => {
+    const accountId = process.env.R2_ACCOUNT_ID?.trim();
+    const bucket = process.env.R2_BUCKET?.trim();
+    const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+    const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+
+    if (!accountId || !bucket || !accessKeyId || !secretAccessKey) {
+        return null;
+    }
+
+    return {
+        accountId,
+        bucket,
+        accessKeyId,
+        secretAccessKey,
+        endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    };
+};
+
+export const isR2Enabled = (): boolean => getR2Config() !== null;
