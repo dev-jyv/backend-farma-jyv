@@ -3,6 +3,10 @@
 Procedimientos que tocan el proyecto desplegado. Todo lo de aquí se ejecuta a
 mano y con la farmacia avisada; nada corre solo.
 
+Para **cómo está construida** la API —módulos, permisos, reglas de dinero,
+idempotencia, integraciones y el diagrama del sistema— ver
+[`docs/DOSSIER_TECNICO.md`](docs/DOSSIER_TECNICO.md).
+
 Requisitos: `firebase login` y `gcloud auth login` con una cuenta que tenga
 acceso al proyecto, y `firebase use <proyecto>` apuntando al correcto. Antes de
 cualquier comando, confirma contra cuál estás parado:
@@ -27,7 +31,8 @@ gcloud config get-value project
 | Política de alerta | ✅ `alertPolicies/15126880163367668267` — más de 5 respuestas 5xx de `api` en 5 min |
 | Backfill denormalizado | ✅ corrido (`products`: 192, `entries`: 2); respaldo previo en `manual/pre-backfill-20260916T193414` |
 | Integración continua | ✅ `.github/workflows/ci.yml` en ambos repos (§6) |
-| Notificaciones de Error Reporting | ⏳ se activan desde la consola (§7) |
+| Aviso de error nuevo | ✅ `alertPolicies/206274569130471057` — alerta por log; ya no hace falta el paso de consola (§7) |
+| Código de contabilidad | ✅ `api` y hosting desplegados el 2026-09-17 |
 
 ### Limpieza de datos de prueba — 2026-09-17
 
@@ -261,9 +266,19 @@ curl -s -X POST "https://monitoring.googleapis.com/v3/projects/farma-jyv/notific
        "labels":{"email_address":"<correo>"},"enabled":true}'
 ```
 
-**Falta un paso manual**: en la consola, **Error Reporting → Configure
-notifications**, elegir ese canal. Es lo que avisa de un error *nuevo* aunque
-ocurra una sola vez; la política de arriba solo se dispara cuando hay volumen.
+Hay **dos** políticas, y se complementan:
+
+| Política | Se dispara con | Para qué |
+|---|---|---|
+| `errores en la API` (`15126880163367668267`) | más de 5 respuestas `5xx` en 5 min | algo se rompió en serio |
+| `error nuevo en la API` (`206274569130471057`) | cualquier log `severity>=ERROR` | un 500 aislado, aunque ocurra una sola vez |
+
+La segunda es una alerta **basada en log**, así que cubre lo que daban las
+notificaciones de Error Reporting de la consola sin depender de un paso manual.
+Está limitada a un aviso por hora para que un error repetido no llene el correo.
+
+Error Reporting sigue siendo el sitio donde se **lee** el error: agrupa por stack
+y muestra el contexto que escribe `AppExceptionFilter`.
 
 Revisión rápida desde la terminal:
 
