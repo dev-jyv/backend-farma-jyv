@@ -66,3 +66,10 @@ export const deleteCategory = async (id: string): Promise<Category> => {
 
     return categoriesRepo.updateCategory(id, { isActive: false });
 };
+
+/** Catálogo completo sin paginar, para el pull del panel. Ver el repositorio. */
+export const listCategoriesForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: Category[] }> => ({
+    items: await categoriesRepo.listCategoriesForSync(filters),
+});

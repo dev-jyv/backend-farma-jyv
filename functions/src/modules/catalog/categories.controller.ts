@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
     createCategorySchema,
     idParamSchema,
+    syncCategoriesQuerySchema,
     listCategoriesQuerySchema,
     updateCategorySchema,
 } from '../../schemas';
@@ -13,6 +14,7 @@ import { RequirePermission } from '../identity/decorators/require-permission.dec
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
 type ListCategoriesQuery = z.infer<typeof listCategoriesQuerySchema>;
+type SyncCategoriesQuery = z.infer<typeof syncCategoriesQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 type CreateCategoryInput = z.infer<typeof createCategorySchema>;
 type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
@@ -31,6 +33,18 @@ export class CategoriesController {
             limit: query.limit ? Number(query.limit) : undefined,
         });
         return { data: result.items, meta: result.meta };
+    }
+
+    /** Catálogo completo sin paginar. Declarado antes de `:id`, que si no lo captura. */
+    @Get('sync')
+    @RequirePermission('categories', 'read')
+    async sync(
+        @Query(new ZodValidationPipe(syncCategoriesQuerySchema)) query: SyncCategoriesQuery,
+    ) {
+        const result = await categoriesService.listCategoriesForSync({
+            updatedSince: query.updatedSince,
+        });
+        return { data: result.items };
     }
 
     @Get(':id')

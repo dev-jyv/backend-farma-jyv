@@ -2,7 +2,7 @@ import { Supplier } from '../types';
 import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
 import { paginateQuery } from '../utils/firestore-pagination';
-import { db, now } from '../utils/firestore';
+import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('suppliers');
 
@@ -49,6 +49,33 @@ export const listSuppliers = async (filters: {
     suppliers.sort((a, b) => a.name.localeCompare(b.name));
 
     return paginate(suppliers, page, limit);
+};
+
+/**
+ * Catálogo completo para el pull del cliente, sin paginar.
+ *
+ * Existe porque traer "todo" por el endpoint paginado costaba
+ * `N × (P+1) / 2` lecturas: el backend resuelve la página N leyendo `N × limit`
+ * documentos (ver `utils/firestore-pagination.ts`), así que pedir las páginas
+ * una tras otra multiplica el costo. Aquí se lee cada documento una vez.
+ *
+ * **No filtra por `isActive`**: con `updatedSince` el cliente necesita enterarse
+ * de las bajas para sacarlas de su copia; filtrando, un proveedor desactivado
+ * simplemente dejaría de aparecer en el delta y se quedaría vivo en el cliente
+ * para siempre.
+ *
+ * Solo usa `where` sobre `updatedAt`, que tiene índice de campo único
+ * automático: no hace falta declarar un índice compuesto.
+ */
+export const listSuppliersForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<Supplier[]> => {
+    let query: FirebaseFirestore.Query = collection();
+    if (filters.updatedSince) {
+        query = query.where('updatedAt', '>=', toTimestamp(filters.updatedSince));
+    }
+    const snapshot = await query.get();
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Supplier));
 };
 
 export const getSupplierById = async (id: string): Promise<Supplier | null> => {

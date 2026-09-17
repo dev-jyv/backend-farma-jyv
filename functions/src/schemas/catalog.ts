@@ -3,6 +3,10 @@ import { money, optionalNonEmpty, paginationFields, parseableDate, phoneMx } fro
 import { MAX_IEPS_RATE } from '../constants/taxes';
 import { CONTROLLED_GROUPS } from '../constants/controlled';
 
+export const syncCategoriesQuerySchema = z.object({
+    updatedSince: parseableDate.optional(),
+});
+
 export const listCategoriesQuerySchema = z.object({
     activeOnly: z.enum(['true', 'false']).optional(),
     ...paginationFields,
@@ -189,6 +193,10 @@ export const updateSupplierSchema = z.object({
     address: supplierAddress.optional(),
     notes: supplierNotes.optional(),
     isActive: z.boolean().optional(),
+});
+
+export const syncSuppliersQuerySchema = z.object({
+    updatedSince: parseableDate.optional(),
 });
 
 export const listSuppliersQuerySchema = z.object({

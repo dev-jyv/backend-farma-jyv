@@ -91,3 +91,10 @@ export const deleteSupplier = async (id: string): Promise<Supplier> => {
 
     return suppliersRepo.updateSupplier(id, { isActive: false });
 };
+
+/** Catálogo completo sin paginar, para el pull del panel. Ver el repositorio. */
+export const listSuppliersForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: Supplier[] }> => ({
+    items: await suppliersRepo.listSuppliersForSync(filters),
+});
