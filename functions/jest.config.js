@@ -23,16 +23,16 @@ module.exports = {
         // poder bajar la cobertura sin que alguien lo decida a propósito
         // subiendo estos números.
         //
-        // Van ~2 puntos por debajo de lo medido (≈47% líneas, ≈44% ramas)
-        // a propósito: las suites comparten el emulador y reutilizan lo que
-        // dejaron las anteriores, así que la cifra oscila alrededor de un punto
-        // entre corridas. Sin ese margen el gate falla de forma intermitente y
-        // el equipo acaba desactivándolo, que es peor que no tenerlo.
+        // Desde que `test/teardown-admin.ts` limpia la base antes de cada
+        // archivo, corridas seguidas dan el mismo número (±0.02) — antes
+        // oscilaba un punto entero porque las suites compartían estado. El
+        // margen que queda (~1 punto) ya no absorbe deriva del emulador sino el
+        // ir y venir del código mientras se trabaja.
         global: {
-            lines: 45,
-            statements: 46,
-            branches: 41,
-            functions: 43,
+            lines: 71,
+            statements: 72,
+            branches: 56,
+            functions: 57,
         },
         // Identidad y acceso: aquí un hueco de cobertura es una escalada de
         // privilegios, así que se exige mucho más que en el resto del código.
