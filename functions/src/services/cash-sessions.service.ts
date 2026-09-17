@@ -163,7 +163,11 @@ const buildSummary = (
         summary: {
             salesCount,
             voidedCount,
-            returns: { ...returnTotals, total: round(returnTotals.total), cashTotal: round(returnTotals.cashTotal) },
+            returns: {
+                ...returnTotals,
+                total: round(returnTotals.total),
+                cashTotal: round(returnTotals.cashTotal),
+            },
             byMethod,
             movements: movementTotals,
             grandTotal: round(grandTotal - returnTotals.total),

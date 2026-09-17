@@ -94,7 +94,11 @@ export const createStockEntry = async (input: {
             }
             const replay = await inventoryService.getEntry(entryId);
             const producto = await productsService.getProduct(replay.items[0]!.productId);
-            return { entry: replay, product: producto as unknown as Product, stock: producto.stock };
+            return {
+                entry: replay,
+                product: producto as unknown as Product,
+                stock: producto.stock,
+            };
         }
         // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
         // paralelo no pueden aplicar la misma entrada dos veces.

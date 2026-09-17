@@ -10,7 +10,10 @@ import * as stockEntriesService from '../src/services/stock-entries.service';
 const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2, 10)}`;
 
 const fixtures = async () => {
-    const category = await categoriesRepo.createCategory({ name: unique('Categoria'), isActive: true });
+    const category = await categoriesRepo.createCategory({
+        name: unique('Categoria'),
+        isActive: true,
+    });
     const product = await productsRepo.createProduct({
         name: unique('Producto'),
         sku: unique('SKU'),
@@ -25,7 +28,10 @@ const fixtures = async () => {
         isActive: true,
         suppliers: [],
     });
-    const supplier = await suppliersRepo.createSupplier({ name: unique('Proveedor'), isActive: true });
+    const supplier = await suppliersRepo.createSupplier({
+        name: unique('Proveedor'),
+        isActive: true,
+    });
     const invoice = await invoicesRepo.createInvoice(
         invoicesRepo.generateInvoiceId(),
         {
