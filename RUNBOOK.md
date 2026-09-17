@@ -223,16 +223,17 @@ aunque las pruebas fallen.
 El CI corre contra el emulador con el proyecto `farma-jyv-test`: no toca datos
 reales ni necesita credenciales.
 
-Dos cosas que conviene saber antes de que alguien lo declare roto:
+Las suites corren **aisladas**: `functions/test/teardown-admin.ts` vacía la base
+del emulador antes de cada archivo. De ahí salen dos propiedades que conviene
+conocer antes de declarar roto el CI:
 
-- La cobertura del backend **oscila alrededor de un punto entre corridas**
-  porque las suites comparten un emulador y reutilizan lo que dejaron las
-  anteriores. Por eso el piso de `coverageThreshold` va ~2 puntos por debajo de
-  lo medido. Si hay que bajarlo, que sea una decisión explícita en el commit.
-- `sales.spec.ts › dos requests concurrentes con la misma llave produce una sola
-  venta` falla aproximadamente **1 de cada 4 corridas** y pasa en aislamiento.
-  Es contención del emulador, no la lógica de idempotencia. Antes de investigar
-  un fallo de CI, comprueba si es ese.
+- **Un fallo de CI es un fallo real.** Hasta septiembre de 2026 la prueba de
+  concurrencia de ventas fallaba ~1 de cada 4 corridas por contención del
+  emulador; ya no. Si vuelve a aparecer un rojo intermitente, es una suite nueva
+  que depende de datos escritos por otra — arréglala, no la reintentes.
+- **La cobertura es reproducible** (±0.02 entre corridas), así que el piso de
+  `coverageThreshold` va justo por debajo de lo medido. Bajarlo debe ser una
+  decisión explícita en el commit, no un ajuste para que pase.
 
 En el panel (`farma-jyv-admin`) el flujo es el mismo sin JDK: `npm ci` →
 `npm run test:coverage` → `npm run build`. El umbral lo aplica

@@ -10,6 +10,60 @@ Note: user-facing strings and error messages are in Spanish. Match that when add
 
 See [GOALS.md](GOALS.md) for the product/functional goals (includes the NestJS migration plan/history) and [MEMORY.md](MEMORY.md) for a persistent fact sheet (collections, endpoints, env vars, known pending work) — keep both updated when architecture or scope shifts.
 
+## Architecture diagram
+
+Deployment view. Everything server-side is one Firebase project (`farma-jyv`,
+`us-central1`): a single Cloud Function serves the whole API, and four scheduled
+functions run beside it. Diagram renders on GitHub; keep it in sync when a
+service, scheduled job or external dependency is added or removed.
+
+```mermaid
+flowchart LR
+    subgraph clients["Clients"]
+        admin["Admin panel<br/>Angular · Hosting"]
+        pos["Desktop POS<br/>Electron · local-first"]
+        clinic["Clinic front<br/>Angular"]
+    end
+
+    api["<b>Cloud Function api</b><br/>Express + NestJS · /v1<br/>512MiB · 60s"]
+    crons["<b>Scheduled functions</b><br/>sales reports · inventory alerts<br/>nightly backup"]
+
+    subgraph data["Firebase · farma-jyv · us-central1"]
+        auth["Firebase Auth<br/>claims: role + version"]
+        fs[("Firestore")]
+        gcs[("Cloud Storage<br/>uploads/ · clinical/")]
+        backups[("GCS backups<br/>30 days")]
+    end
+
+    subgraph ext["External"]
+        mp["Mercado Pago Point"]
+        r2[("Cloudflare R2<br/>facturas/ · private")]
+        resend["Resend · email"]
+    end
+
+    clients ==> api
+    api --> auth
+    api --> fs
+    api --> gcs
+    api --> r2
+    api --> mp
+    mp -. "signed webhook" .-> api
+
+    crons --> fs
+    crons --> resend
+    crons --> backups
+```
+
+Two things the picture is meant to make obvious:
+
+- **One function, one database.** There is no service mesh and no read replica:
+  every client hits the same `api`, and every report reads the same Firestore.
+  That is why cold start and read volume are cost decisions, not details — see
+  [Cost and cold start](#cost-and-cold-start).
+- **Invoice files are the only split storage.** Prefix `facturas/` goes to
+  Cloudflare R2, anything else to Firebase Storage; `isR2Path()` is the single
+  switch. Clinical attachments never move (patient data, NOM-004).
+
 ## Commands
 
 All commands run from [functions/](functions/):
@@ -38,11 +92,9 @@ Specs live in [functions/test-rules/](functions/test-rules/) (`@firebase/rules-u
 
 Emulator ports: functions 5001, firestore 8080, auth 9099. Tests live in [functions/test/](functions/test/) (Jest + `ts-jest`, config in `jest.config.js`); they run against the real Firestore emulator via `firebase-admin`, not a mock. Coverage is targeted, not uniform: the highest-risk Firestore transactions (inventory entry/exit in `inventory.service.ts`, FEFO sale allocation in `sales.service.ts`) and everything that decides **access** (`auth.guard.ts`, `roles.service.ts`, `users.service.ts`) have tests, because a hole there is a privilege escalation rather than a wrong number. Trivial CRUD (categories, suppliers, doctor, uploads) has none — add tests when touching transactional, money- or access-critical code, not for parity's sake elsewhere.
 
-`maxWorkers: 1` is not a performance oversight: the suites share one Firestore emulator and in parallel they fight over transaction locks (`ABORTED: Transaction lock timeout`). They also reuse whatever earlier suites left in the emulator, which is why fixtures use randomized names and why the overall coverage figure drifts about a point between runs.
+`maxWorkers: 1` is not a performance oversight: the suites share one Firestore emulator and in parallel they fight over transaction locks (`ABORTED: Transaction lock timeout`). **[test/teardown-admin.ts](functions/test/teardown-admin.ts) wipes the database before each spec file** through the emulator's `DELETE /emulator/v1/projects/<id>/databases/(default)/documents`, so every suite starts empty. That is not tidiness: the emulator locks *pessimistically* (production Firestore is optimistic), so on a loaded database two transactions touching the same document serialise until the SDK's five attempts run out and surface `ABORTED: Transaction lock timeout` — which is exactly what made the sale-concurrency spec fail about one run in four. Clearing before rather than after leaves a failing suite's documents in place for inspection. Never make a spec depend on data another spec wrote.
 
-`npm run test:coverage` enforces `coverageThreshold` from `jest.config.js`. The global floor sits ~2 points under the measured value **on purpose** — a gate pinned to the exact number fails intermittently because of that drift, and a flaky gate is one the team disables, which is worse than no gate. Per-file gates are strict where it matters (`auth.guard.ts` and `memory-cache.ts` at 100% lines, `users.service.ts` at 80%). `src/scripts/**` is excluded: one-off operational scripts run by hand with someone watching the output.
-
-Known flake: `sales.spec.ts › dos requests concurrentes con la misma llave produce una sola venta` fails roughly one run in four under load and passes in isolation. It predates the current suite; it is emulator contention, not the idempotency logic.
+`npm run test:coverage` enforces `coverageThreshold` from `jest.config.js`. With the suites isolated the figure is reproducible run to run (±0.02), so the global floor sits just under the measured value instead of the two points of slack it needed while suites shared state. Per-file gates are strict where it matters (`auth.guard.ts` and `memory-cache.ts` at 100% lines, `users.service.ts` at 80%). `src/scripts/**` is excluded: one-off operational scripts run by hand with someone watching the output.
 
 ### CI
 
@@ -56,6 +108,20 @@ Every request flows through the same layered path — respect these boundaries w
 modules/<domain>/*.controller.ts  ->  Guards (AuthGuard, PermissionsGuard) + ZodValidationPipe
   ->  services/*.service.ts  (business logic, Firestore transactions)
     ->  repositories/*.repository.ts  (raw Firestore reads/writes for one collection)
+```
+
+```mermaid
+flowchart LR
+    req([Request /v1/...]) --> g1["AuthGuard<br/>verifies token → req.authUser"]
+    g1 --> g2["PermissionsGuard<br/>RequirePermission area, level"]
+    g2 --> pipe["ZodValidationPipe<br/>body · query · params"]
+    pipe --> ctrl["controller<br/>modules/domain"]
+    ctrl --> svc["service<br/>business logic · runTransaction"]
+    svc --> repo["repository<br/>one collection"]
+    repo --> fs[("Firestore")]
+    ctrl -- "{ data, meta? }" --> res([Response])
+    svc -. "AppError" .-> filt["AppExceptionFilter<br/>{ error: { code, message } }"]
+    filt --> res
 ```
 
 - **Controllers** ([functions/src/modules/](functions/src/modules/)) are thin Nest `@Controller()` classes, one folder per domain (`identity`, `catalog`, `inventory`, `sales`, `uploads`, `doctor`, `internal`, `health`). Each handler calls a `@RequirePermission(area, level?)` decorator (default level `write`), validates `@Body()/@Query()/@Param()` with `new ZodValidationPipe(schema)` (schemas from [schemas/index.ts](functions/src/schemas/index.ts), unchanged from before the Nest migration), and returns a plain `{ data, meta? }` object — there is no global response-envelope interceptor, controllers build the envelope themselves to match each endpoint's original shape exactly.
