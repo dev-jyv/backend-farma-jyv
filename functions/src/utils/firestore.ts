@@ -18,3 +18,5 @@ export const now = (): Timestamp => Timestamp.now();
 
 export const toTimestamp = (date: string): Timestamp =>
     Timestamp.fromDate(new Date(date));
+
+export const fromDate = (date: Date): Timestamp => Timestamp.fromDate(date);

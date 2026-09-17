@@ -155,3 +155,15 @@ export const getR2Config = (): R2Config | null => {
 };
 
 export const isR2Enabled = (): boolean => getR2Config() !== null;
+
+/**
+ * Exige la llave de idempotencia en el alta de ventas.
+ *
+ * Arranca **apagada** a propósito: el POS de escritorio es otro despliegue, y
+ * encenderla antes de que él la mande dejaría a la farmacia sin poder cobrar.
+ * Mientras está apagada, cada venta sin llave deja un `warn` en los logs con el
+ * cajero que la mandó; cuando esos avisos desaparezcan durante unos días, se
+ * pone `SALES_REQUIRE_IDEMPOTENCY_KEY=true` y el hueco se cierra de verdad.
+ */
+export const requiresIdempotencyKey = (): boolean =>
+    process.env.SALES_REQUIRE_IDEMPOTENCY_KEY?.trim() === 'true';

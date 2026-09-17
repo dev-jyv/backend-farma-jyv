@@ -375,11 +375,19 @@ const buildReportHtml = (report: SalesReport): string => {
 </html>`;
 };
 
-export const buildReportPdf = async (report: SalesReport): Promise<Buffer> => {
+/**
+ * HTML a PDF con el navegador ya configurado para Cloud Functions.
+ *
+ * Exportado para que los PDF de contabilidad no dupliquen el arranque de
+ * Chromium: en serverless hay que usar el binario de `@sparticuz/chromium` con
+ * banderas propias, y una segunda copia de esa lógica se desincroniza a la
+ * primera actualización.
+ */
+export const renderHtmlToPdf = async (html: string): Promise<Buffer> => {
     const browser = await launchBrowser();
     try {
         const page = await browser.newPage();
-        await page.setContent(buildReportHtml(report), { waitUntil: 'load' });
+        await page.setContent(html, { waitUntil: 'load' });
         const pdf = await page.pdf({
             format: 'A4',
             printBackground: true,
@@ -390,3 +398,6 @@ export const buildReportPdf = async (report: SalesReport): Promise<Buffer> => {
         await browser.close();
     }
 };
+
+export const buildReportPdf = (report: SalesReport): Promise<Buffer> =>
+    renderHtmlToPdf(buildReportHtml(report));

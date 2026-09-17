@@ -11,6 +11,7 @@ export {
     dailySalesReport,
     monthlySalesReport,
 } from './schedules/sales-reports.schedule';
+export { dailyFirestoreBackup } from './schedules/backup.schedule';
 
 let appPromise: ReturnType<typeof createApp> | undefined;
 

@@ -62,6 +62,14 @@ export type PermissionArea =
      * `cashier` y en `manager`: sin ella la caja no puede sincronizar el
      * catálogo (`GET /pharmacy-services/sync`) ni cobrar un servicio.
      */
+    /**
+     * Contabilidad (solo admin): estado de resultados, posición financiera y
+     * captura de gastos **fuera de caja** (nómina o renta pagadas por
+     * transferencia). Área propia y no `expenses`, que es la auditoría de lo que
+     * el mostrador gastó de su cajón: aquí se registra dinero que nunca pasó por
+     * una caja, y se leen cifras agregadas del negocio completo.
+     */
+    | 'accounting'
     | 'pharmacyServices';
 
 export type PermissionLevel = 'read' | 'write';
@@ -122,6 +130,30 @@ export type AuditAction =
     | 'cash_session.adjustment_reviewed'
     /** Entrada o salida de efectivo hecha por un admin desde la caja de la farmacia. */
     | 'cashMovement.created'
+    /** Corrección de un gasto ya registrado (importe, categoría, fecha, motivo). */
+    | 'cashMovement.updated'
+    /** Abono a una factura de proveedor: sale dinero de la farmacia. */
+    | 'supplierPayment.created'
+    /** Cancelación de un abono por contrapartida; el original se conserva. */
+    | 'supplierPayment.voided'
+    /** Corrección del vencimiento o del desglose de impuestos de una factura. */
+    | 'invoice.updated'
+    | 'fixedAsset.created'
+    | 'fixedAsset.updated'
+    | 'fixedAsset.disposed'
+    | 'equityMovement.created'
+    | 'accruedExpense.created'
+    /** Pago de un gasto devengado: mueve efectivo, no vuelve a pegar en resultados. */
+    | 'accruedExpense.paid'
+    | 'bankAccount.created'
+    | 'bankAccount.updated'
+    /** Movimiento bancario capturado a mano o traspaso entre caja y banco. */
+    | 'bankMovement.created'
+    | 'bankMovement.reconciled'
+    /** Cambio de saldos de apertura o de la fecha de arranque contable. */
+    | 'accountingSettings.updated'
+    /** Cierre o reapertura de periodos contables. */
+    | 'accountingPeriod.closed'
     | 'inventory.count_adjusted'
     | 'role.created'
     | 'role.updated'
@@ -147,6 +179,14 @@ export type AuditEntity =
     | 'saleReturn'
     | 'cashSession'
     | 'cashMovement'
+    | 'supplierPayment'
+    | 'invoice'
+    | 'fixedAsset'
+    | 'equityMovement'
+    | 'accruedExpense'
+    | 'bankAccount'
+    | 'bankMovement'
+    | 'accountingSettings'
     | 'inventoryCount'
     | 'role'
     | 'user'
@@ -272,6 +312,15 @@ export type ExpenseCategory =
     | 'salary' | 'food' | 'rent' | 'contingency' | 'electricity'
     | 'supplies' | 'supplier' | 'other';
 
+/**
+ * Cómo se pagó un gasto. Solo `cash` sale del cajón: un gasto pagado por
+ * transferencia o con tarjeta empresarial es gasto del periodo pero **no**
+ * movimiento de efectivo, así que no puede descontarse del corte ni de la caja
+ * de la farmacia. Los movimientos anteriores a este campo se leen como `cash`,
+ * que es lo que eran: todos se capturaban desde el POS.
+ */
+export type ExpensePaymentMethod = 'cash' | 'transfer' | 'card';
+
 export interface CashMovement {
     id: string;
     /**
@@ -293,7 +342,209 @@ export interface CashMovement {
      * esto la pantalla mostraba el uid crudo.
      */
     createdByLabel?: string | null;
+    /**
+     * Cómo se pagó. Ausente en los movimientos anteriores a contabilidad; se lee
+     * como `cash`. Ver `ExpensePaymentMethod`: solo `cash` mueve el cajón.
+     */
+    paymentMethod?: ExpensePaymentMethod | null;
+    /**
+     * Cuenta de la que salió el dinero, cuando no salió del cajón. Es lo que
+     * permite que el saldo bancario se calcule sin duplicar el gasto en una
+     * segunda colección. En un traspaso caja→banco marca la cuenta destino.
+     */
+    bankAccountId?: string | null;
+    /**
+     * Gasto devengado que este movimiento liquida. Va en un `withdrawal` y no en
+     * un `expense` a propósito: el gasto ya pegó en resultados al devengarse, y
+     * registrarlo otra vez como gasto lo contaría dos veces.
+     */
+    accruedExpenseId?: string | null;
+    /**
+     * Fecha a la que **pertenece** el gasto, que no siempre es la de captura: la
+     * renta de marzo puede registrarse en abril, y cargarla al mes equivocado
+     * deforma los dos estados de resultados. `createdAt` queda como el rastro de
+     * cuándo se tecleó y nunca se toca. Ausente en los movimientos anteriores a
+     * contabilidad, donde captura y ocurrencia eran el mismo instante.
+     */
+    occurredAt?: Timestamp | null;
+    /** Solo si el gasto se corrigió después de registrarse. */
+    updatedAt?: Timestamp | null;
     createdAt: Timestamp;
+}
+
+/**
+ * Cuenta bancaria de la farmacia. Existe para que "bancos" deje de ser una
+ * estimación: mientras el saldo se infería del flujo conocido, un traspaso entre
+ * caja y banco se veía por un solo lado y el balance no cerraba nunca.
+ */
+export interface BankAccount {
+    id: string;
+    name: string;
+    bank: string;
+    /** Últimos cuatro dígitos; el número completo no se guarda. */
+    last4?: string | null;
+    openingBalance: number;
+    /** Fecha del saldo inicial: antes de ella la cuenta no aporta movimientos. */
+    openingDate: Timestamp;
+    isActive: boolean;
+    createdBy: string;
+    createdAt: Timestamp;
+    updatedBy?: string | null;
+    updatedAt?: Timestamp | null;
+}
+
+export type BankMovementDirection = 'in' | 'out';
+
+/**
+ * De dónde sale el movimiento. `manual` es la captura suelta (un depósito de la
+ * terminal, un cargo del banco) y `transfer` es el traspaso entre caja y banco,
+ * que siempre viaja con su movimiento de efectivo enfrente.
+ *
+ * Los gastos y los abonos a proveedor **no** generan documento aquí: llevan
+ * `bankAccountId` en su propio registro y el saldo los suma desde ahí. Guardar
+ * además un movimiento bancario sería el mismo hecho escrito dos veces, y dos
+ * copias del mismo hecho terminan discrepando.
+ */
+export type BankMovementOrigin = 'manual' | 'transfer';
+
+export interface BankMovement {
+    id: string;
+    accountId: string;
+    direction: BankMovementDirection;
+    amount: number;
+    occurredAt: Timestamp;
+    concept: string;
+    reference?: string | null;
+    origin: BankMovementOrigin;
+    /** Movimiento de efectivo que acompaña al traspaso. */
+    cashMovementId?: string | null;
+    /** Marcado contra el estado de cuenta del banco. */
+    reconciledAt?: Timestamp | null;
+    reconciledBy?: string | null;
+    createdBy: string;
+    createdByLabel?: string | null;
+    createdAt: Timestamp;
+}
+
+/**
+ * Gasto **devengado**: ya ocurrió y todavía no se paga (la renta del mes que se
+ * liquida el día 5, la luz que llega con recibo a 15 días).
+ *
+ * Existe porque el estado de resultados venía siendo mixto: ingresos y costo
+ * devengados, gastos a base de efectivo. Un gasto causado y no pagado no tenía
+ * dónde vivir, así que el mes salía con la utilidad inflada y el pasivo corto.
+ *
+ * El gasto pega en resultados en `accruedAt`; su pago después solo mueve
+ * efectivo —se registra como `withdrawal`, no como `expense`— para que el mismo
+ * gasto no se cuente dos veces.
+ */
+export interface AccruedExpense {
+    id: string;
+    category: ExpenseCategory;
+    concept: string;
+    description?: string | null;
+    amount: number;
+    /** Fecha de **devengo**: a qué periodo pertenece el gasto. */
+    accruedAt: Timestamp;
+    /** Vencimiento pactado; ausente si no hay plazo. */
+    dueDate?: Timestamp | null;
+    /** Σ de lo pagado. El saldo y el estado se derivan de él. */
+    paidTotal: number;
+    lastPaymentAt?: Timestamp | null;
+    createdBy: string;
+    createdByLabel?: string | null;
+    createdAt: Timestamp;
+    updatedBy?: string | null;
+    updatedAt?: Timestamp | null;
+}
+
+export type FixedAssetCategory =
+    | 'furniture'
+    | 'equipment'
+    | 'computing'
+    | 'vehicle'
+    | 'improvements'
+    | 'other';
+
+/**
+ * Bien de activo fijo. La depreciación **no se guarda**: se calcula al vuelo
+ * para la fecha que se pida. Guardarla obligaría a un proceso mensual que, el
+ * mes que no corra, deja el estado de resultados mudo sin que nadie se entere.
+ */
+export interface FixedAsset {
+    id: string;
+    name: string;
+    category: FixedAssetCategory;
+    acquiredAt: Timestamp;
+    /** Costo de adquisición; la base depreciable es `cost - salvageValue`. */
+    cost: number;
+    usefulLifeMonths: number;
+    /** Valor de rescate al final de la vida útil; 0 en casi todo. */
+    salvageValue: number;
+    notes?: string | null;
+    /** Baja del bien: deja de depreciarse a partir de esta fecha. */
+    disposedAt?: Timestamp | null;
+    disposalAmount?: number | null;
+    disposalReason?: string | null;
+    createdBy: string;
+    createdAt: Timestamp;
+    updatedBy?: string | null;
+    updatedAt?: Timestamp | null;
+}
+
+export type EquityMovementType = 'contribution' | 'withdrawal';
+
+/**
+ * Aportación o retiro de socios. Solo alta y consulta: una cifra equivocada se
+ * corrige con el movimiento contrario, no editando el original — es la misma
+ * regla que ya siguen los abonos a proveedor.
+ */
+export interface EquityMovement {
+    id: string;
+    type: EquityMovementType;
+    amount: number;
+    occurredAt: Timestamp;
+    partner: string;
+    note?: string | null;
+    createdBy: string;
+    createdByLabel?: string | null;
+    createdAt: Timestamp;
+}
+
+/**
+ * Saldos de apertura a la fecha de arranque contable. Sin ellos el balance no
+ * cierra ni con todos los módulos: el sistema solo conoce lo ocurrido desde que
+ * se instaló, y todo lo anterior tiene que entrar por aquí en un solo renglón
+ * por rubro.
+ */
+export interface OpeningBalances {
+    cash: number;
+    bank: number;
+    inventory: number;
+    payables: number;
+    fixedAssets: number;
+    accumulatedDepreciation: number;
+    equityContributions: number;
+    retainedEarnings: number;
+}
+
+/**
+ * Configuración contable; documento único. Vive en Firestore y no en una
+ * constante porque la fecha de arranque y los saldos los captura el admin, y
+ * cambiarlos no puede exigir un despliegue.
+ */
+export interface AccountingSettings {
+    /** Fecha de arranque contable: antes de ella solo existen los saldos de apertura. */
+    startDate: Timestamp | null;
+    openingBalances: OpeningBalances;
+    /**
+     * Periodos cerrados: no se admite movimiento con fecha **menor o igual** a
+     * esta. Sin el cierre, alguien captura un gasto en un mes ya reportado y el
+     * estado de resultados que se firmó cambia de cifra después.
+     */
+    closedThrough: Timestamp | null;
+    updatedBy?: string | null;
+    updatedAt?: Timestamp | null;
 }
 
 export interface ProductWithCategory extends Product {
@@ -446,12 +697,79 @@ export interface Supplier {
     updatedAt: Timestamp;
 }
 
+/**
+ * Desglose de impuestos de una factura de compra. `subtotal + ivaAmount +
+ * iepsAmount` tiene que dar `totalAmount`: sin esa igualdad el IVA acreditable
+ * se calcularía sobre una base que no es la de la factura.
+ *
+ * Opcional en el documento: las facturas anteriores a contabilidad solo guardan
+ * el total, y el estado de resultados reporta cuántas están así en vez de
+ * inventarles un impuesto.
+ */
+export interface InvoiceTaxBreakdown {
+    subtotal: number;
+    ivaAmount: number;
+    iepsAmount: number;
+}
+
+/**
+ * Estado de liquidación de una factura de proveedor. **Derivado**, nunca
+ * guardado: el saldo es la única fuente, y un estado almacenado se desincroniza
+ * del primer abono que falle a medias.
+ *
+ * `legacy` son las facturas anteriores a cuentas por pagar (sin `paidTotal`): se
+ * dan por saldadas. Tratarlas como pendientes haría aparecer, el día del
+ * despliegue, una deuda falsa del tamaño de todo lo comprado en la historia del
+ * sistema.
+ */
+export type InvoicePaymentStatus = 'legacy' | 'pending' | 'partial' | 'paid';
+
+export interface SupplierPayment {
+    id: string;
+    invoiceId: string;
+    supplierId: string;
+    /**
+     * **Negativo** en una contrapartida: cancelar un abono no lo borra, le pone
+     * enfrente su reverso. Borrarlo dejaría una factura cuyo saldo cambió sin
+     * que nada explique por qué, que es justo lo que la bitácora evita.
+     */
+    amount: number;
+    /** Mismo juego que los gastos: solo `cash` sale del cajón. */
+    paymentMethod: ExpensePaymentMethod;
+    /** Fecha del pago, que puede no ser la de captura. */
+    paidAt: Timestamp;
+    reference?: string | null;
+    notes?: string | null;
+    /** Cuenta de la que salió el pago, cuando no fue en efectivo. */
+    bankAccountId?: string | null;
+    createdBy: string;
+    createdByLabel?: string | null;
+    createdAt: Timestamp;
+    /** Id del abono que esta contrapartida cancela; solo en los reversos. */
+    voidsPaymentId?: string | null;
+    /** Cuándo se canceló este abono; el reverso apunta a él con `voidsPaymentId`. */
+    voidedAt?: Timestamp | null;
+    voidedBy?: string | null;
+    voidReason?: string | null;
+}
+
 export interface Invoice {
     id: string;
     supplierId: string;
     invoiceNumber: string;
     invoiceDate: Timestamp;
+    /** Vencimiento pactado con el proveedor; ausente = sin plazo registrado. */
+    dueDate?: Timestamp | null;
     totalAmount: number;
+    /** Desglose de impuestos; ausente en las facturas anteriores a contabilidad. */
+    taxes?: InvoiceTaxBreakdown | null;
+    /**
+     * Σ de los abonos. Se denormaliza **dentro de la transacción** que registra
+     * el abono, así que no puede quedar a medias; el estado y el saldo se
+     * derivan de él. Ausente = factura anterior a cuentas por pagar (`legacy`).
+     */
+    paidTotal?: number;
+    lastPaymentAt?: Timestamp | null;
     hasInvoice: boolean;
     storagePath?: string;
     fileName?: string;
@@ -465,6 +783,11 @@ export interface Invoice {
 export interface InvoiceWithDetails extends Invoice {
     supplier: Supplier;
     fileUrl?: string;
+    /** Derivados del saldo; ver `InvoicePaymentStatus`. */
+    paymentStatus: InvoicePaymentStatus;
+    balance: number;
+    /** Vencida: tiene saldo y su `dueDate` ya pasó. */
+    isOverdue: boolean;
 }
 
 export type InvoiceSummary = Pick<Invoice, 'id' | 'invoiceNumber' | 'invoiceDate'> & {

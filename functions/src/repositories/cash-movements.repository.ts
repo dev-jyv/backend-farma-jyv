@@ -1,5 +1,10 @@
-import { CashMovement, CashMovementType, ExpenseCategory } from '../types';
-import { db, now } from '../utils/firestore';
+import {
+    CashMovement,
+    CashMovementType,
+    ExpenseCategory,
+    ExpensePaymentMethod,
+} from '../types';
+import { db, fromDate, now } from '../utils/firestore';
 import { paginate } from '../utils/pagination';
 
 const collection = () => db().collection('cashMovements');
@@ -24,7 +29,14 @@ export const createMovement = async (input: {
     description?: string;
     createdBy: string;
     createdByLabel?: string;
+    /** Ausente = `cash`: es lo que era todo movimiento antes de contabilidad. */
+    paymentMethod?: ExpensePaymentMethod;
+    /** Fecha a la que pertenece el gasto. Ausente = el instante de captura. */
+    occurredAt?: Date;
+    /** Cuenta de la que salió, cuando no salió del cajón. */
+    bankAccountId?: string;
 }): Promise<CashMovement> => {
+    const createdAt = now();
     const payload = {
         cashSessionId: input.cashSessionId,
         type: input.type,
@@ -34,7 +46,13 @@ export const createMovement = async (input: {
         description: input.description ?? null,
         createdBy: input.createdBy,
         createdByLabel: input.createdByLabel ?? null,
-        createdAt: now(),
+        paymentMethod: input.paymentMethod ?? 'cash',
+        bankAccountId: input.bankAccountId ?? null,
+        // Se escribe **siempre**, también cuando coincide con la captura: así la
+        // consulta de contabilidad ordena por un solo campo y no tiene que
+        // decidir documento por documento cuál de los dos vale.
+        occurredAt: input.occurredAt ? fromDate(input.occurredAt) : createdAt,
+        createdAt,
     };
     const ref = await collection().add(payload);
     return { id: ref.id, ...payload };
@@ -57,6 +75,8 @@ export const updateMovement = async (
         reason?: string;
         category?: ExpenseCategory;
         description?: string | null;
+        paymentMethod?: ExpensePaymentMethod;
+        occurredAt?: Date;
     },
 ): Promise<CashMovement> => {
     const data: Record<string, unknown> = { updatedAt: now() };
@@ -64,6 +84,8 @@ export const updateMovement = async (
     if (patch.reason !== undefined) data.reason = patch.reason;
     if (patch.category !== undefined) data.category = patch.category;
     if (patch.description !== undefined) data.description = patch.description;
+    if (patch.paymentMethod !== undefined) data.paymentMethod = patch.paymentMethod;
+    if (patch.occurredAt !== undefined) data.occurredAt = fromDate(patch.occurredAt);
 
     const ref = collection().doc(id);
     await ref.update(data);
@@ -111,4 +133,52 @@ export const listAllMovements = async (
     }
     // Recorte después de filtrar: el `total` del `meta` es el del filtro aplicado.
     return paginate(movements, filters.page, filters.limit);
+};
+
+/**
+ * Fecha a la que pertenece el movimiento para efectos contables. Los documentos
+ * anteriores a contabilidad no traen `occurredAt`; en ellos captura y ocurrencia
+ * eran el mismo instante, así que `createdAt` es la respuesta correcta.
+ */
+export const effectiveDate = (movement: CashMovement): Date =>
+    (movement.occurredAt ?? movement.createdAt).toDate();
+
+/**
+ * Cuántos días hacia atrás puede fecharse un gasto capturado hoy. Es el mismo
+ * número que usa `listForPeriod` para ensanchar la ventana de lectura: el tope
+ * del alta y el colchón de la consulta tienen que ser el mismo, o un gasto
+ * fechado más atrás quedaría registrado y aun así fuera de su propio reporte.
+ */
+export const MAX_BACKDATE_DAYS = 90;
+
+/**
+ * Movimientos cuya **fecha de ocurrencia** cae en el periodo, para el estado de
+ * resultados.
+ *
+ * Consulta por `createdAt` y no por `occurredAt` a propósito: un rango sobre
+ * `occurredAt` descarta en silencio todo documento que no tenga el campo, y los
+ * movimientos anteriores a contabilidad no lo tienen —el periodo entero de
+ * historia se perdería—. Se lee una ventana ensanchada `MAX_BACKDATE_DAYS` por
+ * cada lado y se recorta en memoria por la fecha efectiva.
+ */
+export const listForPeriod = async (filters: {
+    from: string;
+    to: string;
+}): Promise<CashMovement[]> => {
+    const padMs = MAX_BACKDATE_DAYS * 24 * 60 * 60 * 1000;
+    const from = new Date(filters.from);
+    const to = new Date(filters.to);
+
+    const snapshot = await collection()
+        .where('createdAt', '>=', new Date(from.getTime() - padMs))
+        .where('createdAt', '<=', new Date(to.getTime() + padMs))
+        .orderBy('createdAt', 'desc')
+        .get();
+
+    return snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }) as CashMovement)
+        .filter((movement) => {
+            const date = effectiveDate(movement);
+            return date >= from && date <= to;
+        });
 };

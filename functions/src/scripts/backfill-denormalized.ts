@@ -80,6 +80,25 @@ const resolveServiceAccountPath = (): string | null => {
     return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
 };
 
+/** Credenciales de `gcloud auth application-default login`, si existen. */
+const hasApplicationDefaultCredentials = (): boolean => {
+    const home = process.env.HOME ?? process.env.USERPROFILE;
+    const rutas = [
+        process.env.CLOUDSDK_CONFIG
+            ? path.join(process.env.CLOUDSDK_CONFIG, 'application_default_credentials.json')
+            : null,
+        home
+            ? path.join(home, '.config', 'gcloud', 'application_default_credentials.json')
+            : null,
+        home
+            ? path.join(home, 'AppData', 'Roaming', 'gcloud',
+                'application_default_credentials.json')
+            : null,
+    ].filter((ruta): ruta is string => Boolean(ruta));
+
+    return rutas.some((ruta) => fs.existsSync(ruta));
+};
+
 const initAdmin = (): void => {
     if (admin.apps.length) {
         return;
@@ -93,17 +112,28 @@ const initAdmin = (): void => {
     }
 
     const serviceAccountPath = resolveServiceAccountPath();
-    if (!serviceAccountPath) {
-        throw new Error(
-            'No hay credenciales locales. Coloca service-account.json en la raíz del repo, ' +
-            'define GOOGLE_APPLICATION_CREDENTIALS, o apunta FIRESTORE_EMULATOR_HOST al emulador.',
-        );
+    if (serviceAccountPath) {
+        const serviceAccount = JSON.parse(
+            fs.readFileSync(serviceAccountPath, 'utf8'),
+        ) as admin.ServiceAccount;
+        admin.initializeApp({ projectId, credential: admin.credential.cert(serviceAccount) });
+        return;
     }
 
-    const serviceAccount = JSON.parse(
-        fs.readFileSync(serviceAccountPath, 'utf8'),
-    ) as admin.ServiceAccount;
-    admin.initializeApp({ projectId, credential: admin.credential.cert(serviceAccount) });
+    // Sin llave en disco se usan las credenciales por defecto de gcloud
+    // (`gcloud auth application-default login`). Es el camino preferible: una
+    // llave de servicio descargada es un secreto de vida larga que queda en el
+    // equipo de quien corrió el script una vez, y que nadie rota después.
+    if (hasApplicationDefaultCredentials()) {
+        admin.initializeApp({ projectId, credential: admin.credential.applicationDefault() });
+        return;
+    }
+
+    throw new Error(
+        'No hay credenciales locales. Corre `gcloud auth application-default login`, ' +
+        'coloca service-account.json en la raíz del repo, define ' +
+        'GOOGLE_APPLICATION_CREDENTIALS, o apunta FIRESTORE_EMULATOR_HOST al emulador.',
+    );
 };
 
 interface Stats {

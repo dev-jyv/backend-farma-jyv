@@ -4,6 +4,7 @@ import {
     Get,
     Headers,
     HttpCode,
+    Logger,
     Param,
     Post,
     Query,
@@ -23,7 +24,8 @@ import {
 import * as salesService from '../../services/sales.service';
 import * as receiptsService from '../../services/receipts.service';
 import * as unreconciledSalesService from '../../services/unreconciled-sales.service';
-import { AppError } from '../../utils/errors';
+import { AppError, badRequest } from '../../utils/errors';
+import { requiresIdempotencyKey } from '../../config/env';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
@@ -37,6 +39,30 @@ type IdParam = z.infer<typeof idParamSchema>;
 type VoidSaleInput = z.infer<typeof voidSaleSchema>;
 type CreateUnreconciledInput = z.infer<typeof createUnreconciledSaleSchema>;
 type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
+
+/**
+ * Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock.
+ * Mientras `SALES_REQUIRE_IDEMPOTENCY_KEY` está apagada esto solo avisa —el POS
+ * de escritorio es otro despliegue y encenderla antes de que la mande dejaría a
+ * la farmacia sin cobrar—; con la bandera puesta, rechaza.
+ */
+const logger = new Logger('SalesIdempotency');
+
+const assertIdempotencyKey = (key: string | undefined, userId: string): void => {
+    if (key) {
+        return;
+    }
+    if (requiresIdempotencyKey()) {
+        throw badRequest(
+            'Falta la llave de idempotencia del cobro (`idempotencyKey` o header ' +
+            '`Idempotency-Key`)',
+        );
+    }
+    logger.warn(
+        `Venta sin llave de idempotencia (cajero ${userId}): un reintento por corte ` +
+        'de red puede duplicar el cobro.',
+    );
+};
 
 @Controller('sales')
 export class SalesController {
@@ -54,6 +80,8 @@ export class SalesController {
         const idempotencyKey = rawKey
             ? new ZodValidationPipe(idempotencyKeySchema).transform(rawKey)
             : undefined;
+
+        assertIdempotencyKey(idempotencyKey, user.uid);
 
         const sale = await salesService.createSale({
             ...body,

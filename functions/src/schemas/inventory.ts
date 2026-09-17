@@ -107,7 +107,20 @@ export const createInvoiceSchema = z.object({
         .min(1, 'El folio es obligatorio')
         .max(60, 'El folio no puede superar 60 caracteres'),
     invoiceDate: isoDate,
+    /** Vencimiento pactado. Opcional: no todo proveedor da plazo. */
+    dueDate: isoDate.optional(),
     totalAmount: positiveMoney,
+    /**
+     * Desglose de impuestos, para el IVA acreditable. Opcional —se registra la
+     * factura aunque el desglose se capture después— pero si viene, los tres
+     * campos viajan juntos y tienen que sumar el total: un desglose que no cuadra
+     * con la factura da un IVA acreditable que Hacienda no reconocería.
+     */
+    taxes: z.object({
+        subtotal: positiveMoney,
+        ivaAmount: money,
+        iepsAmount: money,
+    }).optional(),
     hasInvoice: z.boolean(),
     /**
      * Opcional: se registra la factura aunque el comprobante llegue después (o
@@ -127,12 +140,74 @@ export const createInvoiceSchema = z.object({
             'La ruta del comprobante no es válida',
         )
         .optional(),
-});
+}).refine(
+    (data) => data.dueDate === undefined || data.dueDate >= data.invoiceDate,
+    { message: 'El vencimiento no puede ser anterior a la factura', path: ['dueDate'] },
+).refine(
+    (data) => {
+        if (!data.taxes) {
+            return true;
+        }
+        const suma = data.taxes.subtotal + data.taxes.ivaAmount + data.taxes.iepsAmount;
+        // Un centavo de tolerancia: el redondeo de la factura del proveedor no
+        // tiene por qué coincidir al céntimo con la suma de sus renglones.
+        return Math.abs(suma - data.totalAmount) <= 0.01;
+    },
+    {
+        message: 'El desglose de impuestos no suma el total de la factura',
+        path: ['taxes'],
+    },
+);
 
 export const listInvoicesQuerySchema = z.object({
     supplierId: z.string().optional(),
     from: z.string().optional(),
     to: z.string().optional(),
     hasInvoice: z.enum(['true', 'false']).optional(),
+    /** Filtro de cuentas por pagar; `legacy` son las anteriores al módulo. */
+    paymentStatus: z.enum(['legacy', 'pending', 'partial', 'paid', 'overdue']).optional(),
     ...paginationFields,
+});
+
+/**
+ * Corrección contable de una factura ya registrada: **solo** vencimiento y
+ * desglose. El folio, el proveedor y el importe quedan fuera a propósito —son el
+ * documento que la factura representa, no captura pendiente—. Al menos un campo
+ * debe venir: un PATCH vacío es una llamada perdida.
+ */
+export const updateInvoiceAccountingSchema = z.object({
+    dueDate: isoDate.nullable().optional(),
+    taxes: z.object({
+        subtotal: positiveMoney,
+        ivaAmount: money,
+        iepsAmount: money,
+    }).nullable().optional(),
+}).refine(
+    (data) => data.dueDate !== undefined || data.taxes !== undefined,
+    { message: 'No hay nada que corregir' },
+);
+
+/** Cancelación de un abono: exige motivo, porque queda en la bitácora. */
+export const voidSupplierPaymentSchema = z.object({
+    reason: z.string().trim().min(1, 'El motivo es requerido').max(300),
+});
+
+/**
+ * Abono a una factura de proveedor. No admite `invoiceId` en el cuerpo: viaja en
+ * la ruta, y aceptarlo en los dos lados permitiría abonar a una factura distinta
+ * de la que se está viendo.
+ */
+export const createSupplierPaymentSchema = z.object({
+    amount: positiveMoney,
+    paymentMethod: z.enum(['cash', 'transfer', 'card']),
+    /** Ausente = hoy. No se admite futuro: un pago que no ocurrió no es pago. */
+    paidAt: isoDate
+        .refine((value) => value <= new Date().toISOString().slice(0, 10), {
+            message: 'La fecha del pago no puede estar en el futuro',
+        })
+        .optional(),
+    reference: z.string().trim().max(120).optional(),
+    notes: z.string().trim().max(300).optional(),
+    /** Cuenta de la que sale el pago; solo aplica si no fue en efectivo. */
+    bankAccountId: z.string().min(1).optional(),
 });

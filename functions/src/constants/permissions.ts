@@ -19,6 +19,7 @@ export const ALL_PERMISSION_AREAS: PermissionArea[] = [
     'stockEntry',
     'cashSessions',
     'expenses',
+    'accounting',
     'pharmacyServices',
 ];
 
