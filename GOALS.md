@@ -83,7 +83,7 @@ Ninguno alcanzó el umbral de reporte de la revisión (severidad alta con explot
 
 | Módulo | Qué falta hoy |
 |---|---|
-| **Promociones y control de descuento** | `discountAmount` por partida sin reglas: sin 2x1/mix&match, sin % por categoría, sin cupón, sin techo de descuento por rol ni motivo capturado. |
+| **Promociones y control de descuento** | Hecho (2026-09-24): precio por cantidad, NxM y % con mínimo por producto (`/v1/promotions`), con el tope del 20% solo sobre la parte manual. Falta: mix&match entre productos, % por categoría, cupones y motivo capturado del descuento manual. |
 | **Órdenes de compra y cuentas por pagar** | Solo hay entrada ligada a factura; falta PO, recepción parcial contra PO y saldo a proveedor. |
 | **Devolución a proveedor / canje de caducados** | No existe; la farmacia devuelve caducado con nota de crédito. |
 | **Venta fraccionada** | `Product.unit` es un solo campo; falta unidad de compra vs venta y factor de conversión (caja ↔ blíster ↔ tableta). |

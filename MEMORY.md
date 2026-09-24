@@ -34,6 +34,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `patients` | Padrón del consultorio (folio `EXP-`, CURP única, alergias, padecimientos crónicos, `customerId` opcional hacia `customers`); baja **lógica** (`isActive`), nunca borrado |
 | `medicalRecords` | Notas del expediente clínico (paciente/doctor denormalizados, `visitedAt`, `vitals` con `bmi` calculado en servidor, `attachments[]` con ruta de Storage) |
 | `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
+| `promotions` | Promociones por cantidad (`rule` inmutable: `tiered`/`nxm`/`percent`, `productIds[]`, `startsAt`/`endsAt`, `isActive`, `deactivatedAt`); baja lógica |
 
 ## Endpoints (montados bajo `/v1`, servidos por controllers Nest en `src/modules/`)
 
@@ -53,6 +54,8 @@ Exportación: `GET /v1/inventory/controlled-ledger/export?from&to&group&productI
 Inventario: `GET /v1/inventory/alerts?windows=30,60,90`, `POST|GET /v1/inventory/counts`, `GET /v1/inventory/counts/:id`, `GET /v1/inventory/controlled-ledger`. Bitácora: `GET /v1/audit-logs` (permiso `users:read`).
 
 Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/receipt` (`?width=58|80`) devuelven `{ receipt, html }` (JSON + HTML para rollo térmico, sin Puppeteer).
+
+Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`). La venta acepta `items[].promotionId`.
 
 Alta canónica de personal: `POST /users`. `POST /auth/register-staff` es alias.
 

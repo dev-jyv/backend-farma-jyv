@@ -163,5 +163,12 @@ service cloud.firestore {
     match /serviceProviders/{providerId} {
       allow read, write: if false;
     }
+
+    // Promociones: solo por la API. El acceso se decide por el área
+    // `promotions` (lectura hasta cajero para el sync, escritura gerencia y
+    // admin), que las reglas no pueden evaluar porque el claim solo trae el rol.
+    match /promotions/{promotionId} {
+      allow read, write: if false;
+    }
   }
 }

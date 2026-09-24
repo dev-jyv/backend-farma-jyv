@@ -5,8 +5,10 @@ import {
     PaymentMethod,
     PointPaymentSnapshot,
     Product,
+    Promotion,
     Sale,
     SaleBilling,
+    SaleItemPromotion,
     SaleLineItem,
     SalePrescription,
     isSaleProductItem,
@@ -31,6 +33,12 @@ import * as serviceProvidersRepo from '../repositories/service-providers.reposit
 import * as salesRepo from '../repositories/sales.repository';
 import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as customersRepo from '../repositories/customers.repository';
+import * as promotionsRepo from '../repositories/promotions.repository';
+import {
+    computePromotionDiscount,
+    isPromotionOpenAt,
+    PROMOTION_SYNC_GRACE_MS,
+} from '../utils/promotions';
 import * as mercadoPagoService from './mercado-pago.service';
 import {
     assertPrescriptionRules,
@@ -51,6 +59,11 @@ interface SaleProductItemInput {
     discountAmount?: number;
     /** Precio cobrado; ausente en clientes anteriores (manda el catálogo). */
     unitPrice?: number;
+    /**
+     * Promoción que el POS aplicó a la partida. Solo el id: el monto lo recalcula
+     * el servidor con la regla guardada, nunca se toma del cliente.
+     */
+    promotionId?: string;
 }
 
 interface SaleServiceItemInput {
@@ -109,6 +122,9 @@ const buildRequestFingerprint = (input: {
                 quantity: item.quantity,
                 unitPrice: toCents(item.unitPrice),
                 discountAmount: toCents(item.discountAmount),
+                // Solo cuando viene: sin promo la huella queda idéntica a la de
+                // siempre y las llaves vivas siguen validando.
+                ...(item.promotion ? { promotionId: item.promotion.promotionId } : {}),
             })),
         total: toCents(input.total),
         paymentMethod: input.paymentMethod,
@@ -301,6 +317,57 @@ const resolvePointPayment = async (input: {
     };
 };
 
+/**
+ * Valida la promoción que el POS aplicó a una partida y devuelve la copia que se
+ * guarda en la venta. El monto sale de la regla, no del cliente; si el POS
+ * descontó menos de lo que la regla da, se toma lo que descontó (la parte manual
+ * queda en cero, nunca negativa).
+ *
+ * Que la promo no aplique al producto es un 400 inmediato (no cambia nunca). Que
+ * ya no esté vigente se devuelve como `closed` y el llamador lo lanza **después**
+ * de la verificación de idempotencia: el reintento de una venta que ya se
+ * registró debe devolver esa venta, no un "no está vigente" que empuje a cobrar
+ * otra vez.
+ */
+const resolveLinePromotion = (input: {
+    promotion: Promotion | undefined;
+    promotionId: string;
+    productId: string;
+    productName: string;
+    unitPrice: number;
+    quantity: number;
+    discountAmount: number;
+    atMs: number;
+    graceMs: number;
+}): { promotion: SaleItemPromotion | null; closed: boolean } => {
+    const { promotion } = input;
+    if (!promotion || !promotion.productIds.includes(input.productId)) {
+        throw badRequest(`La promoción no aplica a ${input.productName}`);
+    }
+    // Inactiva sin `deactivatedAt` no debería existir, pero si existe se trata
+    // como cerrada: sin fecha de baja no hay margen que conceder.
+    const closed = (!promotion.isActive && !promotion.deactivatedAt) ||
+        !isPromotionOpenAt(promotion, input.atMs, input.graceMs);
+    const ruleDiscount = computePromotionDiscount(
+        promotion.rule,
+        input.unitPrice,
+        input.quantity,
+    );
+    const discountAmount = Math.min(ruleDiscount, input.discountAmount);
+    if (discountAmount <= 0) {
+        return { promotion: null, closed };
+    }
+    return {
+        promotion: {
+            promotionId: promotion.id,
+            name: promotion.name,
+            rule: promotion.rule,
+            discountAmount,
+        },
+        closed,
+    };
+};
+
 export const createSale = async (input: {
     idempotencyKey?: string;
     items: SaleItemInput[];
@@ -319,6 +386,12 @@ export const createSale = async (input: {
     prescriptionRetained?: boolean;
     billing?: SaleBilling;
     roleSlug?: string;
+    /**
+     * Venta cobrada sin conexión que llega por `/sales/bulk`. Solo entonces se
+     * concede `PROMOTION_SYNC_GRACE_MS` a una promo ya cerrada: el lote no trae la
+     * hora local del cobro. Una venta en línea se valida contra la hora actual.
+     */
+    offline?: boolean;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -355,6 +428,17 @@ export const createSale = async (input: {
     // (productos previos a la denormalización), FieldValue.increment(-n) parte
     // de 0 y deja stock negativo aunque los lotes sí tenían piezas.
     const batchStockBefore = new Map<string, number>();
+
+    // Todas las promociones de la venta en una sola lectura, fuera de la
+    // transacción: la regla es inmutable, así que no hay carrera que cerrar.
+    const promotions = await promotionsRepo.getPromotionsByIds(
+        input.items.flatMap((item) => (item.kind !== 'service' && item.promotionId
+            ? [item.promotionId]
+            : [])),
+    );
+
+    const promotionGraceMs = input.offline ? PROMOTION_SYNC_GRACE_MS : 0;
+    let closedPromotionName: string | null = null;
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
@@ -485,6 +569,24 @@ export const createSale = async (input: {
         subtotal += itemSubtotal;
         lineDiscountTotal += discountAmount;
 
+        const resolved = item.promotionId
+            ? resolveLinePromotion({
+                promotion: promotions.get(item.promotionId),
+                promotionId: item.promotionId,
+                productId: product.id,
+                productName: product.name,
+                unitPrice,
+                quantity: item.quantity,
+                discountAmount,
+                atMs: timestamp.toMillis(),
+                graceMs: promotionGraceMs,
+            })
+            : null;
+        const promotion = resolved?.promotion ?? null;
+        if (resolved?.closed && !closedPromotionName) {
+            closedPromotionName = promotions.get(item.promotionId!)?.name ?? item.promotionId!;
+        }
+
         saleItems.push({
             kind: 'product',
             productId: product.id,
@@ -498,6 +600,7 @@ export const createSale = async (input: {
             discountAmount,
             subtotal: itemSubtotal,
             batchAllocations: allocations,
+            ...(promotion ? { promotion } : {}),
         });
     }
 
@@ -620,25 +723,39 @@ export const createSale = async (input: {
         ? productItems.reduce((total, item) => total + (item.costAmount ?? 0), 0)
         : null;
 
-    const overCapLines = saleItems.filter(
-        (item) => toCents(item.discountAmount) >
-            toCents(item.subtotal * MAX_NON_ADMIN_DISCOUNT_RATE),
+    // El tope es para el descuento **manual**: el de una promoción lo decidió la
+    // gerencia al darla de alta, y un 2x1 (50%) no debe pedir un administrador.
+    const promotionDiscountTotal = saleItems.reduce(
+        (sum, item) => sum + (isSaleServiceItem(item) ? 0 : item.promotion?.discountAmount ?? 0),
+        0,
     );
+    const promotionIds = [...new Set(saleItems.flatMap((item) => (
+        !isSaleServiceItem(item) && item.promotion ? [item.promotion.promotionId] : []
+    )))];
+    const manualDiscount = (item: SaleLineItem): number => item.discountAmount -
+        (isSaleServiceItem(item) ? 0 : item.promotion?.discountAmount ?? 0);
+    // La base del tope es lo que queda **después** de la promo: si fuera el
+    // subtotal de lista, un cajero podría sumar 20 % del precio lleno encima de
+    // un 2x1 y dejar la partida al 70 % sin administrador.
+    const isLineOverCap = (item: SaleLineItem): boolean => toCents(manualDiscount(item)) >
+        toCents((item.subtotal - (item.discountAmount - manualDiscount(item))) *
+            MAX_NON_ADMIN_DISCOUNT_RATE);
+    const manualDiscountTotal = discountTotal - promotionDiscountTotal;
+    const manualCapBase = subtotal - promotionDiscountTotal;
+
+    const overCapLines = saleItems.filter(isLineOverCap);
     const discountOverCap = overCapLines.length > 0 ||
-        toCents(discountTotal) > toCents(subtotal * MAX_NON_ADMIN_DISCOUNT_RATE);
+        toCents(manualDiscountTotal) > toCents(manualCapBase * MAX_NON_ADMIN_DISCOUNT_RATE);
 
     if (input.roleSlug !== 'admin') {
-        const lineOverCap = saleItems.find(
-            (item) => toCents(item.discountAmount) >
-                toCents(item.subtotal * MAX_NON_ADMIN_DISCOUNT_RATE),
-        );
+        const lineOverCap = saleItems.find(isLineOverCap);
         if (lineOverCap) {
             throw forbidden(
                 'Solo un administrador puede aplicar descuentos mayores al ' +
                 `${MAX_NON_ADMIN_DISCOUNT_RATE * 100}% (${saleItemName(lineOverCap)})`,
             );
         }
-        if (toCents(discountTotal) > toCents(subtotal * MAX_NON_ADMIN_DISCOUNT_RATE)) {
+        if (toCents(manualDiscountTotal) > toCents(manualCapBase * MAX_NON_ADMIN_DISCOUNT_RATE)) {
             throw forbidden(
                 'Solo un administrador puede aplicar un descuento total mayor al ' +
                 `${MAX_NON_ADMIN_DISCOUNT_RATE * 100}%`,
@@ -670,6 +787,10 @@ export const createSale = async (input: {
                 .get();
             return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
         }
+    }
+
+    if (closedPromotionName) {
+        throw badRequest(`La promoción "${closedPromotionName}" no está vigente`);
     }
 
     // La order Point se resuelve ANTES del tender: en pago mixto su monto es lo que
@@ -874,6 +995,12 @@ export const createSale = async (input: {
             total,
             taxSummary,
             costTotal,
+            ...(promotionIds.length
+                ? {
+                    promotionDiscountTotal: fromCents(toCents(promotionDiscountTotal)),
+                    promotionIds,
+                }
+                : {}),
             refundedTotal: 0,
             paymentMethod: input.paymentMethod,
             amountReceived: tender.amountReceived,

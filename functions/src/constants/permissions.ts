@@ -21,6 +21,7 @@ export const ALL_PERMISSION_AREAS: PermissionArea[] = [
     'expenses',
     'accounting',
     'pharmacyServices',
+    'promotions',
 ];
 
 export const buildAllWritePermissions = (): RolePermission[] =>
@@ -139,6 +140,12 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
              * no el mostrador, así que aquí no hay escritura.
              */
             { area: 'pharmacyServices', level: 'read' },
+            /**
+             * Promociones en **lectura**: la caja las baja con
+             * `GET /promotions/sync` y las aplica sin red. Qué producto va en
+             * promoción y a qué precio lo decide la gerencia, no el mostrador.
+             */
+            { area: 'promotions', level: 'read' },
         ],
     },
     manager: {

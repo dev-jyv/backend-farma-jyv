@@ -53,6 +53,29 @@ const partidaServicio = {
 
 describe('contrato: el payload del POS pasa el schema del backend', () => {
     /**
+     * Con promoción el POS agrega `promotionId` (y solo eso). Si el schema lo
+     * descartara, la venta se registraría sin promo y el tope del 20 % cortaría
+     * el descuento del paquete como si fuera manual.
+     */
+    it('conserva el promotionId de una partida en promoción', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            amountReceived: 60,
+            items: [{
+                ...partidaProducto,
+                unitPrice: 35,
+                discountAmount: 10,
+                promotionId: 'promo-1',
+            }],
+        });
+
+        expect(resultado.success).toBe(true);
+        if (resultado.success) {
+            expect(resultado.data.items[0]).toMatchObject({ promotionId: 'promo-1' });
+        }
+    });
+
+    /**
      * Si el schema dejara de aceptar `unitPrice`, Zod lo **descartaría en
      * silencio** (no es `strict`) y el backend volvería a tarifar con el catálogo
      * del momento del push: una venta cobrada horas antes se rechazaría por

@@ -4,6 +4,7 @@ import {
     ReceiptTaxLine,
     Sale,
     SaleReturn,
+    isSaleProductItem,
     saleItemName,
 } from '../types';
 import { getReceiptStore } from '../config/env';
@@ -60,13 +61,19 @@ const buildTaxLines = (
 const buildSaleReceipt = (sale: Sale): Receipt => {
     // El ticket imprime mercancía y servicios en el mismo cuerpo: para el
     // cliente es un solo cobro, aunque el corte los separe.
-    const lines: ReceiptLine[] = sale.items.map((item) => ({
-        productName: saleItemName(item),
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discountAmount: item.discountAmount + (item.saleDiscountShare ?? 0),
-        amount: item.netAmount ?? item.subtotal - item.discountAmount,
-    }));
+    const lines: ReceiptLine[] = sale.items.map((item) => {
+        const promotion = isSaleProductItem(item) ? item.promotion : undefined;
+        return {
+            productName: saleItemName(item),
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discountAmount: item.discountAmount + (item.saleDiscountShare ?? 0),
+            amount: item.netAmount ?? item.subtotal - item.discountAmount,
+            ...(promotion
+                ? { promotionName: promotion.name, promotionDiscount: promotion.discountAmount }
+                : {}),
+        };
+    });
 
     const notes: string[] = [];
     if (sale.voidedAt) {
@@ -169,13 +176,26 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
 
     const itemRows = receipt.lines
         .map((line) => {
-            const discountLabel = escapeHtml(formatCurrency(line.discountAmount));
-            const discount = toCents(line.discountAmount) > 0
-                ? `<div class="muted">Desc. -${discountLabel}</div>`
+            // La promo se imprime con su nombre: el cliente debe ver por qué pagó
+            // menos. Lo que quede (manual + parte del descuento de la venta) va
+            // aparte como "Desc.".
+            const promoCents = toCents(line.promotionDiscount ?? 0);
+            const otherCents = toCents(line.discountAmount) - promoCents;
+            const promo = line.promotionName && promoCents > 0
+                ? `<div class="muted">Promo ${escapeHtml(line.promotionName)} -${
+                    escapeHtml(formatCurrency(promoCents / 100))
+                }</div>`
+                : '';
+            const discount = otherCents > 0
+                ? `<div class="muted">Desc. -${
+                    escapeHtml(formatCurrency(otherCents / 100))
+                }</div>`
                 : '';
             return `
                 <tr>
-                    <td colspan="2" class="name">${escapeHtml(line.productName)}${discount}</td>
+                    <td colspan="2" class="name">${
+    escapeHtml(line.productName)
+}${promo}${discount}</td>
                 </tr>
                 <tr>
                     <td class="muted">${line.quantity} x ${

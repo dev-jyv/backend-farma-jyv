@@ -70,7 +70,14 @@ export type PermissionArea =
      * una caja, y se leen cifras agregadas del negocio completo.
      */
     | 'accounting'
-    | 'pharmacyServices';
+    | 'pharmacyServices'
+    /**
+     * Promociones por cantidad (precio escalonado, NxM, % con mínimo). Deciden
+     * precio, así que la escritura es de gerencia/administración; el cajero la
+     * tiene en lectura para bajarlas con `GET /promotions/sync` y aplicarlas sin
+     * red.
+     */
+    | 'promotions';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -171,7 +178,12 @@ export type AuditAction =
     | 'appointment.rescheduled'
     /** Cobro con terminal fuera de una venta: mueve dinero sin ticket que lo respalde. */
     | 'directCharge.created'
-    | 'directCharge.canceled';
+    | 'directCharge.canceled'
+    /** Promociones: deciden precio, así que alta, edición y baja se auditan. */
+    | 'promotion.created'
+    | 'promotion.updated'
+    | 'promotion.deactivated'
+    | 'promotion.reactivated';
 
 export type AuditEntity =
     | 'product'
@@ -193,7 +205,8 @@ export type AuditEntity =
     | 'medicalRecord'
     | 'appointment'
     | 'directCharge'
-    | 'unreconciledSale';
+    | 'unreconciledSale'
+    | 'promotion';
 
 export interface AuditLog {
     id: string;
@@ -939,6 +952,38 @@ export interface SaleProductItem extends SaleItemCommon {
         batchId: string;
         quantity: number;
     }>;
+    /**
+     * Promoción aplicada a la partida, con **copia de la regla** (mismo criterio
+     * que las tasas guardadas en `taxes`): la devolución recalcula el reembolso
+     * con la regla vigente al vender, no con la del catálogo de hoy.
+     * `discountAmount` de la partida sigue siendo el total (promo + manual).
+     */
+    promotion?: SaleItemPromotion;
+}
+
+export type PromotionType = 'tiered' | 'nxm' | 'percent';
+
+/**
+ * Regla de una promoción. **Inmutable** una vez creada: para cambiar un precio
+ * se da de baja y se crea otra, así una venta offline hecha con la regla vieja
+ * sigue validando al sincronizar.
+ *
+ * - `tiered`: precio por paquete (`{ quantity: 2, price: 60 }` = 2 por $60).
+ *   Las piezas que no completan un paquete se cobran a precio unitario.
+ * - `nxm`: lleva `buy`, paga `pay` (2x1 = `{ buy: 2, pay: 1 }`).
+ * - `percent`: `percent`% de descuento a partir de `minQty` piezas.
+ */
+export type PromotionRule =
+    | { type: 'tiered'; tiers: Array<{ quantity: number; price: number }> }
+    | { type: 'nxm'; buy: number; pay: number }
+    | { type: 'percent'; percent: number; minQty: number };
+
+export interface SaleItemPromotion {
+    promotionId: string;
+    name: string;
+    rule: PromotionRule;
+    /** Parte de `discountAmount` que aportó la promoción (calculada en servidor). */
+    discountAmount: number;
 }
 
 /**
@@ -1058,6 +1103,10 @@ export interface Sale {
     refundedTotal?: number;
     /** Suma de `costAmount` de las partidas; `null` si alguna no tiene costo. */
     costTotal?: number | null;
+    /** Parte de `discountTotal` que vino de promociones; ausente sin promo. */
+    promotionDiscountTotal?: number;
+    /** Promociones aplicadas en la venta, para consultarlas sin recorrer partidas. */
+    promotionIds?: string[];
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;
@@ -1171,6 +1220,10 @@ export interface ReceiptLine {
     unitPrice: number;
     discountAmount: number;
     amount: number;
+    /** Nombre de la promoción aplicada; el recibo lo imprime en lugar de "Desc.". */
+    promotionName?: string;
+    /** Parte de `discountAmount` que vino de la promoción. */
+    promotionDiscount?: number;
 }
 
 export interface Receipt {
@@ -1573,6 +1626,28 @@ export type ServiceType = 'consultation' | 'procedure' | 'other';
  * médica), tasa 0% o tasa general 16%.
  */
 export type ServiceTaxMode = 'exempt' | 'zero' | 'iva16';
+
+/**
+ * Promoción por cantidad sobre uno o más productos. La cantidad cuenta **por
+ * producto** (no se mezclan marcas en un mismo paquete). Ver
+ * `utils/promotions.ts` para el cálculo.
+ */
+export interface Promotion {
+    id: string;
+    name: string;
+    description?: string;
+    rule: PromotionRule;
+    productIds: string[];
+    startsAt: Timestamp;
+    endsAt: Timestamp | null;
+    isActive: boolean;
+    /** Se sella al desactivar; fija el fin de vigencia para ventas offline. */
+    deactivatedAt: Timestamp | null;
+    createdBy: string;
+    updatedBy: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
 
 /**
  * Servicio que la farmacia cobra en la misma venta que la mercancía: consulta,

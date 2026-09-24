@@ -142,6 +142,14 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                                     : '0',
                                 tone: totals.voidedCount > 0 ? palette.negative : palette.ink,
                             },
+                            {
+                                // Mismo criterio: cuántas ventas y cuánto costó.
+                                label: 'Promociones',
+                                value: totals.promotionSalesCount > 0
+                                    ? `${totals.promotionSalesCount} · ` +
+                                        `-${formatCurrency(totals.promotionDiscountTotal)}`
+                                    : '0',
+                            },
                         ]}
                     />
 

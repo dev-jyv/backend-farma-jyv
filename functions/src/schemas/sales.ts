@@ -95,6 +95,8 @@ const saleProductItemSchema = z.object({
      * sincronizar. Ausente en clientes viejos: entonces manda el catálogo.
      */
     unitPrice: positiveMoney.optional(),
+    /** Promoción aplicada; el servidor recalcula el monto con su regla. */
+    promotionId: z.string().min(1).optional(),
 });
 
 const saleServiceItemSchema = z.object({

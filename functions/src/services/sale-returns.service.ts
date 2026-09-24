@@ -13,6 +13,7 @@ import {
 import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
 import { db, now } from '../utils/firestore';
 import { breakdownWithRates, fromCents, sumTaxSummary, toCents } from '../utils/taxes';
+import { promotionCostCents } from '../utils/promotions';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
@@ -27,6 +28,47 @@ const IDEMPOTENCY_COLLECTION = 'saleIdempotencyKeys';
 const IDEMPOTENCY_TTL_HOURS = 48;
 
 const buildFolio = (sequence: number): string => `D-${String(sequence).padStart(6, '0')}`;
+
+/**
+ * ¿Dos partidas del mismo producto llevan la misma promoción al mismo precio?
+ * Solo entonces la regla describe la partida consolidada.
+ */
+const samePromotion = (a: SaleProductItem, b: SaleProductItem): boolean =>
+    Boolean(a.promotion && b.promotion) &&
+    a.promotion!.promotionId === b.promotion!.promotionId &&
+    a.unitPrice === b.unitPrice;
+
+/**
+ * Reembolso de una devolución que **no** es la última. Sin promoción es
+ * proporcional a lo cobrado. Con promoción se paga lo que la venta deja de valer
+ * al quitar esas piezas: 2 por $60 con 1 devuelta reembolsa 60 − 35 = $25, no
+ * $30 —si no, comprar el paquete y devolver una pieza sería más barato que
+ * comprar una sola. El factor `net / cost(q)` arrastra descuentos manuales y la
+ * parte prorrateada del descuento de la venta.
+ */
+const partialRefundCents = (
+    saleItem: SaleProductItem,
+    netCents: number,
+    remaining: number,
+    quantity: number,
+): number => {
+    if (saleItem.promotion) {
+        const unitCents = toCents(saleItem.unitPrice);
+        const rule = saleItem.promotion.rule;
+        const soldCost = promotionCostCents(rule, unitCents, saleItem.quantity);
+        if (soldCost > 0) {
+            // El alta exige reglas monótonas, pero la venta usa `unitPrice`, que
+            // puede no ser el `salePrice` con que se validó: nunca negativo.
+            const released = Math.max(
+                0,
+                promotionCostCents(rule, unitCents, remaining) -
+                    promotionCostCents(rule, unitCents, remaining - quantity),
+            );
+            return Math.round((netCents * released) / soldCost);
+        }
+    }
+    return Math.round((netCents * quantity) / saleItem.quantity);
+};
 
 /** Devolver dinero y stock no es tarea de cajero raso. */
 export const assertCanReturnSale = (roleSlug: string): void => {
@@ -232,6 +274,9 @@ export const createSaleReturn = async (input: {
                 discountAmount: existing.discountAmount + item.discountAmount,
                 netAmount: (existing.netAmount ?? 0) + (item.netAmount ?? 0),
                 batchAllocations: [...existing.batchAllocations, ...item.batchAllocations],
+                // La regla de la promo solo sirve para recalcular si las dos
+                // partidas la comparten al mismo precio; si no, se prorratea.
+                promotion: samePromotion(existing, item) ? existing.promotion : undefined,
             });
         } else {
             soldByProduct.set(item.productId, item);
@@ -286,7 +331,7 @@ export const createSaleReturn = async (input: {
         const refundedCents = refundedCentsByProduct.get(requested.productId) ?? 0;
         const refundCents = requested.quantity === remaining
             ? netCents - refundedCents
-            : Math.round((netCents * requested.quantity) / saleItem.quantity);
+            : partialRefundCents(saleItem, netCents, remaining, requested.quantity);
         const refundAmount = fromCents(refundCents);
 
         planned.push({
@@ -405,6 +450,14 @@ export const createSaleReturn = async (input: {
         // Relectura dentro de la transacción: dos devoluciones simultáneas no pueden
         // sumar más de lo cobrado.
         const refundedSoFar = toCents((saleData.refundedTotal as number | undefined) ?? 0);
+        // Las cantidades y el reembolso se planearon con las devoluciones leídas
+        // fuera de la transacción. Si otra devolución se confirmó entre medias,
+        // `refundedTotal` ya no es el de la planeación: se rechaza en vez de
+        // devolver piezas de más o, con promoción, reembolsar contra un
+        // `remaining` viejo (dos "1 de 2 por $60" simultáneas pagarían 25 + 25).
+        if (refundedSoFar !== toCents(sale.refundedTotal ?? 0)) {
+            throw conflict('La venta tuvo otra devolución mientras tanto; vuelve a intentarlo');
+        }
         if (refundedSoFar + toCents(refundTotal) > toCents(saleData.total as number)) {
             throw conflict(
                 'El importe a devolver supera lo que queda por devolver de la venta',

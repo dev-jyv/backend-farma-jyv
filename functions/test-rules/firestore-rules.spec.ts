@@ -77,6 +77,7 @@ const COLECCIONES = [
     'appointments',
     'pharmacyServices',
     'serviceProviders',
+    'promotions',
 ];
 
 /** Colección que las reglas no mencionan: debe caer en el deny por omisión. */

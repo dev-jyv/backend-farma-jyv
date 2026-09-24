@@ -9,3 +9,4 @@ export * from './direct-charges';
 export * from './stock-entries';
 export * from './clinic';
 export * from './accounting';
+export * from './promotions';

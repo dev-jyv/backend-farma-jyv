@@ -37,6 +37,9 @@ export interface SalesReportTotals {
     byPaymentMethod: PaymentMethodBreakdown[];
     voidedCount: number;
     voidedAmount: number;
+    /** Ventas con al menos una promoción y cuánto se descontó por ellas. */
+    promotionSalesCount: number;
+    promotionDiscountTotal: number;
 }
 
 export interface ReportSaleRow {
@@ -221,6 +224,12 @@ const buildTotals = (sales: Sale[]): SalesReportTotals => {
         byPaymentMethod,
         voidedCount: voided.length,
         voidedAmount: voided.reduce((sum, sale) => sum + sale.total, 0),
+        promotionSalesCount: active.filter((sale) => (sale.promotionDiscountTotal ?? 0) > 0)
+            .length,
+        promotionDiscountTotal: active.reduce(
+            (sum, sale) => sum + (sale.promotionDiscountTotal ?? 0),
+            0,
+        ),
     };
 };
 

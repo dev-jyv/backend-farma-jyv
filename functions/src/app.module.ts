@@ -23,6 +23,7 @@ import { ClinicModule } from './modules/clinic/clinic.module';
 import { DirectChargesModule } from './modules/direct-charges/direct-charges.module';
 import { StockEntriesModule } from './modules/stock-entries/stock-entries.module';
 import { PharmacyServicesModule } from './modules/pharmacy-services/pharmacy-services.module';
+import { PromotionsModule } from './modules/promotions/promotions.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 
 @Module({
@@ -45,6 +46,7 @@ import { AccountingModule } from './modules/accounting/accounting.module';
         DirectChargesModule,
         StockEntriesModule,
         PharmacyServicesModule,
+        PromotionsModule,
         AccountingModule,
     ],
     controllers: [HealthController],

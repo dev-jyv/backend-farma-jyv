@@ -117,6 +117,7 @@ export class SalesController {
                     ...item,
                     cashierId: user.uid,
                     roleSlug: user.role.slug,
+                    offline: true,
                 });
                 results.push({ ok: true, sale });
             } catch (error) {
