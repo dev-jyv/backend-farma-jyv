@@ -20,6 +20,15 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
         taxSummary: (data.taxSummary as Sale['taxSummary']) ?? null,
         refundedTotal: (data.refundedTotal as number | undefined) ?? 0,
         costTotal: (data.costTotal as number | null | undefined) ?? null,
+        // Solo en ventas con promoción: se copian tal cual y, si faltan, no se
+        // inventan ceros (los reportes ya tratan la ausencia como 0).
+        ...(data.promotionDiscountTotal === undefined
+            ? {}
+            : { promotionDiscountTotal: data.promotionDiscountTotal as number }),
+        ...(data.promotionIds === undefined
+            ? {}
+            : { promotionIds: data.promotionIds as string[] }),
+        ...(data.promotionReview === true ? { promotionReview: true as const } : {}),
         paymentMethod: data.paymentMethod as Sale['paymentMethod'],
         amountReceived: (data.amountReceived as number | null) ?? null,
         change: (data.change as number | null) ?? null,

@@ -1,5 +1,5 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { Promotion, PromotionRule } from '../types';
+import { Product, Promotion, PromotionRule } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
 import { now, toTimestamp } from '../utils/firestore';
@@ -93,29 +93,89 @@ const assertRuleFitsProducts = async (
         if (!product.isActive) {
             throw badRequest(`El producto ${product.name} está inactivo`);
         }
-        if (rule.type === 'tiered') {
-            for (const tier of rule.tiers) {
-                if (tier.price >= tier.quantity * product.salePrice) {
-                    throw badRequest(
-                        `${tier.quantity} piezas por $${tier.price} no es menor al precio ` +
-                        `normal de ${product.name} ($${product.salePrice} c/u)`,
-                    );
-                }
-            }
-        }
-        const maxQty = rule.type === 'tiered'
-            ? Math.max(...rule.tiers.map((tier) => tier.quantity))
-            : rule.type === 'nxm' ? rule.buy : rule.minQty;
-        if (computePromotionDiscount(rule, product.salePrice, maxQty) <= 0) {
-            throw badRequest(`La promoción no da descuento sobre ${product.name}`);
-        }
-        if (!isPromotionMonotonic(rule, product.salePrice)) {
-            throw badRequest(
-                `Con esta promoción, llevar más piezas de ${product.name} costaría menos ` +
-                'que llevar menos; ajusta el precio o la cantidad',
-            );
+        const problem = ruleProblemFor(rule, product);
+        if (problem) {
+            throw badRequest(problem);
         }
     });
+};
+
+/**
+ * Por qué la regla no tiene sentido al precio actual del producto, o `null`.
+ * Es la misma validación del alta, reusada cuando cambia el precio.
+ */
+const ruleProblemFor = (rule: PromotionRule, product: Product): string | null => {
+    if (rule.type === 'tiered') {
+        for (const tier of rule.tiers) {
+            if (tier.price >= tier.quantity * product.salePrice) {
+                return `${tier.quantity} piezas por $${tier.price} no es menor al precio ` +
+                    `normal de ${product.name} ($${product.salePrice} c/u)`;
+            }
+        }
+    }
+    const maxQty = rule.type === 'tiered'
+        ? Math.max(...rule.tiers.map((tier) => tier.quantity))
+        : rule.type === 'nxm' ? rule.buy : rule.minQty;
+    if (computePromotionDiscount(rule, product.salePrice, maxQty) <= 0) {
+        return `La promoción no da descuento sobre ${product.name}`;
+    }
+    if (!isPromotionMonotonic(rule, product.salePrice)) {
+        return `Con esta promoción, llevar más piezas de ${product.name} costaría menos ` +
+            'que llevar menos; ajusta el precio o la cantidad';
+    }
+    return null;
+};
+
+/**
+ * Tras un cambio de precio, da de baja las promociones activas de ese producto
+ * que el precio nuevo vuelve absurdas: "2 por $60" con la pieza a $61 cobra
+ * más por una que por dos, y una pieza de ese paquete ya no se puede devolver.
+ *
+ * Se da de baja y no se bloquea el cambio de precio porque el POS también
+ * edita precios sin red y los sube después: rechazar ese push atoraría su
+ * cola. La regla es inmutable, así que la baja es de toda la promoción (aunque
+ * tenga otros productos); reactivarla vuelve a validarla contra el catálogo.
+ *
+ * No lanza: el precio ya se guardó y una falla aquí no debe revertirlo ante
+ * quien lo cambió. Devuelve las promociones dadas de baja.
+ */
+export const retirePromotionsBrokenByPrice = async (
+    product: Product,
+    actor?: AuditActor,
+): Promise<Promotion[]> => {
+    try {
+        const promotions = await promotionsRepo.listActivePromotionsForProduct(product.id);
+        const retired: Promotion[] = [];
+        for (const promotion of promotions) {
+            const problem = ruleProblemFor(promotion.rule, product);
+            if (!problem) {
+                continue;
+            }
+            const { after } = await promotionsRepo.updatePromotion(promotion.id, {
+                isActive: false,
+                updatedBy: actor?.userId ?? 'system',
+            });
+            await recordAudit({
+                action: 'promotion.deactivated',
+                entity: 'promotion',
+                entityId: promotion.id,
+                summary: `Promoción "${promotion.name}" dada de baja al cambiar el precio de ` +
+                    `${product.name} a $${product.salePrice}`,
+                userId: actor?.userId ?? 'system',
+                roleSlug: actor?.roleSlug ?? null,
+                changes: { isActive: { before: true, after: false } },
+                metadata: { reason: 'price_changed', productId: product.id, problem },
+            });
+            retired.push(after);
+        }
+        return retired;
+    } catch (error) {
+        console.error('No se pudieron revisar las promociones tras el cambio de precio', {
+            productId: product.id,
+            error,
+        });
+        return [];
+    }
 };
 
 export const createPromotion = async (

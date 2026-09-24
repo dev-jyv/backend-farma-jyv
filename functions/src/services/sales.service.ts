@@ -1415,6 +1415,8 @@ export const listSales = async (filters: {
     cashSessionId?: string;
     includeVoided?: boolean;
     search?: string;
+    /** Solo las marcadas con `promotionReview` (promo aceptada fuera de vigencia). */
+    promotionReview?: boolean;
     page?: number;
     limit?: number;
     /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
@@ -1438,12 +1440,18 @@ export const listSales = async (filters: {
         to: filters.to,
         cashSessionId: filters.cashSessionId,
         includeVoided: filters.includeVoided,
-        // Con búsqueda de texto el filtro corre en memoria y necesita ver toda
-        // la ventana; sin ella basta traer hasta la profundidad de página pedida.
-        maxDocs: filters.search ? undefined : page * limit,
+        // Con búsqueda de texto o el filtro de revisión, el filtro corre en
+        // memoria y necesita ver toda la ventana; sin ellos basta traer hasta la
+        // profundidad de página pedida. Son pocas y la ventana tiene fecha, así
+        // que no vale un índice `[promotionReview, createdAt]`.
+        maxDocs: filters.search || filters.promotionReview ? undefined : page * limit,
     });
 
     let filtered = sales;
+
+    if (filters.promotionReview) {
+        filtered = filtered.filter((sale) => sale.promotionReview === true);
+    }
 
     if (filters.search) {
         const term = filters.search.toLowerCase();

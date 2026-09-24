@@ -346,6 +346,9 @@ export const listSalesQuerySchema = z.object({
             }
             return value === true || value === 'true';
         }),
+    /** Solo ventas offline aceptadas con una promoción fuera de vigencia. */
+    promotionReview: z.enum(['true', 'false']).optional()
+        .transform((value) => (value === undefined ? undefined : value === 'true')),
     ...paginationFields,
 });
 

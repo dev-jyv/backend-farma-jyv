@@ -32,6 +32,7 @@ import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import { AuditActor, diffFields, recordAudit } from './audit.service';
+import { retirePromotionsBrokenByPrice } from './promotions.service';
 
 const loadSuppliersSummary = async (
     supplierIds: string[],
@@ -756,6 +757,9 @@ export const updateProduct = async (
     });
 
     await auditProductUpdate(existing, updated, actor);
+    if (updated.salePrice !== existing.salePrice) {
+        await retirePromotionsBrokenByPrice(updated, actor);
+    }
     return updated;
 };
 
@@ -804,6 +808,11 @@ export const updateProductPrices = async (
             changes: { salePrice: { before: before.salePrice, after: product.salePrice } },
         });
     }));
+    for (const product of updated) {
+        if (existingById.get(product.id)?.salePrice !== product.salePrice) {
+            await retirePromotionsBrokenByPrice(product, actor);
+        }
+    }
 
     return updated;
 };

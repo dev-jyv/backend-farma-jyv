@@ -190,6 +190,7 @@ export class SalesController {
             cashSessionId: query.cashSessionId,
             includeVoided: query.includeVoided,
             search: query.search,
+            promotionReview: query.promotionReview,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,
             requesterId: user.uid,

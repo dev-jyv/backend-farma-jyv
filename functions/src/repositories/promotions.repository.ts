@@ -70,6 +70,16 @@ export const getPromotionById = async (id: string): Promise<Promotion | null> =>
     return doc.exists ? toPromotion(doc) : null;
 };
 
+/**
+ * Promociones activas que incluyen el producto. `isActive` se filtra en memoria
+ * para no exigir un índice compuesto `[productIds, isActive]`: un producto
+ * aparece en pocas promociones.
+ */
+export const listActivePromotionsForProduct = async (productId: string): Promise<Promotion[]> => {
+    const snapshot = await collection().where('productIds', 'array-contains', productId).get();
+    return snapshot.docs.map(toPromotion).filter((promotion) => promotion.isActive);
+};
+
 /** Una sola ida a Firestore para todas las promociones de una venta. */
 export const getPromotionsByIds = async (ids: string[]): Promise<Map<string, Promotion>> => {
     const unique = [...new Set(ids)];

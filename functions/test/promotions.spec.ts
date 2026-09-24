@@ -5,6 +5,8 @@ import * as batchesRepo from '../src/repositories/batches.repository';
 import * as cashSessionsRepo from '../src/repositories/cash-sessions.repository';
 import * as auditRepo from '../src/repositories/audit-logs.repository';
 import * as promotionsService from '../src/services/promotions.service';
+import * as productsService from '../src/services/products.service';
+import * as analyticsService from '../src/services/analytics.service';
 import * as salesService from '../src/services/sales.service';
 import * as returnsService from '../src/services/sale-returns.service';
 import * as receiptsService from '../src/services/receipts.service';
@@ -144,6 +146,35 @@ describe('promociones', () => {
                 promotionsService.updatePromotion(promo.id, { isActive: true }, ADMIN),
                 'BAD_REQUEST',
             );
+        });
+
+        it('F1: subir el precio da de baja la promo que deja de tener sentido', async () => {
+            const product = await createProduct(35);
+            const promo = await paracetamolPromo(product.id);
+            const sano = await createProduct(35);
+            const promoSana = await paracetamolPromo(sano.id);
+
+            // $36 sigue siendo buena promo (72 vs 60); $61 la vuelve absurda.
+            await productsService.updateProduct(sano.id, { salePrice: 36 }, ADMIN);
+            await productsService.updateProduct(product.id, { salePrice: 61 }, ADMIN);
+
+            expect((await promotionsService.getPromotion(promoSana.id)).isActive).toBe(true);
+            const retirada = await promotionsService.getPromotion(promo.id);
+            expect(retirada.isActive).toBe(false);
+            expect(retirada.deactivatedAt).not.toBeNull();
+            const logs = await auditRepo.listAuditLogs({ entityId: promo.id });
+            expect(logs.find((log) => log.action === 'promotion.deactivated')?.metadata)
+                .toMatchObject({ reason: 'price_changed' });
+        });
+
+        it('F1: la actualización masiva de precios también revisa las promos', async () => {
+            const product = await createProduct(35);
+            const promo = await paracetamolPromo(product.id);
+            await productsService.updateProductPrices(
+                [{ productId: product.id, salePrice: 61 }],
+                ADMIN,
+            );
+            expect((await promotionsService.getPromotion(promo.id)).isActive).toBe(false);
         });
 
         it('rechaza un paquete que no es más barato que las piezas sueltas', async () => {
@@ -350,6 +381,43 @@ describe('promociones', () => {
             expect(productItem(sale, 0).promotion).toMatchObject({ outOfWindow: true });
             const logs = await auditRepo.listAuditLogs({ entityId: sale.id });
             expect(logs.map((log) => log.action)).toContain('sale.promotion_out_of_window');
+        });
+
+        it('el reporte de ventas suma el descuento por promociones', async () => {
+            const product = await createProduct();
+            const promo = await paracetamolPromo(product.id);
+            const session = await openSession();
+            const window = () => ({
+                from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+                to: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            });
+            // Diferencia antes/después: otras pruebas del archivo venden en la
+            // misma ventana.
+            const before = await analyticsService.getSalesSummary(window());
+            await saleWithPromo(product.id, promo.id, session.id);
+            const after = await analyticsService.getSalesSummary(window());
+            expect(after.promotionDiscountTotal - before.promotionDiscountTotal).toBeCloseTo(10, 2);
+        });
+
+        it('GET /sales?promotionReview=true lista solo las marcadas', async () => {
+            const product = await createProduct();
+            const promo = await paracetamolPromo(product.id);
+            const session = await openSession();
+            const normal = await saleWithPromo(product.id, promo.id, session.id, true);
+            await db().collection('promotions').doc(promo.id).update({
+                isActive: false,
+                deactivatedAt: Timestamp.fromMillis(daysAgo(4)),
+            });
+            const marcada = await saleWithPromo(product.id, promo.id, session.id, true);
+
+            const { items } = await salesService.listSales({
+                promotionReview: true,
+                requesterId: 'admin-user',
+                requesterRoleSlug: 'admin',
+            });
+            const ids = items.map((sale) => sale.id);
+            expect(ids).toContain(marcada.id);
+            expect(ids).not.toContain(normal.id);
         });
 
         it('F2: reloj adelantado (promo que aún no inicia): se acepta marcada', async () => {

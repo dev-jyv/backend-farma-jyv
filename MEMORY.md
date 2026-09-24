@@ -55,7 +55,7 @@ Inventario: `GET /v1/inventory/alerts?windows=30,60,90`, `POST|GET /v1/inventory
 
 Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/receipt` (`?width=58|80`) devuelven `{ receipt, html }` (JSON + HTML para rollo térmico, sin Puppeteer).
 
-Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`). La venta acepta `items[].promotionId`.
+Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`). La venta acepta `items[].promotionId` y `soldAt`; `GET /v1/sales?promotionReview=true` lista las ventas offline aceptadas con promo fuera de vigencia. Cambiar el precio de un producto da de baja las promos que ese precio invalida.
 
 Alta canónica de personal: `POST /users`. `POST /auth/register-staff` es alias.
 
