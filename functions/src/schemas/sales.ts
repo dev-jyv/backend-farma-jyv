@@ -163,6 +163,12 @@ export const createSaleSchema = z.object({
     /** Confirmación de que la receta se retuvo (obligatorio en grupos I a III). */
     prescriptionRetained: nullable(z.boolean()),
     billing: nullable(saleBillingSchema),
+    /**
+     * Hora local del cobro según la caja. Solo la usa `/sales/bulk` para decidir
+     * si una promoción estaba vigente cuando se cobró sin red; no es la fecha de
+     * la venta (`createdAt` sigue siendo la del servidor).
+     */
+    soldAt: nullable(parseableDate),
 }).superRefine((data, ctx) => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&

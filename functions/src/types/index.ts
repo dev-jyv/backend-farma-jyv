@@ -132,6 +132,8 @@ export type AuditAction =
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
     | 'sale.discount_override'
+    /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
+    | 'sale.promotion_out_of_window'
     | 'sale.returned'
     | 'cash_session.closed_with_difference'
     | 'cash_session.adjustment_reviewed'
@@ -984,6 +986,12 @@ export interface SaleItemPromotion {
     rule: PromotionRule;
     /** Parte de `discountAmount` que aportó la promoción (calculada en servidor). */
     discountAmount: number;
+    /**
+     * La venta llegó por `/sales/bulk` con la promo fuera de vigencia (reloj de
+     * la caja mal, o sin red más allá del margen). Se aceptó —el cliente ya pagó
+     * ese precio— y queda para revisión en vez de rechazarse.
+     */
+    outOfWindow?: true;
 }
 
 /**
@@ -1107,6 +1115,8 @@ export interface Sale {
     promotionDiscountTotal?: number;
     /** Promociones aplicadas en la venta, para consultarlas sin recorrer partidas. */
     promotionIds?: string[];
+    /** Alguna promo se aceptó fuera de vigencia (ver `SaleItemPromotion.outOfWindow`). */
+    promotionReview?: true;
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;

@@ -27,6 +27,7 @@ const base = {
     customerName: null,
     prescription: null,
     billing: null,
+    soldAt: '2026-09-24T18:30:00.000Z',
 };
 
 /**
@@ -72,6 +73,8 @@ describe('contrato: el payload del POS pasa el schema del backend', () => {
         expect(resultado.success).toBe(true);
         if (resultado.success) {
             expect(resultado.data.items[0]).toMatchObject({ promotionId: 'promo-1' });
+            // Sin `soldAt` el backend no puede validar la promo a la hora del cobro.
+            expect(resultado.data.soldAt).toBe('2026-09-24T18:30:00.000Z');
         }
     });
 

@@ -299,7 +299,7 @@ describe('promociones', () => {
             await expectAppError(saleWithPromo(product.id, promo.id, session.id), 'BAD_REQUEST');
         });
 
-        it('offline (/sales/bulk) se acepta dentro del margen y se rechaza fuera', async () => {
+        it('offline (/sales/bulk) se acepta dentro del margen sin marcarse', async () => {
             const product = await createProduct();
             const promo = await paracetamolPromo(product.id);
             const session = await openSession();
@@ -307,14 +307,85 @@ describe('promociones', () => {
             await promotionsService.deletePromotion(promo.id, ADMIN);
             const sale = await saleWithPromo(product.id, promo.id, session.id, true);
             expect(sale.promotionDiscountTotal).toBe(10);
+            expect(sale.promotionReview).toBeUndefined();
+        });
 
+        const daysAgo = (days: number) => Date.now() - days * 24 * 60 * 60 * 1000;
+
+        it('F3: cobrada en vigencia y empujada 4 días después: soldAt la valida', async () => {
+            const product = await createProduct();
+            const promo = await paracetamolPromo(product.id);
             await db().collection('promotions').doc(promo.id).update({
-                deactivatedAt: Timestamp.fromMillis(Date.now() - 4 * 24 * 60 * 60 * 1000),
+                startsAt: Timestamp.fromMillis(daysAgo(10)),
+                isActive: false,
+                deactivatedAt: Timestamp.fromMillis(daysAgo(4)),
             });
-            await expectAppError(
-                saleWithPromo(product.id, promo.id, session.id, true),
-                'BAD_REQUEST',
-            );
+            const session = await openSession();
+            const sale = await salesService.createSale({
+                items: [{ productId: product.id, quantity: 2, unitPrice: 35,
+                    discountAmount: 10, promotionId: promo.id }],
+                paymentMethod: 'cash',
+                amountReceived: 60,
+                cashSessionId: session.id,
+                cashierId: 'test-cashier',
+                offline: true,
+                soldAt: new Date(daysAgo(5)).toISOString(),
+            });
+            expect(sale.total).toBe(60);
+            expect(sale.promotionReview).toBeUndefined();
+        });
+
+        it('F3 sin soldAt y fuera del margen: se acepta marcada y auditada', async () => {
+            const product = await createProduct();
+            const promo = await paracetamolPromo(product.id);
+            await db().collection('promotions').doc(promo.id).update({
+                isActive: false,
+                deactivatedAt: Timestamp.fromMillis(daysAgo(4)),
+            });
+            const session = await openSession();
+            const sale = await saleWithPromo(product.id, promo.id, session.id, true);
+
+            expect(sale.total).toBe(60);
+            expect(sale.promotionReview).toBe(true);
+            expect(productItem(sale, 0).promotion).toMatchObject({ outOfWindow: true });
+            const logs = await auditRepo.listAuditLogs({ entityId: sale.id });
+            expect(logs.map((log) => log.action)).toContain('sale.promotion_out_of_window');
+        });
+
+        it('F2: reloj adelantado (promo que aún no inicia): se acepta marcada', async () => {
+            const product = await createProduct();
+            const promo = await promotionsService.createPromotion({
+                name: 'Mañana',
+                rule: { type: 'tiered', tiers: [{ quantity: 2, price: 60 }] },
+                productIds: [product.id],
+                startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            }, ADMIN);
+            const session = await openSession();
+            const sale = await salesService.createSale({
+                items: [{ productId: product.id, quantity: 2, unitPrice: 35,
+                    discountAmount: 10, promotionId: promo.id }],
+                paymentMethod: 'cash',
+                amountReceived: 60,
+                cashSessionId: session.id,
+                cashierId: 'test-cashier',
+                offline: true,
+                // Reloj de la caja 2 h adelantado: no se le cree.
+                soldAt: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+            });
+            expect(sale.total).toBe(60);
+            expect(sale.promotionReview).toBe(true);
+        });
+
+        it('en línea, una promo que aún no inicia sí se rechaza', async () => {
+            const product = await createProduct();
+            const promo = await promotionsService.createPromotion({
+                name: 'Mañana',
+                rule: { type: 'tiered', tiers: [{ quantity: 2, price: 60 }] },
+                productIds: [product.id],
+                startsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+            }, ADMIN);
+            const session = await openSession();
+            await expectAppError(saleWithPromo(product.id, promo.id, session.id), 'BAD_REQUEST');
         });
 
         it('el reintento con la misma llave devuelve la venta aunque la promo ya cerró',

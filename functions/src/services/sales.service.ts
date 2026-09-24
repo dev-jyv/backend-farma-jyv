@@ -83,6 +83,11 @@ const SALES_COUNTER_ID = 'sales';
 const MAX_SALE_LINE_ITEMS = 100;
 const MAX_NON_ADMIN_DISCOUNT_RATE = 0.2;
 const IDEMPOTENCY_COLLECTION = 'saleIdempotencyKeys';
+/**
+ * Cuánto puede ir adelantado el reloj de la caja respecto al servidor antes de
+ * dejar de creer su `soldAt`. Más allá, se usa la hora del servidor.
+ */
+const SOLD_AT_MAX_CLOCK_AHEAD_MS = 10 * 60 * 1000;
 /** Ventana de reintento cubierta por la llave; después de esto el TTL de Firestore la borra. */
 const IDEMPOTENCY_TTL_HOURS = 48;
 
@@ -387,11 +392,15 @@ export const createSale = async (input: {
     billing?: SaleBilling;
     roleSlug?: string;
     /**
-     * Venta cobrada sin conexión que llega por `/sales/bulk`. Solo entonces se
-     * concede `PROMOTION_SYNC_GRACE_MS` a una promo ya cerrada: el lote no trae la
-     * hora local del cobro. Una venta en línea se valida contra la hora actual.
+     * Venta cobrada sin conexión que llega por `/sales/bulk`. Una promo fuera de
+     * vigencia **no la rechaza**: el cliente ya pagó ese precio y rechazarla deja
+     * dinero en el cajón sin venta registrada. Se acepta y queda marcada para
+     * revisión (`promotionReview` + bitácora). Una venta en línea sí se rechaza:
+     * el cajero tiene al cliente enfrente y puede corregir.
      */
     offline?: boolean;
+    /** Hora local del cobro que reporta la caja; solo cuenta en `offline`. */
+    soldAt?: string;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -437,8 +446,16 @@ export const createSale = async (input: {
             : [])),
     );
 
-    const promotionGraceMs = input.offline ? PROMOTION_SYNC_GRACE_MS : 0;
+    // Offline, la vigencia se mide a la hora del cobro que reporta la caja. Una
+    // hora futura (reloj adelantado) no se cree: se usa la del servidor. Sin
+    // `soldAt` (POS anterior a este campo) se concede el margen de siempre.
+    const soldAtMs = input.offline && input.soldAt ? Date.parse(input.soldAt) : NaN;
+    const trustedSoldAt = Number.isFinite(soldAtMs) &&
+        soldAtMs <= timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS;
+    const promotionAtMs = trustedSoldAt ? soldAtMs : timestamp.toMillis();
+    const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
     let closedPromotionName: string | null = null;
+    const outOfWindowPromotions: string[] = [];
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
@@ -578,13 +595,25 @@ export const createSale = async (input: {
                 unitPrice,
                 quantity: item.quantity,
                 discountAmount,
-                atMs: timestamp.toMillis(),
+                atMs: promotionAtMs,
                 graceMs: promotionGraceMs,
             })
             : null;
-        const promotion = resolved?.promotion ?? null;
-        if (resolved?.closed && !closedPromotionName) {
-            closedPromotionName = promotions.get(item.promotionId!)?.name ?? item.promotionId!;
+        const promotion: SaleItemPromotion | null = resolved?.promotion
+            ? {
+                ...resolved.promotion,
+                ...(resolved.closed && input.offline ? { outOfWindow: true as const } : {}),
+            }
+            : null;
+        if (resolved?.closed) {
+            const name = promotions.get(item.promotionId!)?.name ?? item.promotionId!;
+            if (input.offline) {
+                if (promotion) {
+                    outOfWindowPromotions.push(name);
+                }
+            } else if (!closedPromotionName) {
+                closedPromotionName = name;
+            }
         }
 
         saleItems.push({
@@ -999,6 +1028,7 @@ export const createSale = async (input: {
                 ? {
                     promotionDiscountTotal: fromCents(toCents(promotionDiscountTotal)),
                     promotionIds,
+                    ...(outOfWindowPromotions.length ? { promotionReview: true as const } : {}),
                 }
                 : {}),
             refundedTotal: 0,
@@ -1082,6 +1112,25 @@ export const createSale = async (input: {
         transaction.set(saleRef, saleData);
         return { id: saleRef.id, ...saleData };
     });
+
+    if (outOfWindowPromotions.length) {
+        await recordAudit({
+            action: 'sale.promotion_out_of_window',
+            entity: 'sale',
+            entityId: sale.id,
+            summary: `Venta ${sale.folio} sincronizada con promoción fuera de vigencia: ` +
+                [...new Set(outOfWindowPromotions)].join(', '),
+            userId: input.cashierId,
+            roleSlug: input.roleSlug ?? null,
+            metadata: {
+                folio: sale.folio,
+                soldAt: input.soldAt ?? null,
+                soldAtTrusted: trustedSoldAt,
+                promotionDiscountTotal,
+                promotions: [...new Set(outOfWindowPromotions)],
+            },
+        });
+    }
 
     // Descuento por encima del tope: lo permitió un administrador, así que queda
     // en la bitácora con el monto y quién lo autorizó.
