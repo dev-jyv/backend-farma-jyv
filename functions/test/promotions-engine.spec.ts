@@ -63,6 +63,35 @@ describe('utils/promotions', () => {
         }, 35)).toBe(false);
     });
 
+    /**
+     * Una regla que esta versión no sabe calcular (tipo nuevo del backend, campos
+     * faltantes) vale como sin descuento, no truena: un error aquí dejaba el
+     * producto sin poder venderse en la caja.
+     */
+    it('reglas desconocidas o incompletas no descuentan ni truenan', () => {
+        const raras = [
+            { type: 'bundle', items: [] },
+            { type: 'tiered' },
+            { type: 'tiered', tiers: [] },
+            { type: 'tiered', tiers: [{ quantity: 2 }] },
+            { type: 'nxm', buy: 'dos', pay: 1 },
+            { type: 'percent', percent: 10 },
+            null,
+        ] as unknown as PromotionRule[];
+        for (const rule of raras) {
+            expect(computePromotionDiscount(rule, 35, 2)).toBe(0);
+        }
+        expect(pickBestPromotion(
+            [{ id: 'rota', rule: raras[1] }, { id: 'buena', rule: PARACETAMOL }],
+            35,
+            2,
+        )?.promotion.id).toBe('buena');
+    });
+
+    it('una cantidad no entera se cobra a precio de lista sin tronar', () => {
+        expect(computePromotionDiscount(PARACETAMOL, 35, 2.5)).toBe(0);
+    });
+
     it('pickBestPromotion elige la de mayor descuento y no acumula', () => {
         const best = pickBestPromotion(
             [

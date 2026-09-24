@@ -17,15 +17,48 @@ import { fromCents, toCents } from './taxes';
  * base del descuento y también de la devolución: devolver `r` de `q` piezas
  * reembolsa `cost(q) − cost(q − r)`, no el promedio.
  */
+/**
+ * ¿La regla tiene una forma que este motor sabe calcular? Una promo de un tipo
+ * que esta versión no conoce (el backend se actualiza antes que las cajas) o con
+ * campos faltantes se trata como **sin descuento**, en vez de tronar: un error
+ * aquí dejaba sin poder vender el producto en cada cambio del ticket.
+ */
+export const isSupportedRule = (rule: unknown): rule is PromotionRule => {
+    if (!rule || typeof rule !== 'object') {
+        return false;
+    }
+    const candidate = rule as Record<string, unknown>;
+    const isInt = (value: unknown, min: number): boolean =>
+        typeof value === 'number' && Number.isInteger(value) && value >= min;
+    if (candidate['type'] === 'tiered') {
+        const tiers = candidate['tiers'];
+        return Array.isArray(tiers) && tiers.length > 0 && tiers.every((tier) =>
+            Boolean(tier) && isInt(tier.quantity, 1) &&
+            typeof tier.price === 'number' && Number.isFinite(tier.price) && tier.price > 0);
+    }
+    if (candidate['type'] === 'nxm') {
+        return isInt(candidate['buy'], 1) && isInt(candidate['pay'], 0);
+    }
+    if (candidate['type'] === 'percent') {
+        const percent = candidate['percent'];
+        return typeof percent === 'number' && Number.isFinite(percent) &&
+            isInt(candidate['minQty'], 1);
+    }
+    return false;
+};
+
 export const promotionCostCents = (
     rule: PromotionRule,
     unitCents: number,
     quantity: number,
 ): number => {
-    if (quantity <= 0) {
-        return 0;
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+        return quantity > 0 ? Math.round(unitCents * quantity) : 0;
     }
     const listCents = unitCents * quantity;
+    if (!isSupportedRule(rule)) {
+        return listCents;
+    }
 
     if (rule.type === 'nxm') {
         if (rule.buy <= 0 || rule.pay < 0 || rule.pay >= rule.buy) {
