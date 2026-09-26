@@ -1,5 +1,11 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { Product, Promotion, PromotionRule } from '../types';
+import {
+    ExpiringPromotionSuggestion,
+    Product,
+    Promotion,
+    PromotionPerformance,
+    PromotionRule,
+} from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
 import { now, toTimestamp } from '../utils/firestore';
@@ -7,6 +13,8 @@ import { computePromotionDiscount, isPromotionMonotonic } from '../utils/promoti
 import * as promotionsRepo from '../repositories/promotions.repository';
 import * as productsRepo from '../repositories/products.repository';
 import { AuditActor, diffFields, recordAudit } from './audit.service';
+import { listExpiringLots } from './inventory-alerts.service';
+import { computePromotionPerformance } from './promotion-performance.service';
 
 const RULE_LABELS: Record<PromotionRule['type'], string> = {
     tiered: 'precio por cantidad',
@@ -127,6 +135,34 @@ const ruleProblemFor = (rule: PromotionRule, product: Product): string | null =>
 };
 
 /**
+ * Aviso por correo de una baja por precio. Una promo que desaparece sola del
+ * mostrador sorprende a quien la dio de alta, y la bitácora nadie la lee a
+ * diario. **Best-effort**: se espera (una promesa suelta muere cuando la
+ * function responde) pero cualquier falla —Resend caído, destinatarios sin
+ * configurar— solo se registra; el precio ya se guardó.
+ *
+ * El sender se importa dinámicamente: arrastra Resend y React Email, y este
+ * módulo se carga en el arranque de la function `api`.
+ */
+const notifyRetiredByPrice = async (
+    product: Product,
+    retired: Array<{ promotion: Promotion; problem: string }>,
+): Promise<void> => {
+    try {
+        const { sendPromotionsRetiredByPriceEmail } = await import(
+            './promotion-alerts-sender.service'
+        );
+        await sendPromotionsRetiredByPriceEmail(product, retired);
+    } catch (error) {
+        console.error('No se pudo avisar por correo la baja de promociones por precio', {
+            productId: product.id,
+            promotionIds: retired.map((entry) => entry.promotion.id),
+            error,
+        });
+    }
+};
+
+/**
  * Tras un cambio de precio, da de baja las promociones activas de ese producto
  * que el precio nuevo vuelve absurdas: "2 por $60" con la pieza a $61 cobra
  * más por una que por dos, y una pieza de ese paquete ya no se puede devolver.
@@ -146,6 +182,7 @@ export const retirePromotionsBrokenByPrice = async (
     try {
         const promotions = await promotionsRepo.listActivePromotionsForProduct(product.id);
         const retired: Promotion[] = [];
+        const problems: string[] = [];
         for (const promotion of promotions) {
             const problem = ruleProblemFor(promotion.rule, product);
             if (!problem) {
@@ -167,6 +204,13 @@ export const retirePromotionsBrokenByPrice = async (
                 metadata: { reason: 'price_changed', productId: product.id, problem },
             });
             retired.push(after);
+            problems.push(problem);
+        }
+        if (retired.length) {
+            await notifyRetiredByPrice(product, retired.map((promotion, index) => ({
+                promotion,
+                problem: problems[index],
+            })));
         }
         return retired;
     } catch (error) {
@@ -188,6 +232,7 @@ export const createPromotion = async (
         endsAt?: string | null;
     },
     actor: AuditActor,
+    options: { replaces?: Promotion } = {},
 ): Promise<Promotion> => {
     await assertRuleFitsProducts(input.rule, input.productIds);
 
@@ -209,12 +254,145 @@ export const createPromotion = async (
         entity: 'promotion',
         entityId: promotion.id,
         summary: `Promoción "${promotion.name}" (${RULE_LABELS[promotion.rule.type]}) ` +
-            `en ${promotion.productIds.length} producto(s)`,
+            `en ${promotion.productIds.length} producto(s)` +
+            (options.replaces ? `, reemplaza a "${options.replaces.name}"` : ''),
         userId: actor.userId,
         roleSlug: actor.roleSlug,
-        metadata: { rule: promotion.rule, productIds: promotion.productIds },
+        metadata: {
+            rule: promotion.rule,
+            productIds: promotion.productIds,
+            ...(options.replaces ? { replaces: options.replaces.id } : {}),
+        },
     });
     return promotion;
+};
+
+/**
+ * "Editar" la regla o los productos de una promoción: como son inmutables (una
+ * venta offline cobrada con la regla vieja debe seguir validando), se crea la
+ * nueva y se da de baja la anterior.
+ *
+ * El orden importa: **primero se crea**. Si la nueva no pasa la validación
+ * (regla absurda al precio de hoy, producto inactivo) se lanza antes de tocar
+ * la vieja, y el mostrador nunca se queda sin promoción por un error de
+ * captura. Si la vieja ya estaba inactiva, no hay baja que hacer y se devuelve
+ * tal cual, pero la liga queda igual en la bitácora de las dos.
+ */
+export const replacePromotion = async (
+    id: string,
+    input: Parameters<typeof createPromotion>[0],
+    actor: AuditActor,
+): Promise<{ created: Promotion; retired: Promotion }> => {
+    const existing = await getPromotion(id);
+    const created = await createPromotion(input, actor, { replaces: existing });
+
+    if (!existing.isActive) {
+        await recordAudit({
+            action: 'promotion.updated',
+            entity: 'promotion',
+            entityId: existing.id,
+            summary: `Promoción "${existing.name}" reemplazada por "${created.name}"`,
+            userId: actor.userId,
+            roleSlug: actor.roleSlug,
+            metadata: { reason: 'replaced', replacedBy: created.id },
+        });
+        return { created, retired: existing };
+    }
+
+    let after: Promotion;
+    try {
+        ({ after } = await promotionsRepo.updatePromotion(existing.id, {
+            isActive: false,
+            updatedBy: actor.userId,
+        }));
+    } catch (error) {
+        // La nueva ya existe: si la vieja no se pudo dar de baja quedarían las
+        // dos activas sobre los mismos productos y la caja aplicaría la de mayor
+        // descuento, que casi siempre es la que se quería retirar. Se compensa
+        // dando de baja la recién creada y se propaga el error original.
+        await promotionsRepo.updatePromotion(created.id, {
+            isActive: false,
+            updatedBy: actor.userId,
+        }).catch((rollbackError) => {
+            console.error('No se pudo revertir el reemplazo de promoción', {
+                replaced: existing.id,
+                created: created.id,
+                rollbackError,
+            });
+        });
+        throw error;
+    }
+    await recordAudit({
+        action: 'promotion.deactivated',
+        entity: 'promotion',
+        entityId: existing.id,
+        summary: `Promoción "${existing.name}" dada de baja, reemplazada por "${created.name}"`,
+        userId: actor.userId,
+        roleSlug: actor.roleSlug,
+        changes: { isActive: { before: true, after: false } },
+        metadata: { reason: 'replaced', replacedBy: created.id },
+    });
+    return { created, retired: after };
+};
+
+export const getPromotionPerformance = async (id: string): Promise<PromotionPerformance> =>
+    computePromotionPerformance(await getPromotion(id));
+
+/**
+ * Descuento sugerido según lo que le falta al lote para caducar: más cerca,
+ * más agresivo. Un 10 % a tres meses todavía deja margen; a un mes lo que se
+ * pierde es el lote entero si no sale.
+ */
+export const suggestedPercentForExpiry = (daysToExpiry: number): number => {
+    if (daysToExpiry <= 30) {
+        return 30;
+    }
+    if (daysToExpiry <= 60) {
+        return 20;
+    }
+    return 10;
+};
+
+/**
+ * Lotes por caducar que conviene mover con una promoción de porcentaje desde
+ * una pieza. Reusa la lectura de las alertas de inventario (vencidos, sin
+ * existencia y productos inactivos ya quedan fuera).
+ *
+ * `hasActivePromotion` cuenta promos activas que no han terminado, **incluidas
+ * las programadas** para después: si alguien ya agendó una, la sugerencia no
+ * debe invitar a crear otra encima (no se acumulan; ganaría la mayor).
+ */
+export const listExpiringPromotionSuggestions = async (filters: {
+    days: number;
+}): Promise<ExpiringPromotionSuggestion[]> => {
+    const [lots, activePromotions] = await Promise.all([
+        listExpiringLots(filters.days),
+        promotionsRepo.listPromotions({ activeOnly: true }),
+    ]);
+    const nowMs = now().toMillis();
+    const promotedProducts = new Set(activePromotions
+        .filter((promotion) => !promotion.endsAt || promotion.endsAt.toMillis() > nowMs)
+        .flatMap((promotion) => promotion.productIds));
+
+    return lots
+        .map(({ batch, product, daysToExpiry }) => ({
+            productId: product.id,
+            productName: product.name,
+            categoryId: product.categoryId,
+            salePrice: product.salePrice,
+            lotNumber: batch.lotNumber,
+            expiryDate: batch.expiryDate.toDate().toISOString(),
+            daysToExpiry,
+            quantity: batch.quantity,
+            hasActivePromotion: promotedProducts.has(product.id),
+            suggestedRule: {
+                type: 'percent' as const,
+                percent: suggestedPercentForExpiry(daysToExpiry),
+                minQty: 1 as const,
+            },
+        }))
+        .sort((a, b) => a.daysToExpiry - b.daysToExpiry ||
+            a.productName.localeCompare(b.productName));
 };
 
 const millisOrNull = (value: Timestamp | null | undefined): number | null =>

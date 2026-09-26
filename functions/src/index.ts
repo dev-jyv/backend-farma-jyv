@@ -12,6 +12,7 @@ export {
     monthlySalesReport,
 } from './schedules/sales-reports.schedule';
 export { dailyFirestoreBackup } from './schedules/backup.schedule';
+export { dailyPromotionsMaintenance } from './schedules/promotions.schedule';
 
 let appPromise: ReturnType<typeof createApp> | undefined;
 

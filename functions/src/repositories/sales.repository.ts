@@ -152,6 +152,52 @@ export const listSalesByProvider = async (filters: {
     return filters.includeVoided ? sales : sales.filter((sale) => sale.voidedAt === null);
 };
 
+/**
+ * Ventas que aplicaron la promoción, anuladas incluidas (quien agrega decide).
+ * `array-contains` sobre un solo campo lo resuelve el índice automático; no se
+ * acota por fecha a propósito: una venta offline cobrada en vigencia puede
+ * registrarse días después de la baja y sigue siendo venta de la promo.
+ */
+export const listSalesByPromotion = async (promotionId: string): Promise<Sale[]> => {
+    const snapshot = await collection().where('promotionIds', 'array-contains', promotionId).get();
+    return snapshot.docs.map((doc) => mapSale(doc.id, doc.data()));
+};
+
+/** Tope de valores de `array-contains-any` en Firestore. */
+const ARRAY_CONTAINS_ANY_LIMIT = 30;
+
+/**
+ * Ventas en `[from, to)` que llevan alguno de los productos, anuladas
+ * incluidas. `array-contains-any` admite 30 valores, así que se consulta por
+ * bloques y se deduplica (una venta con productos de dos bloques sale dos
+ * veces). Índice `[productIds CONTAINS, createdAt ASC]`.
+ */
+export const listSalesByProductsBetween = async (
+    productIds: string[],
+    from: FirebaseFirestore.Timestamp,
+    to: FirebaseFirestore.Timestamp,
+): Promise<Sale[]> => {
+    const unique = [...new Set(productIds)];
+    const chunks: string[][] = [];
+    for (let i = 0; i < unique.length; i += ARRAY_CONTAINS_ANY_LIMIT) {
+        chunks.push(unique.slice(i, i + ARRAY_CONTAINS_ANY_LIMIT));
+    }
+    const snapshots = await Promise.all(chunks.map((chunk) => collection()
+        .where('productIds', 'array-contains-any', chunk)
+        .where('createdAt', '>=', from)
+        .where('createdAt', '<', to)
+        .get()));
+    const byId = new Map<string, Sale>();
+    for (const snapshot of snapshots) {
+        for (const doc of snapshot.docs) {
+            if (!byId.has(doc.id)) {
+                byId.set(doc.id, mapSale(doc.id, doc.data()));
+            }
+        }
+    }
+    return [...byId.values()];
+};
+
 export const listSales = async (filters: {
     productId?: string;
     from?: string;

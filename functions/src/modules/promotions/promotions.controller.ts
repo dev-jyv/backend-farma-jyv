@@ -4,6 +4,7 @@ import {
 import { z } from 'zod';
 import {
     createPromotionSchema,
+    expiringSuggestionsQuerySchema,
     idParamSchema,
     listPromotionsQuerySchema,
     syncPromotionsQuerySchema,
@@ -17,6 +18,7 @@ import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
 type ListQuery = z.infer<typeof listPromotionsQuerySchema>;
 type SyncQuery = z.infer<typeof syncPromotionsQuerySchema>;
+type ExpiringQuery = z.infer<typeof expiringSuggestionsQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 type CreateInput = z.infer<typeof createPromotionSchema>;
 type UpdateInput = z.infer<typeof updatePromotionSchema>;
@@ -49,6 +51,28 @@ export class PromotionsController {
         return { data: result.items };
     }
 
+    /**
+     * Lotes por caducar con una promo sugerida. Declarada **antes** de `:id`:
+     * Express resuelve en orden y `suggestions` se tomaría como id.
+     */
+    @Get('suggestions/expiring')
+    @RequirePermission('promotions', 'read')
+    async expiringSuggestions(
+        @Query(new ZodValidationPipe(expiringSuggestionsQuerySchema)) query: ExpiringQuery,
+    ) {
+        const suggestions = await promotionsService.listExpiringPromotionSuggestions({
+            days: query.days,
+        });
+        return { data: suggestions };
+    }
+
+    @Get(':id/performance')
+    @RequirePermission('promotions', 'read')
+    async performance(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
+        const performance = await promotionsService.getPromotionPerformance(params.id);
+        return { data: performance };
+    }
+
     @Get(':id')
     @RequirePermission('promotions', 'read')
     async get(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
@@ -68,6 +92,25 @@ export class PromotionsController {
             roleSlug: user.role.slug,
         });
         return { data: promotion };
+    }
+
+    /**
+     * Cambiar regla o productos = crear otra y dar de baja esta (son
+     * inmutables). Si la nueva no valida, la vieja no se toca.
+     */
+    @Post(':id/replace')
+    @RequirePermission('promotions')
+    @HttpCode(201)
+    async replace(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(createPromotionSchema)) body: CreateInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const result = await promotionsService.replacePromotion(params.id, body, {
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
+        return { data: result };
     }
 
     @Patch(':id')

@@ -38,6 +38,15 @@ export interface SalesReportEmailProps {
     report: SalesReport;
 }
 
+/** Folios listados de ventas por revisar; el resto se cuenta, no se lista. */
+const MAX_REVIEW_FOLIOS = 20;
+
+const reviewFoliosLabel = (review: SalesReport['promotionReview']): string => {
+    const shown = review.folios.slice(0, MAX_REVIEW_FOLIOS).join(', ');
+    const rest = review.count - MAX_REVIEW_FOLIOS;
+    return rest > 0 ? `${shown} y ${rest} más` : shown;
+};
+
 const percentLabel = (value: number | null): string =>
     value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
@@ -52,6 +61,7 @@ const monthDeltaLabel = (report: MonthlySalesReport): string => {
 
 export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
     const { totals, branches, expenses } = report;
+    const review = report.promotionReview;
     const netTone = report.netResult >= 0 ? palette.positive : palette.negative;
 
     const expenseRows: DataRow[] = expenses.byCategory.map((entry) => ({
@@ -188,6 +198,26 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                                 },
                             ]}
                         />
+                    ) : null}
+
+                    {/*
+                      * Va arriba y no al final: es lo único del reporte que pide
+                      * una acción. Los folios se cortan para que un día raro (reloj
+                      * de una caja mal) no convierta el correo en una lista; el
+                      * resto está en el filtro del historial.
+                      */}
+                    {review.count > 0 ? (
+                        <ReportSection title={`Ventas con promoción por revisar (${review.count})`}>
+                            <Text style={{ ...text.label, color: palette.expense }}>
+                                {'Se cobraron con una promoción fuera de vigencia (venta sin ' +
+                                    'conexión o reloj de la caja desfasado). Se aceptaron ' +
+                                    'porque el cliente ya pagó; revísalas en el historial de ' +
+                                    'ventas del admin con el filtro "Solo promos por revisar".'}
+                            </Text>
+                            <Text style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}>
+                                {reviewFoliosLabel(review)}
+                            </Text>
+                        </ReportSection>
                     ) : null}
 
                     <ReportSection title="Farmacia vs consultorio">

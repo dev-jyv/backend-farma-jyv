@@ -1,4 +1,5 @@
 import {
+    Batch,
     ExpiringBatchAlert,
     InventoryAlerts,
     Product,
@@ -22,6 +23,41 @@ const daysBetween = (from: number, to: number): number =>
  */
 const resolveStock = (product: Product, stockByProduct: Map<string, number>): number =>
     product.totalStock ?? stockByProduct.get(product.id) ?? 0;
+
+export interface ExpiringLot {
+    batch: Batch;
+    product: Product;
+    daysToExpiry: number;
+}
+
+/**
+ * Lotes con existencia que caducan dentro de `withinDays` días, de productos
+ * activos, del más próximo al más lejano. **Excluye los vencidos**: esos se
+ * retiran del anaquel, no se promocionan. Mismo cálculo de días que las
+ * alertas (`Math.ceil`), para que un lote no diga "30 días" en el correo y
+ * "29" en la sugerencia de promoción.
+ */
+export const listExpiringLots = async (withinDays: number): Promise<ExpiringLot[]> => {
+    const [batches, products] = await Promise.all([
+        batchesRepo.listBatchesWithStock(),
+        productsRepo.listProducts({ activeOnly: true }),
+    ]);
+    const productById = new Map(products.map((product) => [product.id, product]));
+    const reference = now().toMillis();
+
+    const lots: ExpiringLot[] = [];
+    for (const batch of batches) {
+        const product = productById.get(batch.productId);
+        if (!product || !product.isActive || batch.quantity <= 0) {
+            continue;
+        }
+        const daysToExpiry = daysBetween(reference, batch.expiryDate.toMillis());
+        if (daysToExpiry > 0 && daysToExpiry <= withinDays) {
+            lots.push({ batch, product, daysToExpiry });
+        }
+    }
+    return lots.sort((a, b) => a.daysToExpiry - b.daysToExpiry);
+};
 
 export const getInventoryAlerts = async (options: {
     expiryWindows?: number[];

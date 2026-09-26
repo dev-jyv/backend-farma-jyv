@@ -12,7 +12,8 @@
     "logs": "firebase functions:log",
     "test": "firebase emulators:exec --only firestore \"jest\"",
     "test:rules": "jest --config jest.rules.config.js",
-    "test:coverage": "firebase emulators:exec --only firestore \"jest --coverage\""
+    "test:coverage": "firebase emulators:exec --only firestore \"jest --coverage\"",
+    "check:promo-engine": "node scripts/check-promotions-engine.mjs"
   },
   "engines": {
     "node": "22"

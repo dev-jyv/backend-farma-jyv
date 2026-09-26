@@ -119,6 +119,18 @@ export interface ReportServiceRow {
     amount: number;
 }
 
+/**
+ * Ventas del periodo con una promo aceptada fuera de vigencia
+ * (`Sale.promotionReview`). No se rechazaron —el cliente ya pagó ese precio—,
+ * así que alguien tiene que mirarlas: el reporte las lista por folio para que
+ * no se queden solo en un filtro del admin que nadie abre.
+ */
+export interface ReportPromotionReview {
+    count: number;
+    /** En orden de cobro. */
+    folios: string[];
+}
+
 export interface DailySalesReport {
     kind: 'daily';
     title: string;
@@ -135,6 +147,7 @@ export interface DailySalesReport {
     ticketAverage: number;
     sales: ReportSaleRow[];
     topProducts: ReportTopProduct[];
+    promotionReview: ReportPromotionReview;
 }
 
 export interface MonthlySalesReport {
@@ -161,6 +174,7 @@ export interface MonthlySalesReport {
     };
     topProducts: ReportTopProduct[];
     topServices: ReportServiceRow[];
+    promotionReview: ReportPromotionReview;
 }
 
 export type SalesReport = DailySalesReport | MonthlySalesReport;
@@ -231,6 +245,14 @@ const buildTotals = (sales: Sale[]): SalesReportTotals => {
             0,
         ),
     };
+};
+
+/** Las anuladas no: ya no hay precio que revisar. */
+const buildPromotionReview = (sales: Sale[]): ReportPromotionReview => {
+    const flagged = sales
+        .filter((sale) => !sale.voidedAt && sale.promotionReview === true)
+        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+    return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
 };
 
 const buildTopProducts = (sales: Sale[], limit = 10): ReportTopProduct[] => {
@@ -449,6 +471,7 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
         ticketAverage: averageTicket(totals.totalAmount, totals.salesCount),
         sales: rows,
         topProducts: buildTopProducts(sales),
+        promotionReview: buildPromotionReview(sales),
     };
 };
 
@@ -532,5 +555,6 @@ export const buildMonthlyReport = async (
         },
         topProducts: buildTopProducts(sales),
         topServices: buildTopServices(sales),
+        promotionReview: buildPromotionReview(sales),
     };
 };

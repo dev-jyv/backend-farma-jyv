@@ -139,3 +139,16 @@ export const listPromotionsQuerySchema = z.object({
 export const syncPromotionsQuerySchema = z.object({
     updatedSince: parseableDate.optional(),
 });
+
+/**
+ * Horizonte de las sugerencias por caducidad. Tope de 180 días: más allá no es
+ * mercancía por caducar, es inventario normal, y rematarla regala margen.
+ */
+export const expiringSuggestionsQuerySchema = z.object({
+    days: z.coerce
+        .number()
+        .int('Los días deben ser un número entero')
+        .min(1, 'Mínimo 1 día')
+        .max(180, 'Máximo 180 días')
+        .default(90),
+});

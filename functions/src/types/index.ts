@@ -1660,6 +1660,60 @@ export interface Promotion {
 }
 
 /**
+ * Desempeño de una promoción (`GET /promotions/:id/performance`). **Contrato
+ * compartido con el admin**: no renombrar campos. Fechas en ISO y dinero en
+ * pesos; los agregados se suman en centavos.
+ */
+export interface PromotionPerformance {
+    promotionId: string;
+    name: string;
+    startsAt: string;
+    endsAt: string | null;
+    /** `min(endsAt, deactivatedAt, ahora)`. */
+    effectiveEnd: string;
+    /** Días entre `startsAt` y `effectiveEnd`, a 2 decimales y mínimo 1. */
+    daysActive: number;
+    salesCount: number;
+    unitsSold: number;
+    /** Solo la parte de la promoción (`SaleItemPromotion.discountAmount`). */
+    discountTotal: number;
+    /** `subtotal − discountAmount` de las partidas con la promo. */
+    netRevenue: number;
+    /** `null` si alguna partida no tiene costo capturado. */
+    costTotal: number | null;
+    grossProfit: number | null;
+    unitsPerDayDuring: number;
+    baseline: { days: number; unitsSold: number; unitsPerDay: number };
+    /** `null` si antes de la promo no se vendía nada (no hay contra qué comparar). */
+    liftPercent: number | null;
+    byProduct: Array<{
+        productId: string;
+        productName: string;
+        unitsSold: number;
+        discountTotal: number;
+        netRevenue: number;
+    }>;
+}
+
+/**
+ * Lote por caducar que conviene mover con una promoción
+ * (`GET /promotions/suggestions/expiring`). Contrato compartido con el admin.
+ */
+export interface ExpiringPromotionSuggestion {
+    productId: string;
+    productName: string;
+    categoryId: string;
+    salePrice: number;
+    lotNumber: string;
+    expiryDate: string;
+    daysToExpiry: number;
+    /** Piezas que le quedan al lote. */
+    quantity: number;
+    hasActivePromotion: boolean;
+    suggestedRule: { type: 'percent'; percent: number; minQty: 1 };
+}
+
+/**
  * Servicio que la farmacia cobra en la misma venta que la mercancía: consulta,
  * procedimiento u otro concepto.
  *

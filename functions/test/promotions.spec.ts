@@ -20,6 +20,11 @@ jest.mock('../src/services/mercado-pago.service', () => ({
     refundOrder: jest.fn(),
 }));
 
+// La baja por precio avisa por correo (best-effort); aquí no sale nada a Resend.
+jest.mock('../src/services/email.service', () => ({
+    sendReportEmail: jest.fn().mockResolvedValue(undefined),
+}));
+
 const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2, 10)}`;
 const ADMIN = { userId: 'admin-user', roleSlug: 'admin' };
 

@@ -151,9 +151,12 @@ export const pickBestPromotion = <T extends { rule: PromotionRule }>(
 };
 
 /**
- * Margen para ventas sin conexión: `/sales/bulk` no trae la hora local del
- * cobro, así que una venta hecha el último día de la promo puede llegar al
- * servidor días después. Pasado este margen, la promo ya no se acepta.
+ * Margen para ventas sin conexión **cuya hora de cobro no se conoce**.
+ * `/sales/bulk` ya manda `soldAt` y, cuando es creíble, la vigencia se mide a
+ * esa hora sin margen. El margen solo aplica si falta (POS anterior a ese
+ * campo) o no es confiable (reloj de la caja adelantado): entonces se mide a la
+ * hora del servidor y una venta del último día de la promo que sincroniza días
+ * después se acepta hasta este límite. Ver `createSale` en `sales.service.ts`.
  */
 export const PROMOTION_SYNC_GRACE_MS = 72 * 60 * 60 * 1000;
 
