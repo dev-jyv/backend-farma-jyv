@@ -77,3 +77,6 @@ service-account.json
 # Service account key: el script de migración la busca en la raíz y en functions/
 service-account.json
 **/service-account.json
+
+# Reportes de auditoría de seguridad (contienen rutas de ataque sin corregir)
+security-reports/
