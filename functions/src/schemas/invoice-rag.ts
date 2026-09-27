@@ -23,6 +23,13 @@ const toNumberOrNull = (value: unknown): number | null => {
 
 const nullableNumber = z.preprocess(toNumberOrNull, z.number().nullable());
 
+const isoDateOrNull = z.preprocess(
+    (value) => (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+        ? value.trim()
+        : null),
+    z.string().nullable(),
+);
+
 const nullableText = (max: number) => z.preprocess(
     (value) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null),
     z.string().nullable(),
@@ -49,11 +56,21 @@ const taxSchema = z.object({
     amount: z.preprocess((value) => toNumberOrNull(value) ?? 0, z.number()),
 });
 
+const toBarcodeOrNull = (value: unknown): string | null => {
+    const digits = typeof value === 'string' || typeof value === 'number'
+        ? String(value).replace(/[\s-]/g, '')
+        : '';
+    return /^\d{8,14}$/.test(digits) ? digits : null;
+};
+
 const itemSchema = z.object({
     description: z.preprocess(
         (value) => (typeof value === 'string' ? value.trim().slice(0, 500) : ''),
         z.string(),
     ),
+    barcode: z.preprocess(toBarcodeOrNull, z.string().nullable()),
+    lotNumber: nullableText(40),
+    expiryDate: isoDateOrNull,
     quantity: nullableNumber,
     unitPrice: nullableNumber,
     amount: nullableNumber,
@@ -83,12 +100,7 @@ export const invoiceRagDataSchema = z.object({
             : null),
         z.string().nullable(),
     ),
-    issueDate: z.preprocess(
-        (value) => (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
-            ? value.trim()
-            : null),
-        z.string().nullable(),
-    ),
+    issueDate: isoDateOrNull,
     currency: z.preprocess(
         (value) => (typeof value === 'string' && /^[a-z]{3}$/i.test(value.trim())
             ? value.trim().toUpperCase()
@@ -163,9 +175,15 @@ export const INVOICE_RAG_JSON_SCHEMA = {
             items: {
                 type: 'object',
                 additionalProperties: false,
-                required: ['description', 'quantity', 'unitPrice', 'amount'],
+                required: [
+                    'description', 'barcode', 'lotNumber', 'expiryDate', 'quantity', 'unitPrice',
+                    'amount',
+                ],
                 properties: {
                     description: { type: 'string' },
+                    barcode: nullable('string'),
+                    lotNumber: nullable('string'),
+                    expiryDate: nullable('string'),
                     quantity: nullable('number'),
                     unitPrice: nullable('number'),
                     amount: nullable('number'),

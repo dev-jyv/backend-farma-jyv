@@ -121,6 +121,28 @@ describe('invoiceRagDataSchema', () => {
         });
     });
 
+    it('deja el código de barras solo con dígitos EAN/UPC válidos', () => {
+        const items = [
+            { description: 'a', barcode: '750 1234-567890' },
+            { description: 'b', barcode: 7501234567890 },
+            { description: 'c', barcode: 'SKU-12' },
+            { description: 'd' },
+        ];
+        expect(invoiceRagDataSchema.parse({ items }).items.map((item) => item.barcode))
+            .toEqual(['7501234567890', '7501234567890', null, null]);
+    });
+
+    it('conserva lote y caducidad de cada concepto, y descarta fechas mal formadas', () => {
+        const items = [
+            { description: 'a', lotNumber: ' L-123 ', expiryDate: '2027-03-31' },
+            { description: 'b', lotNumber: '', expiryDate: '03/2027' },
+        ];
+        expect(invoiceRagDataSchema.parse({ items }).items).toMatchObject([
+            { lotNumber: 'L-123', expiryDate: '2027-03-31' },
+            { lotNumber: null, expiryDate: null },
+        ]);
+    });
+
     it('acota partidas para que un documento enorme no infle la respuesta', () => {
         const items = Array.from({ length: 500 }, (_, i) => ({ description: `p${i}`, amount: i }));
         expect(invoiceRagDataSchema.parse({ items }).items).toHaveLength(200);
