@@ -167,3 +167,12 @@ export const isR2Enabled = (): boolean => getR2Config() !== null;
  */
 export const requiresIdempotencyKey = (): boolean =>
     process.env.SALES_REQUIRE_IDEMPOTENCY_KEY?.trim() === 'true';
+
+export const getOpenRouterApiKey = (): string | null =>
+    process.env.OPENROUTER_API_KEY?.trim() || null;
+
+export const getOpenRouterVisionModel = (): string =>
+    process.env.OPENROUTER_VISION_MODEL?.trim() || 'google/gemini-2.5-flash';
+
+export const getOpenRouterEmbedModel = (): string =>
+    process.env.OPENROUTER_EMBED_MODEL?.trim() || 'openai/text-embedding-3-small';
