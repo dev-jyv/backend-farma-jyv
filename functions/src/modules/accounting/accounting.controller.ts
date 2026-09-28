@@ -32,6 +32,10 @@ import {
     idParamSchema,
     incomeStatementQuerySchema,
     listAccountingExpensesQuerySchema,
+    createRecurringExpenseSchema,
+    recurringExpensesQuerySchema,
+    recurringMonthSchema,
+    updateRecurringExpenseSchema,
     updateAccountingExpenseSchema,
     updateAccountingSettingsSchema,
     updateFixedAssetSchema,
@@ -41,6 +45,7 @@ import * as accountingService from '../../services/accounting.service';
 import * as accountingCore from '../../services/accounting-core.service';
 import * as accountingExport from '../../services/accounting-export.service';
 import * as bankService from '../../services/bank.service';
+import * as recurringService from '../../services/recurring-expenses.service';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
@@ -69,6 +74,10 @@ type ReconciliationQuery = z.infer<typeof reconciliationQuerySchema>;
 type CreateAccruedExpenseInput = z.infer<typeof createAccruedExpenseSchema>;
 type PayAccruedExpenseInput = z.infer<typeof payAccruedExpenseSchema>;
 type AccruedExpensesQuery = z.infer<typeof accruedExpensesQuerySchema>;
+type CreateRecurringInput = z.infer<typeof createRecurringExpenseSchema>;
+type UpdateRecurringInput = z.infer<typeof updateRecurringExpenseSchema>;
+type RecurringMonthInput = z.infer<typeof recurringMonthSchema>;
+type RecurringMonthQuery = z.infer<typeof recurringExpensesQuerySchema>;
 
 /**
  * Tope de renglones de una exportación. Alto a propósito: un auxiliar de gastos
@@ -169,6 +178,68 @@ export class AccountingController {
             user.uid,
             user.role.slug,
             user.displayName || user.email,
+        );
+        return { data };
+    }
+
+    /* ---------------------------------------------------------------------- */
+    /*  Gastos fijos                                                          */
+    /* ---------------------------------------------------------------------- */
+
+    @Get('recurring-expenses')
+    @RequirePermission('accounting', 'read')
+    async listRecurringExpenses() {
+        return { data: await recurringService.listRecurringExpenses() };
+    }
+
+    @Get('recurring-expenses/month')
+    @RequirePermission('accounting', 'read')
+    async getRecurringMonth(
+        @Query(new ZodValidationPipe(recurringExpensesQuerySchema)) query: RecurringMonthQuery,
+    ) {
+        const month = query.month ?? new Date().toISOString().slice(0, 7);
+        return { data: await recurringService.getRecurringMonth(month) };
+    }
+
+    @Post('recurring-expenses')
+    @HttpCode(201)
+    @RequirePermission('accounting', 'write')
+    async createRecurringExpense(
+        @Body(new ZodValidationPipe(createRecurringExpenseSchema)) body: CreateRecurringInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const data = await recurringService.createRecurringExpense(body, user.uid, user.role.slug);
+        return { data };
+    }
+
+    /** Genera los devengados del mes; repetirlo no duplica. */
+    @Post('recurring-expenses/generate')
+    @RequirePermission('accounting', 'write')
+    async generateRecurringMonth(
+        @Body(new ZodValidationPipe(recurringMonthSchema)) body: RecurringMonthInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const data = await recurringService.generateRecurringMonth(
+            body.month,
+            user.uid,
+            user.role.slug,
+            user.displayName || user.email,
+        );
+        return { data };
+    }
+
+    @Patch('recurring-expenses/:id')
+    @RequirePermission('accounting', 'write')
+    async updateRecurringExpense(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(updateRecurringExpenseSchema)) body: UpdateRecurringInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const data = await recurringService.updateRecurringExpense(
+            params.id,
+            body,
+            user.uid,
+            user.role.slug,
         );
         return { data };
     }

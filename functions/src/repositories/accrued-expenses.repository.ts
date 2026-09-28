@@ -28,6 +28,72 @@ export const getById = async (id: string): Promise<AccruedExpense | null> => {
     return doc.exists ? map(doc) : null;
 };
 
+export const getByIds = async (ids: string[]): Promise<AccruedExpense[]> => {
+    if (ids.length === 0) {
+        return [];
+    }
+    const docs = await db().getAll(...ids.map((id) => collection().doc(id)));
+    return docs.filter((doc) => doc.exists).map(map);
+};
+
+export interface RecurringAccrualInput {
+    id: string;
+    category: ExpenseCategory;
+    concept: string;
+    description: string | null;
+    amount: number;
+    accruedAt: Date;
+    dueDate: Date;
+    recurringExpenseId: string;
+    recurringMonth: string;
+}
+
+/**
+ * Crea los devengados de gastos fijos con id determinista. La transacción lee
+ * los ids antes de escribir: dos generaciones simultáneas del mismo mes no
+ * pueden duplicar, porque la segunda ve el documento de la primera.
+ */
+export const createRecurringAccruals = async (
+    entries: RecurringAccrualInput[],
+    createdBy: string,
+    createdByLabel?: string,
+): Promise<{ created: AccruedExpense[]; existingIds: string[] }> => {
+    if (entries.length === 0) {
+        return { created: [], existingIds: [] };
+    }
+    const firestore = db();
+    return firestore.runTransaction(async (transaction) => {
+        const refs = entries.map((entry) => collection().doc(entry.id));
+        const docs = await transaction.getAll(...refs);
+        const timestamp = now();
+        const created: AccruedExpense[] = [];
+        const existingIds: string[] = [];
+
+        entries.forEach(({ id, accruedAt, dueDate, ...entry }, index) => {
+            if (docs[index].exists) {
+                existingIds.push(id);
+                return;
+            }
+            const payload = {
+                ...entry,
+                accruedAt: fromDate(accruedAt),
+                dueDate: fromDate(dueDate),
+                paidTotal: 0,
+                lastPaymentAt: null,
+                createdBy,
+                createdByLabel: createdByLabel ?? null,
+                createdAt: timestamp,
+                updatedBy: null,
+                updatedAt: null,
+            };
+            transaction.create(refs[index], payload);
+            created.push({ id, ...payload });
+        });
+
+        return { created, existingIds };
+    });
+};
+
 export const create = async (input: {
     category: ExpenseCategory;
     concept: string;

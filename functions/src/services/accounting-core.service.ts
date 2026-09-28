@@ -457,7 +457,7 @@ export interface AccruedExpenseView extends AccruedExpense {
 }
 
 /** Saldo y estado **derivados**, igual que en las facturas de proveedor. */
-const toAccruedView = (accrued: AccruedExpense, asOf: Date): AccruedExpenseView => {
+export const toAccruedView = (accrued: AccruedExpense, asOf: Date): AccruedExpenseView => {
     const balance = Math.round((accrued.amount - accrued.paidTotal) * 100) / 100;
     const status = balance <= 0.01 ? 'paid' : accrued.paidTotal > 0 ? 'partial' : 'pending';
     return {

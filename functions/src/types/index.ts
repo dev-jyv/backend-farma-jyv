@@ -154,6 +154,10 @@ export type AuditAction =
     | 'accruedExpense.created'
     /** Pago de un gasto devengado: mueve efectivo, no vuelve a pegar en resultados. */
     | 'accruedExpense.paid'
+    | 'recurringExpense.created'
+    | 'recurringExpense.updated'
+    /** Generación de los devengados del mes a partir de los gastos fijos. */
+    | 'recurringExpense.generated'
     | 'bankAccount.created'
     | 'bankAccount.updated'
     /** Movimiento bancario capturado a mano o traspaso entre caja y banco. */
@@ -198,6 +202,7 @@ export type AuditEntity =
     | 'fixedAsset'
     | 'equityMovement'
     | 'accruedExpense'
+    | 'recurringExpense'
     | 'bankAccount'
     | 'bankMovement'
     | 'accountingSettings'
@@ -468,6 +473,29 @@ export interface AccruedExpense {
     lastPaymentAt?: Timestamp | null;
     createdBy: string;
     createdByLabel?: string | null;
+    createdAt: Timestamp;
+    updatedBy?: string | null;
+    updatedAt?: Timestamp | null;
+    /** Plantilla de gasto fijo que lo originó; ausente si se capturó a mano. */
+    recurringExpenseId?: string | null;
+    /** Mes (`YYYY-MM`) de la plantilla al que corresponde. */
+    recurringMonth?: string | null;
+}
+
+/**
+ * Plantilla de gasto fijo (renta, luz, nómina). No pega en resultados por sí
+ * misma: cada mes se genera, a pedido, un gasto devengado por plantilla activa.
+ */
+export interface RecurringExpense {
+    id: string;
+    category: ExpenseCategory;
+    concept: string;
+    description?: string | null;
+    amount: number;
+    /** Día del mes en que vence; hasta 28 para que exista en todos los meses. */
+    dueDay: number;
+    isActive: boolean;
+    createdBy: string;
     createdAt: Timestamp;
     updatedBy?: string | null;
     updatedAt?: Timestamp | null;

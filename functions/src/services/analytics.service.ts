@@ -14,6 +14,7 @@ import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
 import * as pharmacyServicesRepo from '../repositories/pharmacy-services.repository';
+import { AbcClass, AbcSummary, classifyAbc, summarizeAbc } from './insights.service';
 
 /**
  * Reportes de gestión. Todo se calcula sobre ventas **no anuladas** y se descuenta
@@ -322,8 +323,27 @@ export interface TopProductsReport {
         quantity: number;
         total: number;
         salesCount: number;
+        /** `null` sin costo capturado: su utilidad no se puede clasificar. */
+        abcClass: AbcClass | null;
     }>;
+    /**
+     * ABC por **utilidad** sobre todos los productos vendidos del periodo, no
+     * solo el top; `total` de cada clase es utilidad, no venta.
+     */
+    abc: AbcSummary & {
+        productsWithoutCost: number;
+        /** Entre los más vendidos con costo capturado, del menor margen al mayor. */
+        lowMarginTopSellers: Array<{
+            productId: string;
+            productName: string;
+            total: number;
+            marginRate: number;
+        }>;
+    };
 }
+
+const TOP_SELLERS_FOR_MARGIN = 20;
+const LOW_MARGIN_LIMIT = 10;
 
 export const getTopProducts = async (
     filters: PeriodFilters & { limit?: number },
@@ -345,6 +365,9 @@ export const getTopProducts = async (
         quantity: number;
         cents: number;
         salesCount: number;
+        baseCents: number;
+        costCents: number;
+        hasCost: boolean;
     }>();
 
     for (const sale of sales) {
@@ -354,28 +377,70 @@ export const getTopProducts = async (
                 quantity: 0,
                 cents: 0,
                 salesCount: 0,
+                baseCents: 0,
+                costCents: 0,
+                hasCost: true,
             };
             entry.quantity += item.quantity;
             entry.cents += toCents(item.netAmount ?? item.subtotal - item.discountAmount);
             entry.salesCount += 1;
+            entry.baseCents += toCents(item.taxes?.base ?? 0);
+            entry.costCents += toCents(item.costAmount ?? 0);
+            entry.hasCost &&= item.costAmount !== null && item.costAmount !== undefined;
             byProduct.set(item.productId, entry);
         }
     }
 
+    // Sin costo capturado la utilidad saldría igual a la venta: esos productos
+    // quedan fuera del ABC en vez de colarse a la clase A.
+    const byProfit = classifyAbc(
+        [...byProduct.entries()]
+            .filter(([, entry]) => entry.hasCost)
+            .map(([productId, entry]) => ({
+                productId,
+                total: fromCents(entry.baseCents - entry.costCents),
+            })),
+    );
+    const classByProduct = new Map(byProfit.map((item) => [item.productId, item.abcClass]));
+
+    const products = [...byProduct.entries()].map(([productId, entry]) => {
+        const returned = returnedByProduct.get(productId);
+        return {
+            productId,
+            productName: entry.productName,
+            quantity: entry.quantity - (returned?.quantity ?? 0),
+            total: fromCents(entry.cents - (returned?.cents ?? 0)),
+            salesCount: entry.salesCount,
+            abcClass: classByProduct.get(productId) ?? null,
+        };
+    });
+
+    const lowMarginTopSellers = [...products]
+        .sort((a, b) => b.total - a.total)
+        .slice(0, TOP_SELLERS_FOR_MARGIN)
+        .flatMap((item) => {
+            const entry = byProduct.get(item.productId);
+            return entry?.hasCost
+                ? [{
+                    productId: item.productId,
+                    productName: item.productName,
+                    total: item.total,
+                    marginRate: marginRate(entry.baseCents, entry.costCents),
+                }]
+                : [];
+        })
+        .sort((a, b) => a.marginRate - b.marginRate)
+        .slice(0, LOW_MARGIN_LIMIT);
+
     return {
-        items: [...byProduct.entries()]
-            .map(([productId, entry]) => {
-                const returned = returnedByProduct.get(productId);
-                return {
-                    productId,
-                    productName: entry.productName,
-                    quantity: entry.quantity - (returned?.quantity ?? 0),
-                    total: fromCents(entry.cents - (returned?.cents ?? 0)),
-                    salesCount: entry.salesCount,
-                };
-            })
+        items: products
             .sort((a, b) => b.quantity - a.quantity)
             .slice(0, filters.limit ?? 20),
+        abc: {
+            ...summarizeAbc(byProfit),
+            productsWithoutCost: products.length - byProfit.length,
+            lowMarginTopSellers,
+        },
     };
 };
 

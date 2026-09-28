@@ -328,6 +328,17 @@ export const deadStockQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
+export const expiryQuerySchema = z.object({
+    limit: z.coerce.number().int().positive().max(200).optional(),
+});
+
+/** Ventana de venta promedio y días de cobertura del resurtido sugerido. */
+export const reorderQuerySchema = z.object({
+    windowDays: z.coerce.number().int().min(7).max(180).optional(),
+    coverDays: z.coerce.number().int().min(1).max(90).optional(),
+    limit: z.coerce.number().int().positive().max(200).optional(),
+});
+
 export const scanCodeSchema = z.object({
     /** Cadena tal como la entrega el lector (puede traer FNC1 o paréntesis). */
     code: z.string().min(1).max(200),
