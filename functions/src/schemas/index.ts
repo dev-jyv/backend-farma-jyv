@@ -12,3 +12,4 @@ export * from './accounting';
 export * from './promotions';
 export * from './invoice-rag';
 export * from './assistant';
+export * from './pos-health';
