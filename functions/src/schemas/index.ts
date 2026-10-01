@@ -11,3 +11,4 @@ export * from './clinic';
 export * from './accounting';
 export * from './promotions';
 export * from './invoice-rag';
+export * from './assistant';
