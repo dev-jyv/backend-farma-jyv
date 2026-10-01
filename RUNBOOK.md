@@ -54,6 +54,20 @@ Se conservaron: `products`, `categories`, `suppliers`, `users`, `roles`,
 Para restaurar algo puntual, importar el volcado a un proyecto aparte y copiar
 solo lo que haga falta: `gcloud firestore import` sobre producción sobrescribe.
 
+### Cortes de prueba del POS dev — 2026-09-26
+
+El modo dev del POS apuntaba a producción hasta que se separaron los ambientes
+([docs/AMBIENTES.md](docs/AMBIENTES.md)). Tras la limpieza anterior quedaron dos
+cortes de prueba del 24 de septiembre, sin ventas ni movimientos:
+`jSUP8JbooILlK7T3Gqls` y `UWFXYYe2K1080Wl3GnkJ`. Se borraron con
+`functions/src/scripts/purge-test-data.ts` (dry-run por defecto; `--execute`
+aplica, anulando antes cualquier venta viva para restaurar stock y libro).
+
+- Respaldo previo: `manual/pre-borrado-pruebas-20260926T221807`.
+- Rastro: una entrada `maintenance.test_data_purged` en `auditLogs`.
+- También se borró el SQLite viejo del POS en la máquina de desarrollo
+  (`~/Library/Application Support/Electron/farmajyv-pos.sqlite` y respaldos).
+
 ---
 
 ## 1. Desplegar índices de Firestore — **antes que el código**

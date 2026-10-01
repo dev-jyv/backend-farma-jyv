@@ -95,6 +95,7 @@ export const uploadFile = async (
     storagePath: string,
     buffer: Buffer,
     mimeType: string,
+    customMetadata?: Record<string, string>,
 ): Promise<void> => {
     if (isR2Path(storagePath)) {
         const { putObject } = await r2();
@@ -114,6 +115,7 @@ export const uploadFile = async (
             contentType: mimeType,
             metadata: {
                 firebaseStorageDownloadTokens: downloadToken,
+                ...customMetadata,
             },
         },
     });
@@ -184,18 +186,33 @@ export const getSignedFileUrl = async (
  * así que el `exists()` era un viaje de red de más por cada archivo —y los
  * adjuntos del expediente se resuelven en paralelo, uno por adjunto.
  */
+const asStringMap = (value: unknown): Record<string, string> => {
+    if (!value || typeof value !== 'object') {
+        return {};
+    }
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).filter(
+            (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+    );
+};
+
 export const getFileMetadata = async (
     storagePath: string,
-): Promise<{ fileName: string; mimeType: string }> => {
+): Promise<{ fileName: string; mimeType: string; customMetadata: Record<string, string> }> => {
     if (isR2Path(storagePath)) {
         const { headObject } = await r2();
         const { mimeType } = await headObject(storagePath);
-        return { fileName: storagePath.split('/').pop() ?? storagePath, mimeType };
+        return {
+            fileName: storagePath.split('/').pop() ?? storagePath,
+            mimeType,
+            customMetadata: {},
+        };
     }
 
     const fileRef = getStorage().bucket().file(storagePath);
 
-    let metadata: { contentType?: string | null };
+    let metadata: { contentType?: string | null; metadata?: unknown };
     try {
         [metadata] = await fileRef.getMetadata();
     } catch (error) {
@@ -208,6 +225,7 @@ export const getFileMetadata = async (
     return {
         fileName: storagePath.split('/').pop() ?? storagePath,
         mimeType: metadata.contentType ?? 'application/octet-stream',
+        customMetadata: asStringMap(metadata.metadata),
     };
 };
 

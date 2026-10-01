@@ -129,14 +129,22 @@ describe('lectura', () => {
     it('los metadatos de un comprobante salen de R2', async () => {
         const meta = await getFileMetadata(RUTA_R2);
 
-        expect(meta).toEqual({ fileName: 'factura.pdf', mimeType: 'application/pdf' });
+        expect(meta).toEqual({
+            fileName: 'factura.pdf',
+            mimeType: 'application/pdf',
+            customMetadata: {},
+        });
         expect(r2.headObject).toHaveBeenCalledWith(RUTA_R2);
     });
 
     it('los metadatos de lo viejo salen de Firebase Storage', async () => {
         const meta = await getFileMetadata(RUTA_GCS);
 
-        expect(meta).toEqual({ fileName: 'estudio.png', mimeType: 'image/png' });
+        expect(meta).toEqual({
+            fileName: 'estudio.png',
+            mimeType: 'image/png',
+            customMetadata: {},
+        });
         expect(r2.headObject).not.toHaveBeenCalled();
     });
 });

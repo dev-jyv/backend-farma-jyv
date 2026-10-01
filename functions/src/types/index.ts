@@ -158,6 +158,7 @@ export type AuditAction =
     | 'recurringExpense.updated'
     /** Generación de los devengados del mes a partir de los gastos fijos. */
     | 'recurringExpense.generated'
+    | 'recurringExpense.paid'
     | 'bankAccount.created'
     | 'bankAccount.updated'
     /** Movimiento bancario capturado a mano o traspaso entre caja y banco. */

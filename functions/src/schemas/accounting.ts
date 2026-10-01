@@ -373,16 +373,18 @@ export const updateRecurringExpenseSchema = z
     .refine((data) => Object.keys(data).length > 0, { message: 'Sin cambios' });
 
 /**
- * Mes de gastos fijos. Sin meses futuros: generar la renta de diciembre en
- * septiembre dejaría un pasivo que todavía no existe.
+ * Mes de gastos fijos. Sin meses futuros: pagar la renta de diciembre en
+ * septiembre pegaría en un periodo que todavía no existe.
  */
 const recurringMonth = z
     .string()
     .regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Mes inválido (AAAA-MM)')
     .refine((value) => value <= new Date().toISOString().slice(0, 7), {
-        message: 'No se pueden generar meses futuros',
+        message: 'No se pueden registrar meses futuros',
     });
 
-export const recurringMonthSchema = z.object({ month: recurringMonth });
+export const payRecurringExpenseSchema = payAccruedExpenseSchema.extend({
+    month: recurringMonth,
+});
 
 export const recurringExpensesQuerySchema = z.object({ month: recurringMonth.optional() });

@@ -57,6 +57,8 @@ Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/recei
 
 Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`), `GET /v1/promotions/:id/performance` (desempeño vs ventana previa), `GET /v1/promotions/suggestions/expiring?days=90` (lotes por caducar con % sugerido), `POST /v1/promotions/:id/replace` (crea la nueva y luego da de baja la vieja). La venta acepta `items[].promotionId` y `soldAt`; `GET /v1/sales?promotionReview=true` lista las ventas offline aceptadas con promo fuera de vigencia. Cambiar el precio de un producto da de baja las promos que ese precio invalida.
 
+Asistente de análisis (`modules/assistant`, permiso **`dashboard:read`**): `POST /v1/assistant/chat` con `{ messages: [{ role, content }] }` (máx. 20, el último del usuario) → `{ data: { reply, model, toolsUsed } }`. Chat por OpenRouter (`OPENROUTER_CHAT_MODEL`, debe soportar tool calling) con herramientas de solo lectura sobre los reportes existentes (ventas, utilidad, top productos, cajeros, horas, dead stock, inventario, alertas, resurtido); máx. 4 rondas de herramientas, 15 mensajes/min por usuario, sin historial en servidor. Sin `OPENROUTER_API_KEY` responde 503.
+
 Alta canónica de personal: `POST /users`. `POST /auth/register-staff` es alias.
 
 ## Estructura de `functions/src/`
@@ -118,7 +120,7 @@ services/ repositories/ types/ constants/ utils/   — capa de dominio (funcione
 
 ## Firestore rules
 
-Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventario, ventas, **saleReturns**, **inventoryCounts**, **controlledSalesLedger** (ambos solo admin/manager), **auditLogs** (solo admin), **cashReadings**, **invoices**, **cashSessions**. Cliente SDK no escribe; todo muta por la Function `api`.
+Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventario, ventas, **saleReturns**, **inventoryCounts**, **controlledSalesLedger** (ambos solo admin/manager), **auditLogs** (solo admin), **cashReadings**, **invoices**, **cashSessions**. **`roles` y `pointOrders` niegan también la lectura** (el cliente no baja la matriz de permisos ni el dueño de una orden Point). Cliente SDK no escribe; todo muta por la Function `api`.
 
 ## Testing
 

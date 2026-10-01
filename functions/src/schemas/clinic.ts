@@ -112,7 +112,10 @@ export const createMedicalRecordSchema = z.object({
      * antes de guardarse, para que el expediente no apunte a rutas inventadas.
      */
     attachments: z.array(z.object({
-        storagePath: z.string().min(1),
+        storagePath: z.string().regex(
+            /^uploads\/[A-Za-z0-9]{10,28}\/[A-Za-z0-9._-]{1,120}$/,
+            'El adjunto debe ser un archivo subido para el expediente',
+        ),
         fileName: nullable(text(200)),
     })).max(20).optional(),
 });

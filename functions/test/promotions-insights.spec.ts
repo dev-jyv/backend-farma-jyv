@@ -373,7 +373,7 @@ describe('promociones: desempeño y operación', () => {
                 .toMatchObject({ reason: 'replaced', replacedBy: created.id });
         });
 
-        it('si la baja de la vieja falla, da de baja la nueva: nunca quedan las dos activas', async () => {
+        it('si la baja de la vieja falla, da de baja la nueva (nunca quedan las dos)', async () => {
             const product = await createProduct();
             const vieja = await tieredPromo([product.id]);
             const update = jest.spyOn(promotionsRepo, 'updatePromotion');

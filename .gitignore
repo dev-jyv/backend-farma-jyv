@@ -80,3 +80,6 @@ service-account.json
 
 # Reportes de auditoría de seguridad (contienen rutas de ataque sin corregir)
 security-reports/
+
+# Datos persistidos de los emuladores locales (npm run emulators)
+.emulator-data/

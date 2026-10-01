@@ -34,7 +34,7 @@ import {
     listAccountingExpensesQuerySchema,
     createRecurringExpenseSchema,
     recurringExpensesQuerySchema,
-    recurringMonthSchema,
+    payRecurringExpenseSchema,
     updateRecurringExpenseSchema,
     updateAccountingExpenseSchema,
     updateAccountingSettingsSchema,
@@ -76,7 +76,7 @@ type PayAccruedExpenseInput = z.infer<typeof payAccruedExpenseSchema>;
 type AccruedExpensesQuery = z.infer<typeof accruedExpensesQuerySchema>;
 type CreateRecurringInput = z.infer<typeof createRecurringExpenseSchema>;
 type UpdateRecurringInput = z.infer<typeof updateRecurringExpenseSchema>;
-type RecurringMonthInput = z.infer<typeof recurringMonthSchema>;
+type PayRecurringExpenseInput = z.infer<typeof payRecurringExpenseSchema>;
 type RecurringMonthQuery = z.infer<typeof recurringExpensesQuerySchema>;
 
 /**
@@ -212,15 +212,18 @@ export class AccountingController {
         return { data };
     }
 
-    /** Genera los devengados del mes; repetirlo no duplica. */
-    @Post('recurring-expenses/generate')
+    /** Registra lo pagado de un gasto fijo en su mes; es lo único que pega en contabilidad. */
+    @Post('recurring-expenses/:id/payments')
+    @HttpCode(201)
     @RequirePermission('accounting', 'write')
-    async generateRecurringMonth(
-        @Body(new ZodValidationPipe(recurringMonthSchema)) body: RecurringMonthInput,
+    async payRecurringExpense(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(payRecurringExpenseSchema)) body: PayRecurringExpenseInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const data = await recurringService.generateRecurringMonth(
-            body.month,
+        const data = await recurringService.payRecurringExpense(
+            params.id,
+            body,
             user.uid,
             user.role.slug,
             user.displayName || user.email,

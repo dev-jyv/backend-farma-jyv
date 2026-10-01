@@ -16,12 +16,6 @@ jest.mock('../src/services/mercado-pago.service', () => ({
 
 const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2, 10)}`;
 
-/** Ventana amplia, para no depender del reloj del emulador. */
-const period = () => ({
-    from: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-    to: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-});
-
 const createProductFixture = async (salePrice = 116) => {
     const category = await categoriesRepo.createCategory({
         name: unique('Categoria'),
@@ -192,7 +186,7 @@ describe('accounting.service - gastos fuera de caja', () => {
         expect(summary.summary.movements.expenses.total).toBe(0);
     });
 
-    it('suma al estado de resultados en su categoría', async () => {
+    it('no es gasto contable: sale del resultado y se informa aparte', async () => {
         // Instante propio en el pasado, con desplazamiento aleatorio: el
         // emulador es compartido entre suites, y una ventana de segundos a 45
         // días atrás solo puede contener el gasto de esta prueba.
@@ -212,23 +206,42 @@ describe('accounting.service - gastos fuera de caja', () => {
             from: new Date(occurredAt.getTime() - 2_000).toISOString(),
             to: new Date(occurredAt.getTime() + 2_000).toISOString(),
         });
-        const line = statement.operatingExpenses.byCategory
-            .find((item) => item.category === 'salary');
+        // Solo los gastos fijos devengados son gasto de operación: la nómina
+        // capturada aquí duplicaría la que ya genera "Gastos fijos".
+        expect(statement.operatingExpenses.byCategory).toEqual([]);
+        expect(statement.operatingExpenses.total).toBeCloseTo(0, 2);
+        expect(statement.externalSpending).toEqual({
+            total: 1500,
+            count: 1,
+            fromCashBox: 0,
+            outsideCashBox: 1500,
+        });
+        expect(statement.reliability.warnings.join(' ')).toContain('segunda caja');
+    });
 
-        expect(line).toBeDefined();
-        expect(line!.total).toBeCloseTo(1500, 2);
-        // Pagado por transferencia: no salió del cajón, y el desglose tiene que
-        // decirlo o nadie podría cuadrar el informe contra los cortes.
-        expect(line!.outsideCashBox).toBeCloseTo(1500, 2);
-        expect(line!.fromCashBox).toBeCloseTo(0, 2);
-        expect(statement.operatingExpenses.total).toBeCloseTo(1500, 2);
-        expect(statement.reliability.expensesOutsideCashBox).toBe(1);
+    it('el gasto del POS va a la segunda caja y no al resultado', async () => {
+        const session = await openSession();
+        const movement = await cashSessionsService.addMovement(
+            session.id,
+            session.openedBy,
+            'cashier',
+            { type: 'expense', amount: 250, reason: unique('Garrafón'), category: 'food' },
+        );
+
+        const instant = movement.createdAt.toDate().getTime();
+        const statement = await accountingService.getIncomeStatement({
+            from: new Date(instant - 1).toISOString(),
+            to: new Date(instant + 1).toISOString(),
+        });
+
+        expect(statement.operatingExpenses.byCategory).toEqual([]);
+        expect(statement.externalSpending.fromCashBox).toBeCloseTo(250, 2);
     });
 
     it('un gasto con fecha anterior cae en su periodo, no en el de captura', async () => {
         const occurredAt = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
 
-        await accountingService.createExpense('admin-user', 'admin', 'Admin', {
+        const movement = await accountingService.createExpense('admin-user', 'admin', 'Admin', {
             amount: 2400,
             reason: unique('Luz del mes pasado'),
             category: 'electricity',
@@ -241,18 +254,16 @@ describe('accounting.service - gastos fuera de caja', () => {
             from: new Date(occurredAt.getTime() - 24 * 60 * 60 * 1000).toISOString(),
             to: new Date(occurredAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
         });
-        const pastLine = past.operatingExpenses.byCategory
-            .find((line) => line.category === 'electricity');
+        expect(past.externalSpending.outsideCashBox).toBeGreaterThanOrEqual(2400);
 
-        expect(pastLine).toBeDefined();
-        expect(pastLine!.total).toBeGreaterThanOrEqual(2400);
-
-        // Y no aparece en el periodo de hoy: cargarlo al mes equivocado deforma
-        // los dos estados de resultados a la vez.
-        const today = await accountingService.getIncomeStatement(period());
-        const todayLine = today.operatingExpenses.byCategory
-            .find((line) => line.category === 'electricity');
-        expect(todayLine?.total ?? 0).toBeLessThan(2400);
+        // Y no aparece en el instante de captura: cargarlo al mes equivocado
+        // deforma los dos informes a la vez.
+        const captured = movement.createdAt.toDate().getTime();
+        const atCapture = await accountingService.getIncomeStatement({
+            from: new Date(captured - 1).toISOString(),
+            to: new Date(captured + 1).toISOString(),
+        });
+        expect(atCapture.externalSpending.outsideCashBox).toBeCloseTo(0, 2);
     });
 
     it('rechaza corregir un gasto que cuelga de un turno de caja', async () => {

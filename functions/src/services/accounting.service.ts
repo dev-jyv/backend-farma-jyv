@@ -62,17 +62,33 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /*  Estado de resultados                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Gasto contable del periodo por categoría. Solo lo **devengado** —los gastos
+ * fijos que genera "Gastos fijos" y los devengados capturados a mano—: es lo
+ * único que la farmacia reconoce como gasto de operación.
+ */
 export interface ExpenseLine {
     category: ExpenseCategory;
     label: string;
     total: number;
     count: number;
-    /** Parte del renglón que salió del cajón de una caja. */
+}
+
+/**
+ * Salidas registradas como `expense` en movimientos de caja: las del POS se
+ * apartan en una segunda caja y se gastan fuera, y las de "Gastos fuera de caja"
+ * se capturan en contabilidad sin devengarse. **No** son gasto del periodo:
+ * restarlas del resultado duplicaría la renta o la nómina que ya pegó como
+ * gasto fijo. Se informan aparte porque el dinero sí salió, y en el balance
+ * bajan el capital como retiro.
+ */
+export interface ExternalSpending {
+    total: number;
+    count: number;
+    /** Retirado del cajón de un turno para la segunda caja. */
     fromCashBox: number;
-    /** Parte capturada en contabilidad (transferencia, tarjeta, sin turno). */
+    /** Capturado en contabilidad (sin turno, transferencia o tarjeta). */
     outsideCashBox: number;
-    /** Parte **devengada y no pagada** al cierre del periodo. */
-    accrued: number;
 }
 
 /**
@@ -91,8 +107,6 @@ export interface IncomeStatementReliability {
     returnsWithoutCost: number;
     /** Lotes consumidos por merma sin costo capturado: la merma sale subestimada. */
     wasteWithoutCost: number;
-    /** Gastos capturados en contabilidad (no salieron de ninguna caja). */
-    expensesOutsideCashBox: number;
     /** Gastos devengados en el periodo: pegan en resultados sin haberse pagado. */
     accruedExpenses: number;
     /** Facturas de compra del periodo sin desglose: su IVA no es acreditable aquí. */
@@ -135,6 +149,8 @@ export interface IncomeStatement {
     operatingIncome: number;
     /** Margen operativo sobre el ingreso neto, en porcentaje. */
     operatingMarginRate: number;
+    /** Fuera de resultados; ver `ExternalSpending`. */
+    externalSpending: ExternalSpending;
     /**
      * IVA del periodo por sus dos lados: el **trasladado** sale de las ventas y
      * el **acreditable** del desglose de las facturas de compra fechadas en el
@@ -274,97 +290,77 @@ const wasteCostCents = async (
     return { costCents, withoutCost };
 };
 
-/** Agrupa los gastos del periodo por categoría, en el orden fijo del catálogo. */
-const groupExpenses = (
-    movements: CashMovement[],
+/**
+ * Gastos contables del periodo por categoría, en el orden fijo del catálogo.
+ * Pegan aunque no se hayan pagado: es lo que vuelve comparable el estado de
+ * resultados con el de un despacho contable, que trabaja sobre lo causado.
+ */
+const groupAccruedExpenses = (
     accrued: AccruedExpense[],
-): {
-    lines: ExpenseLine[];
-    totalCents: number;
-    outsideCount: number;
-    accruedCents: number;
-} => {
-    const byCategory = new Map<ExpenseCategory, {
-        totalCents: number;
-        count: number;
-        fromCashBoxCents: number;
-        outsideCents: number;
-        accruedCents: number;
-    }>();
-
+): { lines: ExpenseLine[]; totalCents: number } => {
+    const byCategory = new Map<ExpenseCategory, { totalCents: number; count: number }>();
     let totalCents = 0;
-    let outsideCount = 0;
-    let accruedCents = 0;
 
-    for (const movement of movements) {
-        // Solo `expense`: el pago de un gasto devengado viaja como `withdrawal`,
-        // porque el gasto ya pegó en resultados el día que se devengó.
-        if (movement.type !== 'expense') {
-            continue;
-        }
-        // Un gasto sin categoría no debería existir (el alta la exige), pero un
-        // documento viejo o importado puede no traerla: cae en "Otros" en vez de
-        // desaparecer del total.
-        const category = movement.category ?? 'other';
-        const amountCents = toCents(movement.amount);
-        // "Fuera de caja" es no haber salido del cajón: o no cuelga de un turno,
-        // o se pagó por un medio que no es efectivo.
-        const outside = movement.cashSessionId === null ||
-            (movement.paymentMethod ?? 'cash') !== 'cash';
-
-        const entry = byCategory.get(category) ??
-            { totalCents: 0, count: 0, fromCashBoxCents: 0, outsideCents: 0, accruedCents: 0 };
-        entry.totalCents += amountCents;
-        entry.count += 1;
-        if (outside) {
-            entry.outsideCents += amountCents;
-            outsideCount += 1;
-        } else {
-            entry.fromCashBoxCents += amountCents;
-        }
-        byCategory.set(category, entry);
-
-        totalCents += amountCents;
-    }
-
-    // Los devengados del periodo pegan en resultados aunque no se hayan pagado:
-    // es lo que vuelve comparable el estado de resultados con el de un despacho
-    // contable, que trabaja siempre sobre lo causado.
     for (const item of accrued) {
         const amountCents = toCents(item.amount);
-        const entry = byCategory.get(item.category) ??
-            { totalCents: 0, count: 0, fromCashBoxCents: 0, outsideCents: 0, accruedCents: 0 };
+        const entry = byCategory.get(item.category) ?? { totalCents: 0, count: 0 };
         entry.totalCents += amountCents;
         entry.count += 1;
-        entry.accruedCents += amountCents;
         byCategory.set(item.category, entry);
-
         totalCents += amountCents;
-        accruedCents += amountCents;
     }
 
     const lines = EXPENSE_CATEGORY_ORDER
+        .filter((category) => byCategory.has(category))
         .map((category) => {
-            const entry = byCategory.get(category);
+            const entry = byCategory.get(category)!;
             return {
                 category,
                 label: EXPENSE_CATEGORY_LABELS[category],
-                total: fromCents(entry?.totalCents ?? 0),
-                count: entry?.count ?? 0,
-                fromCashBox: fromCents(entry?.fromCashBoxCents ?? 0),
-                outsideCashBox: fromCents(entry?.outsideCents ?? 0),
-                accrued: fromCents(entry?.accruedCents ?? 0),
+                total: fromCents(entry.totalCents),
+                count: entry.count,
             };
-        })
-        // Los renglones en cero se quedan: un estado de resultados que esconde
-        // "Renta: 0" no distingue "no se pagó" de "no se capturó".
-        .filter((line) => line.count > 0 || line.total !== 0);
+        });
 
-    return { lines, totalCents, outsideCount, accruedCents };
+    return { lines, totalCents };
+};
+
+/**
+ * Suma de las salidas `expense` de caja. El pago de un gasto devengado viaja
+ * como `withdrawal` y no entra aquí: ese sí es gasto contable, y ya pegó en
+ * resultados el día que se devengó.
+ */
+const summarizeExternalSpending = (movements: CashMovement[]): ExternalSpending => {
+    let fromCashBoxCents = 0;
+    let outsideCents = 0;
+    let count = 0;
+
+    for (const movement of movements) {
+        if (movement.type !== 'expense') {
+            continue;
+        }
+        const amountCents = toCents(movement.amount);
+        const outside = movement.cashSessionId === null ||
+            (movement.paymentMethod ?? 'cash') !== 'cash';
+        if (outside) {
+            outsideCents += amountCents;
+        } else {
+            fromCashBoxCents += amountCents;
+        }
+        count += 1;
+    }
+
+    return {
+        total: fromCents(fromCashBoxCents + outsideCents),
+        count,
+        fromCashBox: fromCents(fromCashBoxCents),
+        outsideCashBox: fromCents(outsideCents),
+    };
 };
 
 const buildWarnings = (
     reliability: Omit<IncomeStatementReliability, 'warnings'>,
+    externalSpending: ExternalSpending,
 ): string[] => {
     const warnings: string[] = [];
 
@@ -404,6 +400,13 @@ const buildWarnings = (
         warnings.push(
             `Incluye ${reliability.accruedExpenses.toFixed(2)} de gastos devengados y todavía ` +
             'no pagados: pegan en el resultado del periodo y siguen vivos en el pasivo.',
+        );
+    }
+    if (externalSpending.count > 0) {
+        warnings.push(
+            `${externalSpending.count} gasto(s) de caja por ` +
+            `${externalSpending.total.toFixed(2)} no entran al resultado: son retiros de la ` +
+            'segunda caja y gastos externos, no gastos fijos. En el balance restan del capital.',
         );
     }
     warnings.push(
@@ -500,7 +503,8 @@ const buildStatement = async (
     const costOfSalesCents = merchandiseCostCents + waste.costCents;
     const grossProfitCents = netRevenueCents - costOfSalesCents;
 
-    const expenses = groupExpenses(movements, accrued);
+    const expenses = groupAccruedExpenses(accrued);
+    const externalSpending = summarizeExternalSpending(movements);
     const operatingExpensesCents = expenses.totalCents + commissionCents + depreciationCents;
     const operatingIncomeCents = grossProfitCents - operatingExpensesCents;
 
@@ -510,8 +514,7 @@ const buildStatement = async (
         salesWithoutTaxBreakdown,
         returnsWithoutCost: returnedCost.withoutCost,
         wasteWithoutCost: waste.withoutCost,
-        expensesOutsideCashBox: expenses.outsideCount,
-        accruedExpenses: fromCents(expenses.accruedCents),
+        accruedExpenses: fromCents(expenses.totalCents),
         invoicesWithoutTaxBreakdown,
     };
 
@@ -540,13 +543,14 @@ const buildStatement = async (
         },
         operatingIncome: fromCents(operatingIncomeCents),
         operatingMarginRate: rate(operatingIncomeCents, netRevenueCents),
+        externalSpending,
         taxes: {
             ivaCharged: fromCents(ivaCents),
             iepsCharged: fromCents(iepsCents),
             ivaCreditable: fromCents(ivaCreditableCents),
             ivaPayable: fromCents(ivaCents - ivaCreditableCents),
         },
-        reliability: { ...reliability, warnings: buildWarnings(reliability) },
+        reliability: { ...reliability, warnings: buildWarnings(reliability, externalSpending) },
     };
 };
 
@@ -748,6 +752,11 @@ export interface BalanceSheet {
         openingRetainedEarnings: number;
         contributions: number;
         withdrawals: number;
+        /**
+         * Retiros de la segunda caja y gastos externos acumulados. El dinero
+         * salió de caja o banco sin ser gasto contable, así que baja el capital.
+         */
+        externalSpending: number;
         /** Resultado acumulado desde el arranque contable hasta la fecha. */
         periodResult: number;
         total: number;
@@ -881,9 +890,11 @@ export const getBalanceSheet = async (filters: { asOf?: string } = {}): Promise<
     const contributionsCents = toCents(equity.contributions) +
         toCents(settings.openingBalances.equityContributions);
     const withdrawalsCents = toCents(equity.withdrawals);
+    const externalSpendingCents = toCents(statement.externalSpending.total);
     const retainedCents = toCents(settings.openingBalances.retainedEarnings);
     const resultCents = toCents(statement.operatingIncome);
-    const equityTotalCents = contributionsCents - withdrawalsCents + retainedCents + resultCents;
+    const equityTotalCents = contributionsCents - withdrawalsCents - externalSpendingCents +
+        retainedCents + resultCents;
 
     const differenceCents = assetsTotalCents - liabilitiesTotalCents - equityTotalCents;
 
@@ -940,6 +951,7 @@ export const getBalanceSheet = async (filters: { asOf?: string } = {}): Promise<
             openingRetainedEarnings: fromCents(retainedCents),
             contributions: fromCents(contributionsCents),
             withdrawals: fromCents(withdrawalsCents),
+            externalSpending: fromCents(externalSpendingCents),
             periodResult: fromCents(resultCents),
             total: fromCents(equityTotalCents),
         },
@@ -1311,10 +1323,9 @@ export const updateExpense = async (
 };
 
 /**
- * Gastos del periodo, por **fecha de ocurrencia**. Incluye por defecto los dos
- * orígenes —cajón y contabilidad—, porque es exactamente lo que el estado de
- * resultados suma: una lista que solo mostrara uno de los dos no cuadraría
- * nunca con el informe que está al lado.
+ * Gastos de caja del periodo, por **fecha de ocurrencia**. Incluye por defecto
+ * los dos orígenes —cajón y contabilidad—, que juntos son el
+ * `externalSpending` del estado de resultados.
  */
 export const listExpenses = async (filters: {
     from?: string;

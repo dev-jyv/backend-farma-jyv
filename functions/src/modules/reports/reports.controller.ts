@@ -2,12 +2,14 @@ import { Controller, Get, Query } from '@nestjs/common';
 import { z } from 'zod';
 import {
     commissionsQuerySchema,
+    dashboardChartsQuerySchema,
     deadStockQuerySchema,
     expiryQuerySchema,
     reorderQuerySchema,
     reportPeriodQuerySchema,
 } from '../../schemas';
 import * as analyticsService from '../../services/analytics.service';
+import * as dashboardChartsService from '../../services/dashboard-charts.service';
 import * as insightsService from '../../services/insights.service';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
@@ -17,6 +19,7 @@ type DeadStockQuery = z.infer<typeof deadStockQuerySchema>;
 type CommissionsQuery = z.infer<typeof commissionsQuerySchema>;
 type ExpiryQuery = z.infer<typeof expiryQuerySchema>;
 type ReorderQuery = z.infer<typeof reorderQuerySchema>;
+type DashboardChartsQuery = z.infer<typeof dashboardChartsQuerySchema>;
 
 /**
  * Reportes de gestión, bajo el área de permiso `dashboard` (hasta ahora sin uso):
@@ -126,6 +129,24 @@ export class ReportsController {
         @Query(new ZodValidationPipe(reorderQuerySchema)) query: ReorderQuery,
     ) {
         const data = await insightsService.getReorderSuggestions(query);
+        return { data };
+    }
+
+    /** Ventas, compras y gastos del POS por día, mes o año locales. */
+    @Get('dashboard-charts')
+    @RequirePermission('dashboard', 'read')
+    async dashboardCharts(
+        @Query(new ZodValidationPipe(dashboardChartsQuerySchema)) query: DashboardChartsQuery,
+    ) {
+        const data = await dashboardChartsService.getDashboardCharts(query);
+        return { data };
+    }
+
+    /** Próximo vencimiento de cada gasto fijo activo, del más urgente al más lejano. */
+    @Get('upcoming-fixed-payments')
+    @RequirePermission('dashboard', 'read')
+    async upcomingFixedPayments() {
+        const data = await dashboardChartsService.getUpcomingFixedPayments();
         return { data };
     }
 

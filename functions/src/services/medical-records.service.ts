@@ -20,6 +20,7 @@ import {
 import * as recordsRepo from '../repositories/medical-records.repository';
 import * as patientsRepo from '../repositories/patients.repository';
 import * as appointmentsRepo from '../repositories/appointments.repository';
+import { RECORD_ATTACHMENT_PURPOSE } from './uploads.service';
 import { diffFields, recordAudit } from './audit.service';
 
 type CreateMedicalRecordInput = z.infer<typeof createMedicalRecordSchema>;
@@ -74,6 +75,26 @@ export const getMedicalRecord = async (id: string): Promise<MedicalRecord> => {
     return record;
 };
 
+const RECORD_ATTACHMENT_PATH = /^uploads\/[A-Za-z0-9]{10,28}\/[A-Za-z0-9._-]{1,120}$/;
+
+/**
+ * El expediente solo puede señalar un archivo que este usuario subió por
+ * `POST /v1/uploads`. Sin el prefijo y sin `uploadedBy`, bastaba conocer la
+ * ruta de un comprobante o de otro paciente para firmarla desde el consultorio.
+ */
+export const assertRecordAttachmentSource = (
+    storagePath: string,
+    metadata: { purpose?: string; uploadedBy?: string },
+    userId: string,
+): void => {
+    if (!RECORD_ATTACHMENT_PATH.test(storagePath)) {
+        throw badRequest('El adjunto debe ser un archivo subido para el expediente');
+    }
+    if (metadata.purpose !== RECORD_ATTACHMENT_PURPOSE || metadata.uploadedBy !== userId) {
+        throw badRequest('El adjunto no corresponde a una subida de este usuario');
+    }
+};
+
 /**
  * Los adjuntos llegan como rutas de Storage ya subidas (`POST /v1/uploads`). Se
  * confirma contra Storage que el archivo existe antes de guardarlo: si no, el
@@ -93,6 +114,7 @@ const resolveAttachments = async (
         // Un solo viaje a Storage: `getFileMetadata` ya rechaza el archivo
         // inexistente, así que no hace falta comprobar la existencia aparte.
         const metadata = await getFileMetadata(attachment.storagePath);
+        assertRecordAttachmentSource(attachment.storagePath, metadata.customMetadata, userId);
         if (!ALLOWED_UPLOAD_MIME_TYPES.has(metadata.mimeType)) {
             throw badRequest(ALLOWED_UPLOAD_MIME_MESSAGE);
         }

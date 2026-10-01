@@ -4,19 +4,22 @@ import {
 } from '../constants/expenses';
 import * as accruedRepo from '../repositories/accrued-expenses.repository';
 import * as recurringRepo from '../repositories/recurring-expenses.repository';
-import { ExpenseCategory, RecurringExpense } from '../types';
+import {
+    AccruedExpense,
+    ExpenseCategory,
+    ExpensePaymentMethod,
+    RecurringExpense,
+} from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { fromCents, toCents } from '../utils/taxes';
-import { AccruedExpenseView, assertPeriodOpen, toAccruedView } from './accounting-core.service';
+import { assertPeriodOpen } from './accounting-core.service';
 import { recordAudit } from './audit.service';
 
 /**
- * Gastos fijos: plantillas que, a pedido, generan un gasto devengado por mes.
- *
- * La generación es idempotente por construcción: el devengado de una plantilla
- * en un mes tiene id `recurring_<plantilla>_<mes>`, así que generar dos veces
- * (o desde dos pantallas a la vez) nunca duplica el gasto del estado de
- * resultados.
+ * Gastos fijos: plantillas de renta, luz o nómina. La plantilla es solo el
+ * presupuesto de referencia; en contabilidad pega únicamente lo que se registra
+ * como pagado en su mes (`payRecurringExpense`), nunca el monto presupuestado.
+ * Los gastos capturados en el POS no entran aquí: son la segunda caja.
  */
 
 export interface RecurringMonthLine {
@@ -26,16 +29,16 @@ export interface RecurringMonthLine {
     dueDay: number;
     isActive: boolean;
     budget: number;
-    accrued: AccruedExpenseView | null;
+    paid: number;
+    lastPaymentAt: string | null;
 }
 
 export interface RecurringMonthSummary {
     month: string;
     lines: RecurringMonthLine[];
     budgetTotal: number;
-    accruedTotal: number;
     paidTotal: number;
-    pendingToGenerate: number;
+    unpaidCount: number;
 }
 
 export const recurringAccrualId = (recurringExpenseId: string, month: string): string =>
@@ -45,7 +48,7 @@ export const recurringAccrualId = (recurringExpenseId: string, month: string): s
  * El vencimiento es el día configurado a mediodía UTC: a medianoche UTC el día 1
  * caería, en hora de México, en el último día del mes anterior. El devengo es
  * ese mismo día salvo que aún no llegue; entonces es hoy, que sigue siendo del
- * mes (no se generan meses futuros) y respeta la regla de no devengar a futuro.
+ * mes (no se pagan meses futuros) y respeta la regla de no devengar a futuro.
  */
 export const recurringAccrualDates = (
     month: string,
@@ -60,38 +63,40 @@ const sumMoney = (values: number[]): number =>
     fromCents(values.reduce((total, value) => total + toCents(value), 0));
 
 /**
- * Presupuesto contra real de un mes. Entran las plantillas activas y también
- * las inactivas que ya generaron gasto ese mes: darla de baja no borra lo que
- * ya pegó en resultados.
+ * Presupuesto contra pagado de un mes. Entran las plantillas activas y también
+ * las inactivas que ya tienen pagos ese mes: darla de baja no borra lo pagado.
  */
 export const summarizeRecurringMonth = (
     month: string,
     templates: RecurringExpense[],
-    accruals: AccruedExpenseView[],
+    accruals: AccruedExpense[],
 ): RecurringMonthSummary => {
     const accrualByTemplate = new Map(
         accruals.map((accrual) => [accrual.recurringExpenseId, accrual]),
     );
     const lines = templates
-        .filter((template) => template.isActive || accrualByTemplate.has(template.id))
-        .map((template) => ({
-            recurringExpenseId: template.id,
-            category: template.category,
-            concept: template.concept,
-            dueDay: template.dueDay,
-            isActive: template.isActive,
-            budget: template.isActive ? template.amount : 0,
-            accrued: accrualByTemplate.get(template.id) ?? null,
-        }));
-    const accrued = lines.flatMap((line) => (line.accrued ? [line.accrued] : []));
+        .filter((template) =>
+            template.isActive || (accrualByTemplate.get(template.id)?.paidTotal ?? 0) > 0)
+        .map((template) => {
+            const accrual = accrualByTemplate.get(template.id);
+            return {
+                recurringExpenseId: template.id,
+                category: template.category,
+                concept: template.concept,
+                dueDay: template.dueDay,
+                isActive: template.isActive,
+                budget: template.isActive ? template.amount : 0,
+                paid: accrual?.paidTotal ?? 0,
+                lastPaymentAt: accrual?.lastPaymentAt?.toDate().toISOString() ?? null,
+            };
+        });
 
     return {
         month,
         lines,
         budgetTotal: sumMoney(lines.map((line) => line.budget)),
-        accruedTotal: sumMoney(accrued.map((item) => item.amount)),
-        paidTotal: sumMoney(accrued.map((item) => item.paidTotal)),
-        pendingToGenerate: lines.filter((line) => line.isActive && !line.accrued).length,
+        paidTotal: sumMoney(lines.map((line) => line.paid)),
+        unpaidCount: lines.filter((line) => line.isActive && line.paid <= 0).length,
     };
 };
 
@@ -108,12 +113,7 @@ export const getRecurringMonth = async (month: string): Promise<RecurringMonthSu
     const accruals = await accruedRepo.getByIds(
         templates.map((template) => recurringAccrualId(template.id, month)),
     );
-    const asOf = new Date();
-    return summarizeRecurringMonth(
-        month,
-        templates,
-        accruals.map((accrual) => toAccruedView(accrual, asOf)),
-    );
+    return summarizeRecurringMonth(month, templates, accruals);
 };
 
 export const createRecurringExpense = async (
@@ -180,55 +180,64 @@ export const updateRecurringExpense = async (
     return template;
 };
 
-export const generateRecurringMonth = async (
-    month: string,
+/**
+ * Registra un pago real del gasto fijo en su mes. Es lo único que lo lleva a
+ * contabilidad; el pago sale como retiro del cajón o del banco elegido.
+ */
+export const payRecurringExpense = async (
+    id: string,
+    input: {
+        month: string;
+        amount: number;
+        paymentMethod: ExpensePaymentMethod;
+        paidAt?: string;
+        bankAccountId?: string;
+    },
     userId: string,
     roleSlug: string,
     userLabel?: string,
-): Promise<{ created: number; existing: number; summary: RecurringMonthSummary }> => {
-    const templates = (await recurringRepo.list()).filter((template) => template.isActive);
-    if (templates.length === 0) {
-        throw badRequest('No hay gastos fijos activos');
+): Promise<RecurringMonthSummary> => {
+    const template = await recurringRepo.getById(id);
+    if (!template) {
+        throw notFound('Gasto fijo');
     }
+    const paidAt = input.paidAt ? new Date(`${input.paidAt}T12:00:00.000Z`) : new Date();
+    const { accruedAt, dueDate } = recurringAccrualDates(input.month, template.dueDay);
+    await assertPeriodOpen(accruedAt, `Gasto fijo ${template.concept}`);
+    await assertPeriodOpen(paidAt, 'Pago de gasto fijo');
 
-    const asOf = new Date();
-    const entries = templates.map((template) => ({
-        id: recurringAccrualId(template.id, month),
-        category: template.category,
-        concept: template.concept,
-        description: template.description ?? null,
-        amount: template.amount,
-        ...recurringAccrualDates(month, template.dueDay, asOf),
-        recurringExpenseId: template.id,
-        recurringMonth: month,
-    }));
-
-    const existingIds = new Set(
-        (await accruedRepo.getByIds(entries.map((entry) => entry.id))).map((item) => item.id),
+    const { accrued } = await accruedRepo.recordRecurringPayment(
+        {
+            id: recurringAccrualId(id, input.month),
+            category: template.category,
+            concept: template.concept,
+            description: template.description ?? null,
+            accruedAt,
+            dueDate,
+            recurringExpenseId: id,
+            recurringMonth: input.month,
+        },
+        {
+            amount: input.amount,
+            paymentMethod: input.paymentMethod,
+            paidAt,
+            ...(input.bankAccountId ? { bankAccountId: input.bankAccountId } : {}),
+            reason: `Pago de gasto fijo: ${template.concept} (${input.month})`,
+            createdBy: userId,
+            ...(userLabel ? { createdByLabel: userLabel } : {}),
+        },
     );
-    const pending = entries.filter((entry) => !existingIds.has(entry.id));
-    for (const entry of pending) {
-        await assertPeriodOpen(entry.accruedAt, `Gasto fijo ${entry.concept}`);
-    }
 
-    const result = await accruedRepo.createRecurringAccruals(pending, userId, userLabel);
+    await recordAudit({
+        action: 'recurringExpense.paid',
+        entity: 'recurringExpense',
+        entityId: id,
+        summary: `Pago de ${input.amount.toFixed(2)} a ${template.concept} (${input.month}); ` +
+            `pagado en el mes ${accrued.paidTotal.toFixed(2)}`,
+        userId,
+        roleSlug,
+        metadata: { ...input, accruedExpenseId: accrued.id },
+    });
 
-    if (result.created.length > 0) {
-        await recordAudit({
-            action: 'recurringExpense.generated',
-            entity: 'recurringExpense',
-            entityId: month,
-            summary: `Gastos fijos de ${month}: ${result.created.length} generados por ` +
-                sumMoney(result.created.map((item) => item.amount)).toFixed(2),
-            userId,
-            roleSlug,
-            metadata: { month, accruedIds: result.created.map((item) => item.id) },
-        });
-    }
-
-    return {
-        created: result.created.length,
-        existing: existingIds.size + result.existingIds.length,
-        summary: await getRecurringMonth(month),
-    };
+    return getRecurringMonth(input.month);
 };

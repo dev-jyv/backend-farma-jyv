@@ -1,7 +1,9 @@
 import { Controller, HttpCode, Post, Req, UseInterceptors } from '@nestjs/common';
 import { Request } from 'express';
 import * as uploadsService from '../../services/uploads.service';
+import { AuthUser } from '../../types';
 import { badRequest } from '../../utils/errors';
+import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import { FileUploadInterceptor } from './file-upload.interceptor';
 
@@ -11,12 +13,12 @@ export class UploadsController {
     @RequirePermission('uploads')
     @UseInterceptors(FileUploadInterceptor)
     @HttpCode(201)
-    async upload(@Req() req: Request) {
+    async upload(@Req() req: Request, @CurrentUser() user: AuthUser) {
         if (!req.file) {
             throw badRequest('El archivo es requerido');
         }
 
-        const result = await uploadsService.uploadFileToStorage(req.file);
+        const result = await uploadsService.uploadFileToStorage(req.file, 'default', user.uid);
         return { data: result };
     }
 
@@ -32,12 +34,12 @@ export class UploadsController {
     @RequirePermission('uploads')
     @UseInterceptors(FileUploadInterceptor)
     @HttpCode(201)
-    async uploadInvoice(@Req() req: Request) {
+    async uploadInvoice(@Req() req: Request, @CurrentUser() user: AuthUser) {
         if (!req.file) {
             throw badRequest('El archivo es requerido');
         }
 
-        const result = await uploadsService.uploadFileToStorage(req.file, 'invoices');
+        const result = await uploadsService.uploadFileToStorage(req.file, 'invoices', user.uid);
         return { data: result };
     }
 }

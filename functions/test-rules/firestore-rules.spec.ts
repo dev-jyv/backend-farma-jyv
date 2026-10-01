@@ -78,6 +78,7 @@ const COLECCIONES = [
     'pharmacyServices',
     'serviceProviders',
     'promotions',
+    'pointOrders',
 ];
 
 /** Colección que las reglas no mencionan: debe caer en el deny por omisión. */
@@ -307,7 +308,7 @@ describe('firestore.rules — autenticado pero sin claim de rol', () => {
     // `isStaff()` abre el catálogo a cualquiera que traiga roleId o roleSlug. Un
     // token sin claims no debe colarse por ahí: quien aún no tiene rol asignado
     // no es personal.
-    for (const coleccion of ['products', 'categories', 'suppliers', 'roles']) {
+    for (const coleccion of ['products', 'categories', 'suppliers']) {
         it(`no lee ${coleccion}`, async () => {
             await assertFails(getDoc(doc(sinRol.firestore(), `${coleccion}/existente`)));
         });
@@ -320,6 +321,14 @@ describe('firestore.rules — autenticado pero sin claim de rol', () => {
 
     it('tampoco escribe en ninguna parte', async () => {
         await assertFails(setDoc(doc(sinRol.firestore(), 'products/nuevo'), { x: 1 }));
+    });
+});
+
+describe('firestore.rules — roles solo por la API', () => {
+    it('ni el admin lee la matriz de permisos desde el cliente', async () => {
+        for (const actor of [admin, cajeroA, manager, doctor]) {
+            await assertFails(getDoc(doc(actor.firestore(), 'roles/admin')));
+        }
     });
 });
 

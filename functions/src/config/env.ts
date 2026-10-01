@@ -174,5 +174,9 @@ export const getOpenRouterApiKey = (): string | null =>
 export const getOpenRouterVisionModel = (): string =>
     process.env.OPENROUTER_VISION_MODEL?.trim() || 'google/gemini-2.5-flash';
 
+/** Modelo del asistente de análisis; tiene que soportar llamadas a herramientas. */
+export const getOpenRouterChatModel = (): string =>
+    process.env.OPENROUTER_CHAT_MODEL?.trim() || 'google/gemini-2.5-flash';
+
 export const getOpenRouterEmbedModel = (): string =>
     process.env.OPENROUTER_EMBED_MODEL?.trim() || 'openai/text-embedding-3-small';

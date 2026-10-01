@@ -198,6 +198,22 @@ export const listSalesByProductsBetween = async (
     return [...byId.values()];
 };
 
+/** Solo fecha e importe de las ventas no anuladas: para series largas sin leer partidas. */
+export const listSaleTotalsBetween = async (
+    from: Date,
+    to: Date,
+): Promise<Array<{ createdAt: Date; total: number }>> => {
+    const snapshot = await collection()
+        .where('createdAt', '>=', from)
+        .where('createdAt', '<', to)
+        .select('createdAt', 'total', 'voidedAt')
+        .get();
+    return snapshot.docs
+        .map((doc) => doc.data())
+        .filter((data) => !data.voidedAt)
+        .map((data) => ({ createdAt: data.createdAt.toDate(), total: Number(data.total ?? 0) }));
+};
+
 export const listSales = async (filters: {
     productId?: string;
     from?: string;

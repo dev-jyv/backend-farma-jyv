@@ -17,9 +17,12 @@ import { getFileUrl, invoicePrefix, sanitizeFileName, uploadFile } from '../util
  */
 export type UploadDestination = 'default' | 'invoices';
 
+export const RECORD_ATTACHMENT_PURPOSE = 'record-attachment';
+
 export const uploadFileToStorage = async (
     file: UploadedFile,
     destination: UploadDestination = 'default',
+    uploadedBy?: string,
 ): Promise<{
     storagePath: string;
     fileName: string;
@@ -35,7 +38,10 @@ export const uploadFileToStorage = async (
     const prefix = destination === 'invoices' ? invoicePrefix() : 'uploads/';
     const storagePath = `${prefix}${uploadId}/${fileName}`;
 
-    await uploadFile(storagePath, file.buffer, file.mimetype);
+    await uploadFile(storagePath, file.buffer, file.mimetype, {
+        purpose: destination === 'invoices' ? 'invoice' : RECORD_ATTACHMENT_PURPOSE,
+        ...(uploadedBy ? { uploadedBy } : {}),
+    });
 
     const signedUrl = await getFileUrl(storagePath);
 

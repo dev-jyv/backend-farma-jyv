@@ -34,9 +34,6 @@ const statement = (): IncomeStatement => ({
                 label: 'Renta',
                 total: 8000,
                 count: 1,
-                fromCashBox: 0,
-                outsideCashBox: 8000,
-                accrued: 0,
             },
         ],
         expensesTotal: 8000,
@@ -44,6 +41,7 @@ const statement = (): IncomeStatement => ({
     },
     operatingIncome: 42000,
     operatingMarginRate: 36.52,
+    externalSpending: { total: 1500, count: 2, fromCashBox: 1000, outsideCashBox: 500 },
     taxes: { ivaCharged: 16000, iepsCharged: 0, ivaCreditable: 9600, ivaPayable: 6400 },
     reliability: {
         salesWithCost: 120,
@@ -51,8 +49,7 @@ const statement = (): IncomeStatement => ({
         salesWithoutTaxBreakdown: 0,
         returnsWithoutCost: 0,
         wasteWithoutCost: 0,
-        expensesOutsideCashBox: 1,
-        accruedExpenses: 0,
+        accruedExpenses: 8000,
         invoicesWithoutTaxBreakdown: 2,
         warnings: ['3 venta(s) del periodo no tienen costo capturado.'],
     },
@@ -74,6 +71,14 @@ describe('CSV del estado de resultados', () => {
         // "(8,000.00)" no es un número para Excel; -8000.00 sí.
         expect(csv).toContain('Renta,-8000.00');
         expect(csv).toContain('Devoluciones,-5000.00');
+    });
+
+    it('separa los retiros de segunda caja fuera del resultado', () => {
+        const csv = incomeStatementCsv(statement());
+
+        expect(csv).toContain(
+            'Fuera de resultados,Retiros de segunda caja y gastos externos,-1500.00',
+        );
     });
 
     it('arrastra las advertencias dentro del archivo', () => {

@@ -15,8 +15,11 @@ import {
 } from '../../schemas';
 import * as mercadoPagoService from '../../services/mercado-pago.service';
 import * as directChargesService from '../../services/direct-charges.service';
+import * as pointOrdersService from '../../services/point-orders.service';
 import * as salesService from '../../services/sales.service';
 import * as eventsRepo from '../../repositories/mercado-pago-events.repository';
+import { AuthUser } from '../../types';
+import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { Public } from '../identity/decorators/public.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 
@@ -79,6 +82,7 @@ export class PaymentsController {
     @RequirePermission('pos')
     async createOrder(
         @Body(new ZodValidationPipe(createPointOrderSchema)) body: CreatePointOrderInput,
+        @CurrentUser() user: AuthUser,
         @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
         const rawKey = body.idempotencyKey ?? idempotencyHeader;
@@ -95,6 +99,12 @@ export class PaymentsController {
             printOnTerminal: body.printOnTerminal,
             idempotencyKey,
         });
+        try {
+            await pointOrdersService.rememberPointOrder(order.id, user.uid);
+        } catch (error) {
+            await mercadoPagoService.cancelOrder(order.id).catch(() => undefined);
+            throw error;
+        }
         return { data: order };
     }
 
@@ -108,7 +118,14 @@ export class PaymentsController {
     @Delete('orders/:id')
     // Cancelar el cobro pendiente sí; reembolsar uno ya cobrado no (ver `refundOrder`).
     @RequirePermission('pos')
-    async cancelOrder(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
+    async cancelOrder(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @CurrentUser() user: AuthUser,
+    ) {
+        await pointOrdersService.assertCallerCanCancelPointOrder(params.id, {
+            uid: user.uid,
+            roleSlug: user.role.slug,
+        });
         await mercadoPagoService.cancelOrder(params.id);
         return { data: { id: params.id, canceled: true } };
     }

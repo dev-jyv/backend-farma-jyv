@@ -36,9 +36,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Los permisos de cada rol se leen por la API (`users:write`). El SDK no
+    // los necesita: el token ya trae el rol de quien inició sesión.
     match /roles/{roleId} {
-      allow read: if isStaff();
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /categories/{categoryId} {
@@ -168,6 +169,12 @@ service cloud.firestore {
     // `promotions` (lectura hasta cajero para el sync, escritura gerencia y
     // admin), que las reglas no pueden evaluar porque el claim solo trae el rol.
     match /promotions/{promotionId} {
+      allow read, write: if false;
+    }
+
+    // Dueño de una orden Point pendiente. Solo la API lo escribe al crearla,
+    // para que cancelar no alcance órdenes ajenas.
+    match /pointOrders/{orderId} {
       allow read, write: if false;
     }
   }

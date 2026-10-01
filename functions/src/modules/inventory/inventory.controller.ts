@@ -22,6 +22,7 @@ import * as alertsService from '../../services/inventory-alerts.service';
 import * as countsService from '../../services/inventory-counts.service';
 import * as controlledService from '../../services/controlled.service';
 import * as scanService from '../../services/scan.service';
+import * as summaryService from '../../services/inventory-summary.service';
 import { hasPermission } from '../../constants/permissions';
 import { AuthUser } from '../../types';
 import { forbidden } from '../../utils/errors';
@@ -81,6 +82,13 @@ export class InventoryController {
             expiryWindows: query.windows,
         });
         return { data: alerts };
+    }
+
+    /** Valor a costo y a precio de venta, rotación y dinero en riesgo, a hoy. */
+    @Get('summary')
+    @RequirePermission('inventory', 'read')
+    async summary() {
+        return { data: await summaryService.getInventorySummary() };
     }
 
     /** Conteo físico: ajusta los lotes contados y deja movimiento `adjustment_count`. */

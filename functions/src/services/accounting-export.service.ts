@@ -54,6 +54,8 @@ const isoDay = (value: Date | string | null | undefined): string => {
 const periodLabel = (from: string, to: string): string =>
     `Del ${isoDay(from)} al ${isoDay(to)}`;
 
+const EXTERNAL_SPENDING_LABEL = 'Retiros de segunda caja y gastos externos';
+
 /* -------------------------------------------------------------------------- */
 /*  CSV                                                                       */
 /* -------------------------------------------------------------------------- */
@@ -84,6 +86,7 @@ export const incomeStatementCsv = (statement: IncomeStatement): string => {
         ['Gastos de operación', 'Comisiones de doctores', -statement.operatingExpenses.commissions],
         ['Gastos de operación', 'Depreciación', -statement.operatingExpenses.depreciation],
         ['Resultado', 'Utilidad de operación', statement.operatingIncome],
+        ['Fuera de resultados', EXTERNAL_SPENDING_LABEL, -statement.externalSpending.total],
         [],
         ['Impuestos', 'IVA trasladado', statement.taxes.ivaCharged],
         ['Impuestos', 'IVA acreditable', statement.taxes.ivaCreditable],
@@ -301,6 +304,8 @@ export const incomeStatementPdf = (statement: IncomeStatement): Promise<Buffer> 
       ${pdfRow('Depreciación', statement.operatingExpenses.depreciation, negativeLine)}
       ${pdfRow('Total de gastos de operación', statement.operatingExpenses.total, negativeTotal)}
       ${pdfRow('Utilidad de operación', statement.operatingIncome, { total: true })}
+      ${sectionRow('Fuera de resultados')}
+      ${pdfRow(EXTERNAL_SPENDING_LABEL, statement.externalSpending.total, negativeLine)}
     </tbody>
   </table>
 
@@ -362,6 +367,7 @@ export const balanceSheetPdf = (balance: BalanceSheet): Promise<Buffer> => {
   <table><tbody>
     ${pdfRow('Aportaciones', balance.equity.contributions)}
     ${pdfRow('Retiros', balance.equity.withdrawals, { negative: true })}
+    ${pdfRow(EXTERNAL_SPENDING_LABEL, balance.equity.externalSpending, { negative: true })}
     ${pdfRow('Resultados acumulados', balance.equity.openingRetainedEarnings)}
     ${pdfRow('Resultado del periodo', balance.equity.periodResult)}
     ${pdfRow('Total capital', balance.equity.total, { total: true })}

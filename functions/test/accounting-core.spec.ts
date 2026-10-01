@@ -468,7 +468,8 @@ describe('balance general', () => {
         );
         expect(balance.equity.total).toBeCloseTo(
             balance.equity.contributions -
-                balance.equity.withdrawals +
+                balance.equity.withdrawals -
+                balance.equity.externalSpending +
                 balance.equity.openingRetainedEarnings +
                 balance.equity.periodResult,
             2,

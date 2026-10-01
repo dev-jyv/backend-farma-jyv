@@ -140,7 +140,7 @@ describe('el devengado en el estado de resultados y el balance', () => {
             .find((item) => item.category === 'salary');
 
         expect(line).toBeDefined();
-        expect(line!.accrued).toBeGreaterThanOrEqual(7500);
+        expect(line!.total).toBeGreaterThanOrEqual(7500);
         expect(statement.reliability.accruedExpenses).toBeGreaterThanOrEqual(7500);
         expect(statement.reliability.warnings.join(' ')).toContain('devengados');
     });

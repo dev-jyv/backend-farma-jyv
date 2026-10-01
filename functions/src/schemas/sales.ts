@@ -306,6 +306,21 @@ export const listAuditLogsQuerySchema = z.object({
     ...paginationFields,
 });
 
+/** `period` es `YYYY-MM` para días, y el año `YYYY` para meses o el último de los años. */
+export const dashboardChartsQuerySchema = z
+    .object({
+        granularity: z.enum(['day', 'month', 'year']).default('day'),
+        period: z.string().optional(),
+    })
+    .refine(
+        ({ granularity, period }) =>
+            !period || (granularity === 'day' ? /^\d{4}-(0[1-9]|1[0-2])$/ : /^\d{4}$/).test(period),
+        {
+            message: 'El periodo debe ser YYYY-MM para días o YYYY para meses y años',
+            path: ['period'],
+        },
+    );
+
 export const reportPeriodQuerySchema = z.object({
     from: parseableDate.optional(),
     to: parseableDate.optional(),
