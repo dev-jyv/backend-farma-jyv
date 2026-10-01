@@ -26,6 +26,7 @@ import { PharmacyServicesModule } from './modules/pharmacy-services/pharmacy-ser
 import { PromotionsModule } from './modules/promotions/promotions.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { InvoiceRagModule } from './modules/invoice-rag/invoice-rag.module';
+import { PosHealthModule } from './modules/pos-health/pos-health.module';
 
 @Module({
     imports: [
@@ -50,6 +51,7 @@ import { InvoiceRagModule } from './modules/invoice-rag/invoice-rag.module';
         PromotionsModule,
         AccountingModule,
         InvoiceRagModule,
+        PosHealthModule,
     ],
     controllers: [HealthController],
     providers: [

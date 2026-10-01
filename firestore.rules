@@ -170,5 +170,18 @@ service cloud.firestore {
     match /promotions/{promotionId} {
       allow read, write: if false;
     }
+
+    // Salud de cajas: solo por la API. El diagnóstico lleva errores internos,
+    // folios y totales de ventas atoradas de cada caja, y los comandos remotos
+    // los ejecuta la caja tal cual: leerlos o escribirlos desde el SDK cliente
+    // saltaría el área `posHealth` (que el claim no trae) y el control de que
+    // solo la API encola y cierra comandos.
+    match /posDiagnostics/{deviceId} {
+      allow read, write: if false;
+    }
+
+    match /posCommands/{commandId} {
+      allow read, write: if false;
+    }
   }
 }

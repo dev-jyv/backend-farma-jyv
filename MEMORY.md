@@ -35,6 +35,8 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `medicalRecords` | Notas del expediente clínico (paciente/doctor denormalizados, `visitedAt`, `vitals` con `bmi` calculado en servidor, `attachments[]` con ruta de Storage) |
 | `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
 | `promotions` | Promociones por cantidad (`rule` inmutable: `tiered`/`nxm`/`percent`, `productIds[]`, `startsAt`/`endsAt`, `isActive`, `deactivatedAt`); baja lógica |
+| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor) y `reportedBy`. Solo API |
+| `posCommands` | Comandos remotos admin → caja (`retrySale`/`retryCashSession`/`retryProduct`/`sendSaleToUnreconciled`), `status` `pending`→`done`/`failed`, `completedBy`. Solo API |
 
 ## Endpoints (montados bajo `/v1`, servidos por controllers Nest en `src/modules/`)
 
@@ -56,6 +58,8 @@ Inventario: `GET /v1/inventory/alerts?windows=30,60,90`, `POST|GET /v1/inventory
 Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/receipt` (`?width=58|80`) devuelven `{ receipt, html }` (JSON + HTML para rollo térmico, sin Puppeteer).
 
 Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`), `GET /v1/promotions/:id/performance` (desempeño vs ventana previa), `GET /v1/promotions/suggestions/expiring?days=90` (lotes por caducar con % sugerido), `POST /v1/promotions/:id/replace` (crea la nueva y luego da de baja la vieja). La venta acepta `items[].promotionId` y `soldAt`; `GET /v1/sales?promotionReview=true` lista las ventas offline aceptadas con promo fuera de vigencia. Cambiar el precio de un producto da de baja las promos que ese precio invalida.
+
+Salud de cajas (`modules/pos-health`): la caja usa **`pos:write`** — `POST /v1/pos/diagnostics` (sobrescribe su snapshot y responde `{ commands }` pendientes, una escritura + una consulta) y `POST /v1/pos/commands/:id/result` (`done`/`failed`, idempotente con el mismo status, 409 si cambia). El admin usa el área **`posHealth`** (admin/manager escritura, cajero nada): `GET /v1/pos/diagnostics`, `GET /v1/pos/diagnostics/:deviceId` (snapshot + últimos 50 comandos), `POST /v1/pos/commands` (exige snapshot, no duplica un pendiente igual, audita `pos.command_created`). Textos y listas del diagnóstico se **recortan**, no se rechazan; si el doc pasara de ~900 KB se recorta bitácora antes que ventas. `services/pos-health-alerts.service.ts` (`evaluateBlockedSalesAlert`) decide alerta por ventas bloqueadas que aparecen o suben; **aún no está conectado**.
 
 Alta canónica de personal: `POST /users`. `POST /auth/register-staff` es alias.
 

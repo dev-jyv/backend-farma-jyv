@@ -78,6 +78,8 @@ const COLECCIONES = [
     'pharmacyServices',
     'serviceProviders',
     'promotions',
+    'posDiagnostics',
+    'posCommands',
 ];
 
 /** Colección que las reglas no mencionan: debe caer en el deny por omisión. */
@@ -280,6 +282,17 @@ describe('firestore.rules — toda escritura desde el cliente está denegada', (
                     updateDoc(doc(db, `${coleccion}/existente`), { intruso: true }),
                 );
                 await assertFails(deleteDoc(doc(db, `${coleccion}/existente`)));
+            }
+        });
+    }
+});
+
+describe('firestore.rules — salud de cajas (posDiagnostics, posCommands)', () => {
+    // Ni el admin: el acceso lo decide el área `posHealth`, que el claim no trae.
+    for (const coleccion of ['posDiagnostics', 'posCommands']) {
+        it(`nadie lee ${coleccion} desde el cliente, ni siquiera el admin`, async () => {
+            for (const actor of [admin, cajeroA, manager, doctor, anonimo]) {
+                await assertFails(getDoc(doc(actor.firestore(), `${coleccion}/existente`)));
             }
         });
     }
