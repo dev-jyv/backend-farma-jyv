@@ -170,6 +170,11 @@ export const listProductHistoryQuerySchema = z.object({
     ...paginationFields,
 });
 
+/** Ventana del análisis de un producto, en meses (1–24; por defecto 12). */
+export const productAnalyticsQuerySchema = z.object({
+    months: z.coerce.number().int().min(1).max(24).default(12),
+});
+
 const supplierName = z.string().trim()
     .min(1, 'El nombre es obligatorio')
     .max(120, 'El nombre no puede superar 120 caracteres');

@@ -675,6 +675,20 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "inventoryEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "productIds",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": [

@@ -76,3 +76,13 @@ export const listSaleReturns = async (filters: {
     const snapshot = await query.orderBy('createdAt', 'desc').get();
     return snapshot.docs.map((doc) => mapSaleReturn(doc.id, doc.data()));
 };
+
+/**
+ * Devoluciones que incluyen el producto. `array-contains` sobre un solo campo
+ * lo resuelve el índice automático; no se acota por fecha porque las
+ * devoluciones son pocas y quien agrega filtra por mes.
+ */
+export const listReturnsByProduct = async (productId: string): Promise<SaleReturn[]> => {
+    const snapshot = await collection().where('productIds', 'array-contains', productId).get();
+    return snapshot.docs.map((doc) => mapSaleReturn(doc.id, doc.data()));
+};

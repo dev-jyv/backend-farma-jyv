@@ -49,3 +49,23 @@ export const findEntryReferenceByBatchId = async (
     const movement = snapshot.docs[0].data() as StockMovement;
     return movement.referenceId ?? null;
 };
+
+/**
+ * Movimientos de un producto desde `since`, los más recientes primero y
+ * acotados a `limit`. Índice `[productId, createdAt DESC]`.
+ */
+export const listStockMovementsSince = async (
+    productId: string,
+    since: Date,
+    limit: number,
+): Promise<StockMovement[]> => {
+    const snapshot = await collection()
+        .where('productId', '==', productId)
+        .where('createdAt', '>=', since)
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+    return snapshot.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() } as StockMovement),
+    );
+};

@@ -47,6 +47,8 @@ Consultorio (`modules/clinic`, áreas de permiso `patients` / `medicalRecords` /
 
 Caja: `GET|POST /v1/cash-sessions/:id/x-report` (vista previa / lectura registrada), `GET /v1/cash-sessions/:id/x-readings`; `POST :id/close` (Z) devuelve también `html`.
 Reportes: `GET /v1/reports/{sales-summary,profit,top-products,by-cashier,dead-stock}` (permiso **`dashboard:read`**).
+Análisis de producto: `GET /v1/products/:id/analytics?months=12` (permiso **`inventory:write`**: gerente y admin, no cajero; costos y márgenes). Una respuesta con ventas mes/año, precio (cambios de `auditLogs`), costo, stock reconstruido desde `stockMovements`, valor de inventario y compras recientes (`product-analytics.service`, caché 60 s). Requiere el índice `inventoryEntries [productIds CONTAINS, createdAt DESC]`; sin él responde con `unavailable: ['entries']`. La comparativa por principio activo la hace el panel con `/products/sync`.
+Resumen semanal/mensual: `GET /v1/reports/business-summary?period=week|month&anchor=YYYY-MM-DD` (**`dashboard:read`**, `business-summary.service`, sin IA, caché 2 min): periodo vs anterior (mismos días si está en curso), margen solo sobre partidas con costo + cobertura de costo, avisos por reglas.
 Escaneo: `POST /v1/inventory/scan` (GS1-128 / DataMatrix o código plano).
 
 Exportación: `GET /v1/inventory/controlled-ledger/export?from&to&group&productId` → CSV del periodo completo (archivo, sin envoltorio `{ data }`), solo admin/manager.

@@ -327,6 +327,12 @@ export const reportPeriodQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
+/** Resumen semanal o mensual; `anchor` es cualquier día del periodo (por defecto hoy). */
+export const businessSummaryQuerySchema = z.object({
+    period: z.enum(['week', 'month']).default('week'),
+    anchor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+});
+
 /**
  * Reporte de comisiones. `providerId` es un id de `serviceProviders` —el doctor
  * del catálogo, que no es usuario del sistema—, no un uid. Cuando viene, el
