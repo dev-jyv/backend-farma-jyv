@@ -118,6 +118,20 @@ export const listProductsPage = async (filters: {
     );
 };
 
+/** SKU exacto: una consulta indexada con `limit(1)` (1 lectura como máximo). */
+export const findProductBySku = async (sku: string): Promise<Product | null> => {
+    const normalized = sku.trim();
+    if (!normalized) {
+        return null;
+    }
+    const snap = await collection().where('sku', '==', normalized).limit(1).get();
+    if (snap.empty) {
+        return null;
+    }
+    const doc = snap.docs[0];
+    return { id: doc.id, ...doc.data() } as Product;
+};
+
 export const findProductBySkuOrBarcode = async (term: string): Promise<Product | null> => {
     const normalized = term.trim();
     if (!normalized) {

@@ -35,6 +35,7 @@ export class ProductsController {
         const result = await productsService.listProducts({
             categoryId: query.categoryId,
             search: query.search,
+            sku: query.sku,
             activeOnly: query.activeOnly !== 'false',
             updatedSince: query.updatedSince,
             page: query.page ? Number(query.page) : undefined,

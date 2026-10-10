@@ -346,6 +346,8 @@ export const listProductsForSync = async (filters: {
 export const listProducts = async (filters: {
     categoryId?: string;
     search?: string;
+    /** SKU exacto (1 lectura). Con prioridad sobre `search`: nunca recorre la colección. */
+    sku?: string;
     activeOnly?: boolean;
     page?: number;
     limit?: number;
@@ -357,6 +359,15 @@ export const listProducts = async (filters: {
 }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const search = filters.search?.trim();
+
+    if (filters.sku?.trim()) {
+        const found = await productsRepo.findProductBySku(filters.sku);
+        const visible = found && (filters.activeOnly === false || found.isActive) ? [found] : [];
+        return {
+            items: await attachStockAndCategory(visible),
+            meta: buildListMeta(1, Math.max(visible.length, 1), visible.length),
+        };
+    }
 
     /**
      * Camino normal de la pantalla de catálogo: sin término de búsqueda,

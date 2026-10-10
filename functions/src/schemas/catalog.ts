@@ -152,6 +152,12 @@ export const listProductsQuerySchema = z.object({
      * incremental del catálogo local.
      */
     updatedSince: parseableDate.optional(),
+    /**
+     * SKU exacto: una sola consulta indexada (1 lectura). Es el camino barato
+     * para "¿ya existe este SKU?"; `search` en un SKU inexistente recorre hasta
+     * 500 productos.
+     */
+    sku: z.string().trim().min(1).max(64).optional(),
     ...paginationFields,
 });
 
