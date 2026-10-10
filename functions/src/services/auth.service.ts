@@ -1,36 +1,16 @@
 import * as admin from 'firebase-admin';
-import { AuthUser, UserRole } from '../types';
-import { badRequest, conflict, notFound } from '../utils/errors';
-import {
-    createUserProfile,
-    getUserProfile,
-    isValidRole,
-    updateUserProfile,
-} from '../repositories/users.repository';
-
-export const getAuthenticatedUser = async (uid: string): Promise<AuthUser> => {
-    const profile = await getUserProfile(uid);
-    if (!profile || !profile.isActive) {
-        throw notFound('Usuario');
-    }
-
-    return {
-        uid: profile.id,
-        email: profile.email,
-        role: profile.role,
-        displayName: profile.displayName,
-    };
-};
+import { AuthUser } from '../types';
+import { badRequest, conflict } from '../utils/errors';
+import { createUserProfile } from '../repositories/users.repository';
+import { getActiveRoleById, rolePermissionsVersion, syncUserClaims } from './roles.service';
 
 export const registerStaff = async (input: {
     email: string;
     password: string;
     displayName: string;
-    role: UserRole;
+    roleId: string;
 }): Promise<AuthUser> => {
-    if (!isValidRole(input.role)) {
-        throw badRequest('Rol inválido');
-    }
+    const role = await getActiveRoleById(input.roleId);
 
     let userRecord: admin.auth.UserRecord;
 
@@ -48,27 +28,34 @@ export const registerStaff = async (input: {
         throw badRequest('No se pudo crear el usuario');
     }
 
-    await admin.auth().setCustomUserClaims(userRecord.uid, { role: input.role });
-
-    await createUserProfile(userRecord.uid, {
-        email: input.email,
-        displayName: input.displayName,
-        role: input.role,
-        isActive: true,
-    });
+    try {
+        await syncUserClaims(userRecord.uid, role);
+        await createUserProfile(userRecord.uid, {
+            email: input.email,
+            displayName: input.displayName,
+            roleId: role.id,
+            permissionsVersion: rolePermissionsVersion(role),
+            isActive: true,
+        });
+    } catch (error) {
+        try {
+            await admin.auth().deleteUser(userRecord.uid);
+        } catch {
+            // Best-effort cleanup; surface the original failure below.
+        }
+        throw error;
+    }
 
     return {
         uid: userRecord.uid,
         email: input.email,
-        role: input.role,
+        roleId: role.id,
+        role: {
+            id: role.id,
+            name: role.name,
+            slug: role.slug,
+        },
+        permissions: role.permissions,
         displayName: input.displayName,
     };
-};
-
-export const syncUserRole = async (
-    uid: string,
-    role: UserRole,
-): Promise<void> => {
-    await admin.auth().setCustomUserClaims(uid, { role });
-    await updateUserProfile(uid, { role });
 };

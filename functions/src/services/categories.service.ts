@@ -59,5 +59,17 @@ export const deleteCategory = async (id: string): Promise<Category> => {
         throw notFound('Categoría');
     }
 
+    const linked = await categoriesRepo.countActiveProductsByCategory(id);
+    if (linked > 0) {
+        throw badRequest('No se puede desactivar una categoría con productos activos');
+    }
+
     return categoriesRepo.updateCategory(id, { isActive: false });
 };
+
+/** Catálogo completo sin paginar, para el pull del panel. Ver el repositorio. */
+export const listCategoriesForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: Category[] }> => ({
+    items: await categoriesRepo.listCategoriesForSync(filters),
+});

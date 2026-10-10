@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { UserProfile, UserRole } from '../types';
+import { RoleSummary, UserProfile, UserWithRole } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
 import {
@@ -8,6 +8,48 @@ import {
     listUserProfiles,
     updateUserProfile,
 } from '../repositories/users.repository';
+import * as rolesRepo from '../repositories/roles.repository';
+import { recordAudit } from './audit.service';
+import {
+    getActiveRoleById,
+    getAdminRoleId,
+    rolePermissionsVersion,
+    syncUserClaims,
+} from './roles.service';
+
+const toRoleSummary = (role: { id: string; name: string; slug: string }): RoleSummary => ({
+    id: role.id,
+    name: role.name,
+    slug: role.slug,
+});
+
+const buildRoleMap = (roles: Array<{ id: string; name: string; slug: string }>) =>
+    new Map(roles.map((role) => [role.id, toRoleSummary(role)]));
+
+const enrichUser = (user: UserProfile, roleMap: Map<string, RoleSummary>): UserWithRole => ({
+    ...user,
+    role: roleMap.get(user.roleId) ?? {
+        id: user.roleId,
+        name: 'Rol no encontrado',
+        slug: '',
+    },
+});
+
+const enrichUsers = async (users: UserProfile[]): Promise<UserWithRole[]> => {
+    const roles = await rolesRepo.getAllRoles();
+    const roleMap = buildRoleMap(roles);
+    return users.map((user) => enrichUser(user, roleMap));
+};
+
+const enrichSingleUser = async (user: UserProfile): Promise<UserWithRole> => {
+    const role = await rolesRepo.getRoleById(user.roleId);
+    return {
+        ...user,
+        role: role
+            ? toRoleSummary(role)
+            : { id: user.roleId, name: 'Rol no encontrado', slug: '' },
+    };
+};
 
 const assertNotSelf = (id: string, actorUid: string, message: string): void => {
     if (id === actorUid) {
@@ -16,43 +58,49 @@ const assertNotSelf = (id: string, actorUid: string, message: string): void => {
 };
 
 const assertLastAdmin = async (id: string, existing: UserProfile): Promise<void> => {
-    if (existing.role !== 'admin' || !existing.isActive) {
+    const adminRoleId = await getAdminRoleId();
+    if (!adminRoleId || existing.roleId !== adminRoleId || !existing.isActive) {
         return;
     }
     const remaining = await countActiveAdmins(id);
     if (remaining === 0) {
-        throw badRequest('No se puede desactivar al último administrador activo');
+        throw badRequest('No se puede quitar al último administrador activo');
     }
 };
 
 export const listUsers = async (filters: {
     activeOnly?: boolean;
+    roleId?: string;
     search?: string;
     page?: number;
     limit?: number;
-}): Promise<{ items: UserProfile[]; meta: ListMeta }> => {
+}): Promise<{ items: UserWithRole[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const { items, total } = await listUserProfiles({ ...filters, page, limit });
-    return { items, meta: buildListMeta(page, limit, total) };
+    return {
+        items: await enrichUsers(items),
+        meta: buildListMeta(page, limit, total),
+    };
 };
 
-export const getUser = async (id: string): Promise<UserProfile> => {
+export const getUser = async (id: string): Promise<UserWithRole> => {
     const user = await getUserProfile(id);
     if (!user) {
         throw notFound('Usuario');
     }
-    return user;
+    return enrichSingleUser(user);
 };
 
 export const updateUser = async (
     id: string,
     input: {
         displayName?: string;
-        role?: UserRole;
+        roleId?: string;
         isActive?: boolean;
     },
     actorUid: string,
-): Promise<UserProfile> => {
+    actorRoleSlug?: string | null,
+): Promise<UserWithRole> => {
     const existing = await getUserProfile(id);
     if (!existing) {
         throw notFound('Usuario');
@@ -63,8 +111,17 @@ export const updateUser = async (
         await assertLastAdmin(id, existing);
     }
 
-    if (input.role !== undefined && input.role !== 'admin' && id === actorUid) {
-        throw badRequest('No puedes quitarte tu propio rol de administrador');
+    const adminRoleId = await getAdminRoleId();
+    if (
+        input.roleId !== undefined &&
+        adminRoleId &&
+        input.roleId !== adminRoleId &&
+        existing.roleId === adminRoleId
+    ) {
+        if (id === actorUid) {
+            throw badRequest('No puedes quitarte tu propio rol de administrador');
+        }
+        await assertLastAdmin(id, existing);
     }
 
     const authUpdate: admin.auth.UpdateRequest = {};
@@ -81,16 +138,29 @@ export const updateUser = async (
         await admin.auth().updateUser(id, authUpdate);
     }
 
-    if (input.role !== undefined && input.role !== existing.role) {
-        await admin.auth().setCustomUserClaims(id, { role: input.role });
+    let roleToSync = existing.roleId;
+    let permissionsVersionToSync: number | undefined;
+    if (input.roleId !== undefined && input.roleId !== existing.roleId) {
+        const role = await getActiveRoleById(input.roleId);
+        roleToSync = role.id;
+        permissionsVersionToSync = rolePermissionsVersion(role);
+        await syncUserClaims(id, role);
     }
 
-    const profileUpdate: Partial<Pick<UserProfile, 'displayName' | 'role' | 'isActive'>> = {};
+    const profileUpdate: Partial<
+        Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
+    > = {};
     if (input.displayName !== undefined) {
         profileUpdate.displayName = input.displayName;
     }
-    if (input.role !== undefined) {
-        profileUpdate.role = input.role;
+    if (input.roleId !== undefined) {
+        profileUpdate.roleId = roleToSync;
+        // El sello tiene que viajar junto con el roleId: si el perfil apunta al
+        // rol nuevo pero conserva la versión vieja, el guard descarta los claims
+        // recién emitidos y paga una lectura de `roles` en cada request.
+        if (permissionsVersionToSync !== undefined) {
+            profileUpdate.permissionsVersion = permissionsVersionToSync;
+        }
     }
     if (input.isActive !== undefined) {
         profileUpdate.isActive = input.isActive;
@@ -104,8 +174,37 @@ export const updateUser = async (
     if (!updated) {
         throw notFound('Usuario');
     }
-    return updated;
+
+    // Accesos: cambio de rol y activación/desactivación se auditan; renombrar no.
+    if (input.roleId !== undefined && input.roleId !== existing.roleId) {
+        await recordAudit({
+            action: 'user.role_changed',
+            entity: 'user',
+            entityId: id,
+            summary: `Rol del usuario ${updated.email ?? id} cambiado`,
+            userId: actorUid,
+            roleSlug: actorRoleSlug ?? null,
+            changes: { roleId: { before: existing.roleId, after: updated.roleId } },
+        });
+    }
+    if (input.isActive !== undefined && input.isActive !== existing.isActive) {
+        await recordAudit({
+            action: 'user.status_changed',
+            entity: 'user',
+            entityId: id,
+            summary: `Usuario ${updated.email ?? id} ` +
+                `${input.isActive ? 'reactivado' : 'desactivado'}`,
+            userId: actorUid,
+            roleSlug: actorRoleSlug ?? null,
+            changes: { isActive: { before: existing.isActive, after: updated.isActive } },
+        });
+    }
+
+    return enrichSingleUser(updated);
 };
 
-export const deactivateUser = async (id: string, actorUid: string): Promise<UserProfile> =>
-    updateUser(id, { isActive: false }, actorUid);
+export const deactivateUser = async (
+    id: string,
+    actorUid: string,
+    actorRoleSlug?: string | null,
+): Promise<UserWithRole> => updateUser(id, { isActive: false }, actorUid, actorRoleSlug);

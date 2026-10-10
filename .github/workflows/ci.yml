@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: functions
+
+jobs:
+  verificar:
+    name: Lint, tests y build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      # Las suites corren contra el emulador de Firestore, que necesita una JVM.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Instalar Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Compilar
+        run: npm run build
+
+      - name: Tests con umbral de cobertura
+        run: npm run test:coverage
+        env:
+          # `emulators:exec` arranca el emulador con este proyecto; no toca datos
+          # reales ni requiere credenciales.
+          GCLOUD_PROJECT: farma-jyv-test
+
+      - name: Publicar reporte de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-backend
+          path: functions/coverage/
+          retention-days: 14

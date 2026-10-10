@@ -1,0 +1,49 @@
+flowchart TB
+    subgraph clientes["Aplicaciones cliente"]
+        direction LR
+        pos["<b>FarmaJyV Venta · POS</b><br/>Angular 22 + Electron<br/>local-first: SQLite + Prisma<br/>vende sin red"]
+        admin["<b>Panel de administración</b><br/>Angular 21 · Firebase Hosting"]
+        clinic["<b>Consultorio</b><br/>Angular 22"]
+    end
+
+    updates[["Feed de actualizaciones<br/>farma-jyv-updates.web.app"]]
+    api["<b>Cloud Function api</b> · us-central1 · 2ª gen<br/>NestJS sobre Express · /v1 · 512 MiB · 60 s<br/>única puerta de escritura al dato"]
+    crons["<b>Funciones programadas</b> · America/Mexico_City<br/>dailySalesReport 00:10 · monthlySalesReport día 1 00:20<br/>dailyInventoryAlerts 07:00 · dailyFirestoreBackup 02:00"]
+
+    subgraph firebase["Firebase · proyecto farma-jyv"]
+        direction LR
+        auth["Firebase Auth<br/>rol y permisos en los claims"]
+        fs[("Firestore<br/>~34 colecciones")]
+        gcs[("Cloud Storage")]
+        backups[("Respaldos<br/>30 días los automáticos")]
+    end
+
+    subgraph ext["Servicios externos"]
+        direction LR
+        mp["Mercado Pago Point<br/>terminal desactivada hoy"]
+        r2[("Cloudflare R2<br/>comprobantes de factura")]
+        correo["Resend<br/>correo de reportes"]
+    end
+
+    updates -.->|"actualiza"| pos
+    pos ==>|"HTTPS · cola offline"| api
+    admin ==> api
+    clinic ==> api
+
+    api --> auth
+    api ==> fs
+    api --> gcs
+    api --> r2
+    api --> mp
+    mp -. "webhook firmado" .-> api
+
+    crons ==> fs
+    crons --> correo
+    crons --> backups
+
+    classDef app fill:#e0f4d3,stroke:#2e6c14,color:#1b3f0e
+    classDef srv fill:#cde8fa,stroke:#004e85,color:#002b4e
+    classDef dato fill:#f1f5f7,stroke:#64757f,color:#243035
+    class pos,admin,clinic app
+    class api,crons srv
+    class auth,fs,gcs,backups,mp,r2,correo,updates dato

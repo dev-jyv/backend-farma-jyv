@@ -1,10 +1,38 @@
-import { Product, ProductDetail, ProductWithCategory, Supplier, SupplierSummary } from '../types';
-import { badRequest, conflict, notFound } from '../utils/errors';
-import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
+import {
+    Batch,
+    BulkCreateProductsResult,
+    ControlledGroup,
+    InvoiceSummary,
+    Product,
+    ProductDetail,
+    ProductInvoiceHistoryItem,
+    ProductPurchaseHistoryItem,
+    ProductSaleHistoryItem,
+    ProductWithCategory,
+    Supplier,
+    SupplierSummary,
+    isSaleProductItem,
+} from '../types';
+import { badRequest, notFound } from '../utils/errors';
+import {
+    buildListMeta,
+    buildListResult,
+    ListMeta,
+    paginate,
+    parsePagination,
+} from '../utils/pagination';
+import { matchesProductSearch } from '../utils/product-search';
+import { getFileUrl } from '../utils/storage';
+import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
+import * as entriesRepo from '../repositories/inventory-entries.repository';
+import * as salesRepo from '../repositories/sales.repository';
+import * as invoicesRepo from '../repositories/invoices.repository';
+import { AuditActor, diffFields, recordAudit } from './audit.service';
+import { retirePromotionsBrokenByPrice } from './promotions.service';
 
 const loadSuppliersSummary = async (
     supplierIds: string[],
@@ -27,41 +55,383 @@ const loadSuppliersSummary = async (
         }));
 };
 
+const loadInvoiceSummary = async (
+    invoiceId: string,
+    supplier: Pick<Supplier, 'id' | 'name'>,
+    invoiceCache: Map<string, InvoiceSummary | null>,
+): Promise<InvoiceSummary | null> => {
+    let cached = invoiceCache.get(invoiceId);
+    if (cached === undefined) {
+        const invoiceDoc = await invoicesRepo.getInvoiceById(invoiceId);
+        cached = invoiceDoc
+            ? {
+                id: invoiceDoc.id,
+                invoiceNumber: invoiceDoc.invoiceNumber,
+                invoiceDate: invoiceDoc.invoiceDate,
+                supplier: { id: supplier.id, name: supplier.name },
+            }
+            : null;
+        invoiceCache.set(invoiceId, cached);
+    }
+    return cached;
+};
+
+const loadPurchaseHistory = async (
+    productId: string,
+): Promise<ProductPurchaseHistoryItem[]> => {
+    const entries = await entriesRepo.listInventoryEntries({ productId });
+    const supplierCache = new Map<string, Supplier | null>();
+    const invoiceCache = new Map<string, InvoiceSummary | null>();
+    const history: ProductPurchaseHistoryItem[] = [];
+
+    for (const entry of entries) {
+        let supplier = supplierCache.get(entry.supplierId);
+        if (supplier === undefined) {
+            supplier = await suppliersRepo.getSupplierById(entry.supplierId);
+            supplierCache.set(entry.supplierId, supplier);
+        }
+        if (!supplier) {
+            throw notFound('Proveedor');
+        }
+
+        const supplierSummary = { id: supplier.id, name: supplier.name };
+        const invoice = entry.invoiceId
+            ? await loadInvoiceSummary(entry.invoiceId, supplierSummary, invoiceCache)
+            : null;
+
+        for (const item of entry.items) {
+            if (item.productId !== productId) {
+                continue;
+            }
+            history.push({
+                entryId: entry.id,
+                supplier: supplierSummary,
+                invoice,
+                lotNumber: item.lotNumber,
+                expiryDate: item.expiryDate,
+                quantity: item.quantity,
+                ...(item.costPrice !== undefined ? { costPrice: item.costPrice } : {}),
+                batchId: item.batchId,
+                createdAt: entry.createdAt,
+            });
+        }
+    }
+
+    return history.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+};
+
+const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryItem[]> => {
+    const { items: sales } = await salesRepo.listSales({ productId });
+    const history: ProductSaleHistoryItem[] = [];
+
+    for (const sale of sales) {
+        for (const item of sale.items) {
+            // Una venta mixta trae partidas de servicio: no tienen `productId`
+            // ni historial de inventario que mostrar.
+            if (!isSaleProductItem(item) || item.productId !== productId) {
+                continue;
+            }
+            history.push({
+                saleId: sale.id,
+                quantity: item.quantity,
+                unitPrice: item.unitPrice,
+                subtotal: item.subtotal,
+                paymentMethod: sale.paymentMethod,
+                createdAt: sale.createdAt,
+            });
+        }
+    }
+
+    return history.sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+};
+
+const loadInvoiceHistory = async (
+    productId: string,
+): Promise<ProductInvoiceHistoryItem[]> => {
+    const entries = await entriesRepo.listInventoryEntries({ productId });
+    const grouped = new Map<string, { quantityReceived: number; lastReceivedAt: number }>();
+
+    for (const entry of entries) {
+        if (!entry.invoiceId) {
+            continue;
+        }
+        const productQuantity = entry.items
+            .filter((item) => item.productId === productId)
+            .reduce((sum, item) => sum + item.quantity, 0);
+        const entryMs = entry.createdAt.toMillis();
+        const existing = grouped.get(entry.invoiceId);
+
+        if (existing) {
+            existing.quantityReceived += productQuantity;
+            existing.lastReceivedAt = Math.max(existing.lastReceivedAt, entryMs);
+        } else {
+            grouped.set(entry.invoiceId, {
+                quantityReceived: productQuantity,
+                lastReceivedAt: entryMs,
+            });
+        }
+    }
+
+    const supplierCache = new Map<string, Supplier | null>();
+    const history = await Promise.all(
+        [...grouped.entries()].map(async ([invoiceId, aggregate]) => {
+            const invoice = await invoicesRepo.getInvoiceById(invoiceId);
+            if (!invoice) {
+                return null;
+            }
+
+            let supplier = supplierCache.get(invoice.supplierId);
+            if (supplier === undefined) {
+                supplier = await suppliersRepo.getSupplierById(invoice.supplierId);
+                supplierCache.set(invoice.supplierId, supplier);
+            }
+            if (!supplier) {
+                throw notFound('Proveedor');
+            }
+
+            const fileUrl = invoice.storagePath
+                ? await getFileUrl(invoice.storagePath)
+                : undefined;
+
+            return {
+                id: invoice.id,
+                invoiceNumber: invoice.invoiceNumber,
+                invoiceDate: invoice.invoiceDate,
+                totalAmount: invoice.totalAmount,
+                hasInvoice: invoice.hasInvoice,
+                ...(fileUrl ? { fileUrl } : {}),
+                supplier: { id: supplier.id, name: supplier.name },
+                quantityReceived: aggregate.quantityReceived,
+                lastReceivedAt: Timestamp.fromMillis(aggregate.lastReceivedAt),
+            };
+        }),
+    );
+
+    return history
+        .filter((item): item is ProductInvoiceHistoryItem => item !== null)
+        .sort((a, b) => b.invoiceDate.toMillis() - a.invoiceDate.toMillis());
+};
+
+const attachStockAndCategory = async (
+    products: Product[],
+): Promise<Array<ProductWithCategory & { stock: number }>> => {
+    const categoryIds = [...new Set(products.map((product) => product.categoryId))];
+    const categories = await categoriesRepo.getCategoriesByIds(categoryIds);
+
+    return Promise.all(
+        products.map(async (product) => {
+            const category = categories.get(product.categoryId);
+            if (!category) {
+                throw notFound('Categoría');
+            }
+            const stock = Math.max(
+                0,
+                product.totalStock ?? await batchesRepo.getTotalStock(product.id),
+            );
+            return {
+                ...product,
+                stock,
+                category,
+            };
+        }),
+    );
+};
+
+/**
+ * Producto tal como lo guarda el SQLite local del POS. **Es exactamente lo que
+ * persiste `electron/db/products.js`, ni un campo más**: el pull completo viaja
+ * por la red de la farmacia y se guarda entero, así que mandar el documento de
+ * Firestore tal cual (categoría embebida, costos por proveedor, timestamps de
+ * auditoría) es peso que nadie lee.
+ */
+export interface SyncProduct {
+    id: string;
+    sku: string;
+    barcode?: string;
+    name: string;
+    activeIngredient?: string;
+    concentration?: string;
+    categoryId: string;
+    unit: string;
+    salePrice: number;
+    minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    iepsRate?: number;
+    controlledGroup?: ControlledGroup;
+    requiresPrescription: boolean;
+    isActive: boolean;
+    /** Existencia total; el local la usa como foto hasta el siguiente pull. */
+    stock: number;
+    /** Cursor del pull incremental (`updatedSince` de la siguiente corrida). */
+    updatedAt: Timestamp;
+    batches: SyncBatch[];
+}
+
+/** Lote reducido a lo que el local necesita para FEFO y caducidad. */
+export interface SyncBatch {
+    id: string;
+    lotNumber: string;
+    expiryDate: Timestamp;
+    quantity: number;
+}
+
+const toSyncBatch = (batch: Batch): SyncBatch => ({
+    id: batch.id,
+    lotNumber: batch.lotNumber,
+    expiryDate: batch.expiryDate,
+    quantity: batch.quantity,
+});
+
+const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
+    const sumFromBatches = batches.reduce((total, batch) => total + batch.quantity, 0);
+    return {
+        id: product.id,
+        sku: product.sku,
+        ...(product.barcode ? { barcode: product.barcode } : {}),
+        name: product.name,
+        ...(product.activeIngredient ? { activeIngredient: product.activeIngredient } : {}),
+        ...(product.concentration ? { concentration: product.concentration } : {}),
+        categoryId: product.categoryId,
+        unit: product.unit,
+        salePrice: product.salePrice,
+        minStock: product.minStock,
+        hasIva: product.hasIva,
+        hasIvaZero: product.hasIvaZero,
+        hasIeps: product.hasIeps,
+        ...(product.iepsRate === undefined ? {} : { iepsRate: product.iepsRate }),
+        ...(product.controlledGroup ? { controlledGroup: product.controlledGroup } : {}),
+        requiresPrescription: Boolean(product.requiresPrescription),
+        isActive: product.isActive,
+        // `totalStock` es el denormalizado que mantienen ventas y entradas; si el
+        // producto es anterior a la denormalización se suma de los lotes que ya
+        // se leyeron, en vez de pagar una consulta extra por producto.
+        stock: Math.max(0, product.totalStock ?? sumFromBatches),
+        updatedAt: product.updatedAt,
+        batches: batches.map(toSyncBatch),
+    };
+};
+
+/**
+ * Catálogo para el pull local-first del POS: una sola llamada trae todo (o todo
+ * lo cambiado desde `updatedSince`) en vez de recorrer `listProducts` página por
+ * página. Incluye inactivos a propósito — el catálogo local necesita reflejar
+ * bajas, no solo altas.
+ *
+ * Costo: 1 consulta de productos + N/30 de lotes. No lee categorías (el local
+ * solo guarda `categoryId`) ni cae a `getTotalStock` por producto, que eran
+ * lecturas por producto en cada sync.
+ */
+export const listProductsForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: SyncProduct[] }> => {
+    const products = await productsRepo.listProducts({
+        activeOnly: false,
+        updatedSince: filters.updatedSince,
+    });
+    // El SQLite local necesita los lotes (caducidad, FEFO) para no pegarle a
+    // `GET /inventory/batches` al agregar al carrito: sin red eso no existe.
+    const batchesByProduct = await batchesRepo.listBatchesWithStockByProductIds(
+        products.map((product) => product.id),
+    );
+
+    return {
+        items: products.map((product) =>
+            toSyncProduct(product, batchesByProduct.get(product.id) ?? []),
+        ),
+    };
+};
+
 export const listProducts = async (filters: {
     categoryId?: string;
     search?: string;
+    /** SKU exacto (1 lectura). Con prioridad sobre `search`: nunca recorre la colección. */
+    sku?: string;
     activeOnly?: boolean;
     page?: number;
     limit?: number;
+    /** Solo productos con `updatedAt` posterior (sync incremental del catálogo local del POS). */
+    updatedSince?: string;
 }): Promise<{
     items: Array<ProductWithCategory & { stock: number }>;
     meta: ListMeta;
 }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    const { items, total } = await productsRepo.listProducts({ ...filters, page, limit });
-    const categoryIds = [...new Set(items.map((product) => product.categoryId))];
-    const [categories, stockValues] = await Promise.all([
-        categoriesRepo.getCategoriesByIds(categoryIds),
-        Promise.all(items.map((product) => batchesRepo.getTotalStock(product.id))),
-    ]);
+    const search = filters.search?.trim();
 
-    const withDetails = items.map((product, index) => {
-        const category = categories.get(product.categoryId);
-        if (!category) {
-            throw notFound('Categoría');
-        }
+    if (filters.sku?.trim()) {
+        const found = await productsRepo.findProductBySku(filters.sku);
+        const visible = found && (filters.activeOnly === false || found.isActive) ? [found] : [];
+        return {
+            items: await attachStockAndCategory(visible),
+            meta: buildListMeta(1, Math.max(visible.length, 1), visible.length),
+        };
+    }
+
+    /**
+     * Camino normal de la pantalla de catálogo: sin término de búsqueda,
+     * Firestore resuelve orden y página. Antes se leía la colección completa
+     * para devolver 20 productos.
+     *
+     * `updatedSince` (sync incremental del POS) no entra aquí: ese flujo quiere
+     * todo lo cambiado, no una página, y su propio filtro ya acota la lectura.
+     */
+    if (!search && !filters.updatedSince) {
+        const { items: pageItems, total } = await productsRepo.listProductsPage({
+            categoryId: filters.categoryId,
+            activeOnly: filters.activeOnly,
+            page,
+            limit,
+        });
 
         return {
-            ...product,
-            stock: stockValues[index],
-            category,
+            items: await attachStockAndCategory(pageItems),
+            meta: buildListMeta(page, limit, total),
         };
-    });
+    }
+
+    let items: Product[];
+
+    if (search) {
+        const exact = await productsRepo.findProductBySkuOrBarcode(search);
+        if (exact) {
+            items = [exact];
+        } else if (filters.categoryId) {
+            items = await productsRepo.listProducts({
+                categoryId: filters.categoryId,
+                activeOnly: filters.activeOnly,
+            });
+            items = items.filter((product) => matchesProductSearch(product, search));
+        } else {
+            items = await productsRepo.listProducts({
+                activeOnly: filters.activeOnly,
+                limit: 500,
+            });
+            items = items.filter((product) => matchesProductSearch(product, search));
+        }
+    } else {
+        items = await productsRepo.listProducts({
+            categoryId: filters.categoryId,
+            activeOnly: filters.activeOnly,
+            updatedSince: filters.updatedSince,
+        });
+    }
+
+    const { items: paginated, total } = paginate(items, page, limit);
+    const withDetails = await attachStockAndCategory(paginated);
 
     return {
         items: withDetails,
         meta: buildListMeta(page, limit, total),
     };
+};
+
+const ensureProductExists = async (id: string): Promise<void> => {
+    const product = await productsRepo.getProductById(id);
+    if (!product) {
+        throw notFound('Producto');
+    }
 };
 
 export const getProduct = async (id: string): Promise<ProductDetail> => {
@@ -70,8 +440,10 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
         throw notFound('Producto');
     }
 
-    const [stock, suppliers, category] = await Promise.all([
-        batchesRepo.getTotalStock(id),
+    const [stockRaw, suppliers, category] = await Promise.all([
+        product.totalStock !== undefined
+            ? Promise.resolve(product.totalStock)
+            : batchesRepo.getTotalStock(id),
         loadSuppliersSummary(product.suppliers ?? [], product.lastCostPriceBySupplier ?? {}),
         categoriesRepo.getCategoryById(product.categoryId),
     ]);
@@ -80,8 +452,123 @@ export const getProduct = async (id: string): Promise<ProductDetail> => {
         throw notFound('Categoría');
     }
 
+    const stock = Math.max(0, stockRaw);
+
     const { lastCostPriceBySupplier: _, ...productData } = product;
-    return { ...productData, stock, suppliers, category };
+    return {
+        ...productData,
+        stock,
+        suppliers,
+        category,
+    };
+};
+
+export const getProductPurchaseHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductPurchaseHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadPurchaseHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.supplier.name.toLowerCase().includes(term) ||
+                (item.invoice?.invoiceNumber.toLowerCase().includes(term) ?? false) ||
+                item.lotNumber.toLowerCase().includes(term) ||
+                item.entryId.toLowerCase().includes(term) ||
+                item.batchId.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
+};
+
+export const getProductSalesHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductSaleHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadSalesHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.saleId.toLowerCase().includes(term) ||
+                item.paymentMethod.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
+};
+
+export const getProductInvoiceHistory = async (
+    id: string,
+    filters: { search?: string; page?: number; limit?: number },
+): Promise<{ items: ProductInvoiceHistoryItem[]; meta: ListMeta }> => {
+    await ensureProductExists(id);
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    let history = await loadInvoiceHistory(id);
+
+    if (filters.search) {
+        const term = filters.search.toLowerCase();
+        history = history.filter(
+            (item) =>
+                item.invoiceNumber.toLowerCase().includes(term) ||
+                item.supplier.name.toLowerCase().includes(term),
+        );
+    }
+
+    return buildListResult(history, page, limit);
+};
+
+/** Campos de producto que se vigilan en la bitácora (precio, impuestos, control). */
+const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
+    'name',
+    'sku',
+    'barcode',
+    'salePrice',
+    'minStock',
+    'hasIva',
+    'hasIvaZero',
+    'hasIeps',
+    'iepsRate',
+    'controlledGroup',
+    'requiresPrescription',
+    'isActive',
+];
+
+const auditProductUpdate = async (
+    before: Product,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    const changes = diffFields(
+        before as unknown as Record<string, unknown>,
+        after as unknown as Record<string, unknown>,
+        AUDITED_PRODUCT_FIELDS as unknown as string[],
+    );
+    if (!changes) {
+        return;
+    }
+
+    const priceChanged = Boolean(changes.salePrice);
+    await recordAudit({
+        action: priceChanged ? 'product.price_changed' : 'product.updated',
+        entity: 'product',
+        entityId: after.id,
+        summary: priceChanged
+            ? `Precio de ${after.name} de ${before.salePrice.toFixed(2)} a ` +
+                `${after.salePrice.toFixed(2)}`
+            : `Producto ${after.name} actualizado (${Object.keys(changes).join(', ')})`,
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        changes,
+    });
 };
 
 export const createProduct = async (input: {
@@ -93,8 +580,21 @@ export const createProduct = async (input: {
     unit: string;
     salePrice: number;
     minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    concentration?: string;
+    controlledGroup?: ControlledGroup;
+    iepsRate?: number;
+    requiresPrescription?: boolean;
+    /** Actor para la bitácora; opcional para no romper llamadas internas. */
+    actor?: AuditActor;
 }): Promise<Product> => {
-    if (!input.name.trim() || !input.sku.trim()) {
+    const name = input.name.trim();
+    const sku = input.sku.trim();
+    const barcode = input.barcode?.trim();
+
+    if (!name || !sku) {
         throw badRequest('Nombre y SKU son requeridos');
     }
 
@@ -107,23 +607,101 @@ export const createProduct = async (input: {
         throw notFound('Categoría');
     }
 
-    const existingSku = await productsRepo.getProductBySku(input.sku.trim());
-    if (existingSku) {
-        throw conflict('Ya existe un producto con ese SKU');
-    }
-
-    return productsRepo.createProduct({
-        name: input.name.trim(),
-        sku: input.sku.trim(),
-        barcode: input.barcode?.trim(),
+    const created = await productsRepo.createProduct({
+        name,
+        sku,
+        barcode,
         activeIngredient: input.activeIngredient?.trim(),
         categoryId: input.categoryId,
         unit: input.unit.trim(),
         salePrice: input.salePrice,
         minStock: input.minStock,
+        totalStock: 0,
+        hasIva: input.hasIva,
+        hasIvaZero: input.hasIvaZero,
+        hasIeps: input.hasIeps,
+        concentration: input.concentration?.trim(),
+        controlledGroup: input.controlledGroup,
+        iepsRate: input.iepsRate,
+        requiresPrescription: input.requiresPrescription ?? false,
         isActive: true,
         suppliers: [],
     });
+
+    await recordAudit({
+        action: 'product.created',
+        entity: 'product',
+        entityId: created.id,
+        summary: `Producto ${created.name} (${created.sku}) creado a ` +
+            `${created.salePrice.toFixed(2)}`,
+        userId: input.actor?.userId ?? 'system',
+        roleSlug: input.actor?.roleSlug ?? null,
+    });
+
+    return created;
+};
+
+type CreateProductInput = {
+    name: string;
+    sku: string;
+    barcode?: string;
+    activeIngredient?: string;
+    categoryId: string;
+    unit: string;
+    salePrice: number;
+    minStock: number;
+    hasIva: boolean;
+    hasIvaZero: boolean;
+    hasIeps: boolean;
+    concentration?: string;
+    requiresPrescription?: boolean;
+};
+
+export const bulkCreateProducts = async (
+    items: CreateProductInput[],
+): Promise<BulkCreateProductsResult> => {
+    const created: Product[] = [];
+    const errors: BulkCreateProductsResult['errors'] = [];
+
+    const seen: { name: Set<string>; sku: Set<string>; barcode: Set<string> } = {
+        name: new Set(),
+        sku: new Set(),
+        barcode: new Set(),
+    };
+
+    for (let index = 0; index < items.length; index++) {
+        const item = items[index];
+        const name = item.name.trim().toLowerCase();
+        const sku = item.sku.trim().toLowerCase();
+        const barcode = item.barcode?.trim().toLowerCase();
+
+        if (seen.name.has(name) || seen.sku.has(sku) || (barcode && seen.barcode.has(barcode))) {
+            errors.push({
+                index,
+                sku: item.sku,
+                message: 'Duplicado en el archivo (nombre, SKU o código de barras repetido)',
+            });
+            continue;
+        }
+
+        try {
+            const product = await createProduct(item);
+            seen.name.add(name);
+            seen.sku.add(sku);
+            if (barcode) {
+                seen.barcode.add(barcode);
+            }
+            created.push(product);
+        } catch (error) {
+            errors.push({
+                index,
+                sku: item.sku,
+                message: error instanceof Error ? error.message : 'No se pudo crear el producto',
+            });
+        }
+    }
+
+    return { created, errors };
 };
 
 export const updateProduct = async (
@@ -137,12 +715,26 @@ export const updateProduct = async (
         unit: string;
         salePrice: number;
         minStock: number;
+        hasIva: boolean;
+        hasIvaZero: boolean;
+        hasIeps: boolean;
+        concentration: string;
+        controlledGroup: ControlledGroup;
+        iepsRate: number;
+        requiresPrescription: boolean;
         isActive: boolean;
     }>,
+    actor?: AuditActor,
 ): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
         throw notFound('Producto');
+    }
+
+    const hasIva = input.hasIva ?? existing.hasIva;
+    const hasIvaZero = input.hasIvaZero ?? existing.hasIvaZero;
+    if (hasIva && hasIvaZero) {
+        throw badRequest('Un producto no puede tener IVA e IVA cero al mismo tiempo');
     }
 
     if (input.categoryId) {
@@ -152,31 +744,104 @@ export const updateProduct = async (
         }
     }
 
-    if (input.sku && input.sku !== existing.sku) {
-        const duplicate = await productsRepo.getProductBySku(input.sku.trim());
-        if (duplicate && duplicate.id !== id) {
-            throw conflict('Ya existe un producto con ese SKU');
-        }
-    }
+    const name = input.name?.trim();
+    const sku = input.sku?.trim();
+    const barcode = input.barcode?.trim();
 
-    return productsRepo.updateProduct(id, {
-        name: input.name?.trim(),
-        sku: input.sku?.trim(),
-        barcode: input.barcode?.trim(),
+    const updated = await productsRepo.updateProduct(id, {
+        name,
+        sku,
+        barcode,
         activeIngredient: input.activeIngredient?.trim(),
         categoryId: input.categoryId,
         unit: input.unit?.trim(),
         salePrice: input.salePrice,
         minStock: input.minStock,
+        hasIva: input.hasIva,
+        hasIvaZero: input.hasIvaZero,
+        hasIeps: input.hasIeps,
+        concentration: input.concentration?.trim(),
+        controlledGroup: input.controlledGroup,
+        iepsRate: input.iepsRate,
+        requiresPrescription: input.requiresPrescription,
         isActive: input.isActive,
     });
+
+    await auditProductUpdate(existing, updated, actor);
+    if (updated.salePrice !== existing.salePrice) {
+        await retirePromotionsBrokenByPrice(updated, actor);
+    }
+    return updated;
 };
 
-export const deleteProduct = async (id: string): Promise<Product> => {
+export const updateProductPrices = async (
+    items: Array<{ productId: string; salePrice: number }>,
+    actor?: AuditActor,
+): Promise<Product[]> => {
+    const uniqueIds = [...new Set(items.map((item) => item.productId))];
+    if (uniqueIds.length !== items.length) {
+        throw badRequest('No se permiten productos duplicados');
+    }
+
+    const products = await Promise.all(
+        uniqueIds.map((productId) => productsRepo.getProductById(productId)),
+    );
+
+    for (let index = 0; index < uniqueIds.length; index++) {
+        if (!products[index]) {
+            throw notFound(`Producto ${uniqueIds[index]}`);
+        }
+    }
+
+    const existingById = new Map(
+        (products as Product[]).map((product) => [product.id, product]),
+    );
+
+    const updated = await Promise.all(
+        items.map((item) =>
+            productsRepo.updateProduct(item.productId, { salePrice: item.salePrice })),
+    );
+
+    // Cambio masivo de precios: una bitácora por producto que realmente cambió.
+    await Promise.all(updated.map((product) => {
+        const before = existingById.get(product.id);
+        if (!before || before.salePrice === product.salePrice) {
+            return Promise.resolve();
+        }
+        return recordAudit({
+            action: 'product.price_changed',
+            entity: 'product',
+            entityId: product.id,
+            summary: `Precio de ${product.name} de ${before.salePrice.toFixed(2)} a ` +
+                `${product.salePrice.toFixed(2)} (actualización masiva)`,
+            userId: actor?.userId ?? 'system',
+            roleSlug: actor?.roleSlug ?? null,
+            changes: { salePrice: { before: before.salePrice, after: product.salePrice } },
+        });
+    }));
+    for (const product of updated) {
+        if (existingById.get(product.id)?.salePrice !== product.salePrice) {
+            await retirePromotionsBrokenByPrice(product, actor);
+        }
+    }
+
+    return updated;
+};
+
+export const deleteProduct = async (id: string, actor?: AuditActor): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
         throw notFound('Producto');
     }
 
-    return productsRepo.updateProduct(id, { isActive: false });
+    const updated = await productsRepo.updateProduct(id, { isActive: false });
+    await recordAudit({
+        action: 'product.deactivated',
+        entity: 'product',
+        entityId: id,
+        summary: `Producto ${existing.name} (${existing.sku}) dado de baja`,
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+    });
+    return updated;
 };

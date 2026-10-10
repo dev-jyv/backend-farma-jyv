@@ -9,7 +9,23 @@ typings/
 node_modules/
 *.local
 .env
+# Secretos por proyecto (.env.farma-jyv, .env.farma-jyv-dev); las plantillas sí se versionan
+.env.*
+!.env.example
+!.env.*.example
 
 # Service account credentials
 src/assets/*.json
 lib/assets/
+
+# Service account key que buscan los scripts (migrate-roles, backfill)
+service-account.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+
+# Salida de herramientas de análisis
+graphify-out/
+coverage/
+
+# Service account key (la busca scripts/migrate-roles.ts)
+service-account.json

@@ -1,0 +1,10153 @@
+{
+ "version": 1,
+ "note": "Casos dorados del motor de promociones. Archivo IDENTICO en backend-farma-jyv, farma-jyv-admin y farma-jyv-pos. Regenerar solo si se cambia el motor en los tres.",
+ "discount": [
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 3
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 3
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 9
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 9
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 15
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 18
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 22.98
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 22.98
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 45.96
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 45.96
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 68.94
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 68.94
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 114.9
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 137.88
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 53
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 53
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 106
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 106
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 159
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 159
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 265
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 318
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 105
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 105
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 210
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 210
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 315
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 315
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 525
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 630
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 242.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 242.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 485.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 485.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 728.4
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 728.4
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 1214
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 1456.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 4.98
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 11.97
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 11.97
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 16.95
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 23.94
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 23.94
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 35.91
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 47.88
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 57
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 92
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 114
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 127
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 184
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 241
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 87
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 135
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 174
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 222
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 270
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 309
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 444
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 579
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 224.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 341.7
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 449.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 566.5
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 683.4
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 791.3
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 1133
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 1474.7
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 5.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 5.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 5.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 29.5
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 29.5
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 34.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 59
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 83.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 83.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 83.1
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 185.5
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 185.5
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 268.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 371
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 289.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 289.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 289.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 598.9
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 598.9
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 888.7
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 1197.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 30
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 30
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 50
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 60
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 62
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 62
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 124
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 124
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 186
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 186
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 310
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 372
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 199.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 199.8
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 399.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 399.6
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 599.4
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 599.4
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 999
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 1198.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 1.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 1.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 2.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 3
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 30
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 30
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 50
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 60
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 59.97
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 59.97
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 99.95
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 119.94
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 105
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 105
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 175
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 210
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 183
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 183
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 305
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 366
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 389.7
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 389.7
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 649.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 779.4
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 1.5
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 2
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 30
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 40
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 59.97
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 79.96
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 105
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 140
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 183
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 244
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 389.7
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 519.6
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 2
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 2
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 20
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 40
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 40
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 39.98
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 79.96
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 79.96
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 70
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 140
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 140
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 122
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 244
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 244
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 259.8
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 519.6
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 519.6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0.05
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0.1
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0.15
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0.2
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0.25
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0.3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0.35
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0.65
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 2
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 4
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 7
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 13
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 2
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 4
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 8
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 10
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 11.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 13.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 19.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 25.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 3.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 7
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 10.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 14
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 17.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 21
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 24.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 35
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 45.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 6.1
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 12.2
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 18.3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 24.4
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 30.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 36.6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 42.7
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 61
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 79.3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 12.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 25.98
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 38.97
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 51.96
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 64.95
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 77.94
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 90.93
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 129.9
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 168.87
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0.23
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0.3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0.38
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0.45
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0.53
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0.75
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0.98
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 4.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 7.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 9
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 10.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 15
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 19.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 9
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 11.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 14.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 17.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 20.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 29.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 38.98
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 15.75
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 21
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 26.25
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 31.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 36.75
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 52.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 68.25
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 27.45
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 36.6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 45.75
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 54.9
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 64.05
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 91.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 118.95
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 58.46
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 77.94
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 97.43
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 116.91
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 136.4
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 194.85
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 253.31
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0.33
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0.5
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0.67
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0.83
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 1
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 1.17
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 1.67
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 2.16
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 6.66
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 9.99
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 13.32
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 16.65
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 19.98
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 23.31
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 33.3
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 43.29
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 13.31
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 19.97
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 26.63
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 33.28
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 39.94
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 46.6
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 66.57
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 86.54
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 23.31
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 34.96
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 46.62
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 58.28
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 69.93
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 81.58
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 116.55
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 151.51
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 40.63
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 60.94
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 81.25
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 101.56
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 121.88
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 142.19
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 203.13
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 264.07
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 86.51
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 129.77
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 173.03
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 216.28
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 259.54
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 302.8
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 432.57
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 562.34
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "bogus"
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": []
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2
+   },
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 0.5,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 10,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 19.99,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 35,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 61,
+   "quantity": 13,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 0,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 1,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 2,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 3,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 4,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 5,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 6,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 7,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 10,
+   "discount": 0
+  },
+  {
+   "rule": null,
+   "unitPrice": 129.9,
+   "quantity": 13,
+   "discount": 0
+  }
+ ],
+ "monotonic": [
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 17
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 35
+     },
+     {
+      "quantity": 3,
+      "price": 48
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 3,
+      "price": 99.9
+     },
+     {
+      "quantity": 6,
+      "price": 180.5
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 61,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "tiered",
+    "tiers": [
+     {
+      "quantity": 2,
+      "price": 60
+     }
+    ]
+   },
+   "unitPrice": 129.9,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 61,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 2,
+    "pay": 1
+   },
+   "unitPrice": 129.9,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 61,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 3,
+    "pay": 2
+   },
+   "unitPrice": 129.9,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 0.5,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 10,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 19.99,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 35,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 61,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "nxm",
+    "buy": 5,
+    "pay": 3
+   },
+   "unitPrice": 129.9,
+   "monotonic": false
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 61,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 10,
+    "minQty": 1
+   },
+   "unitPrice": 129.9,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 61,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 15,
+    "minQty": 3
+   },
+   "unitPrice": 129.9,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 0.5,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 10,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 19.99,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 35,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 61,
+   "monotonic": true
+  },
+  {
+   "rule": {
+    "type": "percent",
+    "percent": 33.3,
+    "minQty": 2
+   },
+   "unitPrice": 129.9,
+   "monotonic": true
+  }
+ ],
+ "pickBest": [
+  {
+   "candidates": [
+    {
+     "id": "a",
+     "rule": {
+      "type": "tiered",
+      "tiers": [
+       {
+        "quantity": 2,
+        "price": 17
+       }
+      ]
+     }
+    },
+    {
+     "id": "b",
+     "rule": {
+      "type": "nxm",
+      "buy": 2,
+      "pay": 1
+     }
+    }
+   ],
+   "unitPrice": 10,
+   "quantity": 2,
+   "expected": {
+    "id": "b",
+    "discountAmount": 10
+   }
+  },
+  {
+   "candidates": [
+    {
+     "id": "a",
+     "rule": {
+      "type": "nxm",
+      "buy": 2,
+      "pay": 1
+     }
+    },
+    {
+     "id": "b",
+     "rule": {
+      "type": "tiered",
+      "tiers": [
+       {
+        "quantity": 2,
+        "price": 17
+       }
+      ]
+     }
+    }
+   ],
+   "unitPrice": 10,
+   "quantity": 2,
+   "expected": {
+    "id": "a",
+    "discountAmount": 10
+   }
+  },
+  {
+   "candidates": [
+    {
+     "id": "a",
+     "rule": {
+      "type": "percent",
+      "percent": 10,
+      "minQty": 1
+     }
+    },
+    {
+     "id": "b",
+     "rule": {
+      "type": "nxm",
+      "buy": 3,
+      "pay": 2
+     }
+    }
+   ],
+   "unitPrice": 19.99,
+   "quantity": 3,
+   "expected": {
+    "id": "b",
+    "discountAmount": 19.99
+   }
+  },
+  {
+   "candidates": [
+    {
+     "id": "a",
+     "rule": {
+      "type": "bogus"
+     }
+    }
+   ],
+   "unitPrice": 10,
+   "quantity": 4,
+   "expected": null
+  }
+ ]
+}

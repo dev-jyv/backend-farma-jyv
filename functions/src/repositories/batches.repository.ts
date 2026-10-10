@@ -11,6 +11,76 @@ export const listBatchesByProduct = async (productId: string): Promise<Batch[]> 
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Batch));
 };
 
+/**
+ * Lotes con existencia (`quantity > 0`), para alertas de caducidad y conteo
+ * físico. La colección `batches` es del orden de miles de documentos en una
+ * farmacia; si crece, esto se pagina por `expiryDate`.
+ */
+export const listBatchesWithStock = async (): Promise<Batch[]> => {
+    const snapshot = await collection()
+        .where('quantity', '>', 0)
+        .orderBy('quantity')
+        .get();
+    return snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() } as Batch))
+        .sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+};
+
+/**
+ * Lotes de varios productos en una sola pasada, para el pull del catálogo local
+ * del POS (`GET /products/sync`). Firestore limita `in` a 30 valores, así que se
+ * consulta por bloques: N/30 consultas en vez de una por producto (N+1). Solo
+ * lotes con existencia — el SQLite local los usa para FEFO y caducidad, y un
+ * lote en cero no se puede vender.
+ */
+export const listBatchesWithStockByProductIds = async (
+    productIds: string[],
+): Promise<Map<string, Batch[]>> => {
+    const grouped = new Map<string, Batch[]>();
+    if (productIds.length === 0) {
+        return grouped;
+    }
+
+    const CHUNK_SIZE = 30;
+    const chunks: string[][] = [];
+    for (let index = 0; index < productIds.length; index += CHUNK_SIZE) {
+        chunks.push(productIds.slice(index, index + CHUNK_SIZE));
+    }
+
+    // Solo igualdad sobre `productId`: se resuelve con el índice de campo simple
+    // que Firestore mantiene solo. Combinarlo con `where('quantity','>',0)` exigía
+    // un índice compuesto (productId, quantity) — y si ese índice no está
+    // desplegado, Firestore responde FAILED_PRECONDITION y el sync entero
+    // devuelve 500 (pasó en producción). Los lotes agotados se descartan aquí:
+    // son pocos frente al catálogo y no valen un despliegue de índices como
+    // requisito para que la caja sincronice.
+    const snapshots = await Promise.all(
+        chunks.map((chunk) => collection().where('productId', 'in', chunk).get()),
+    );
+
+    for (const snapshot of snapshots) {
+        for (const doc of snapshot.docs) {
+            const batch = { id: doc.id, ...doc.data() } as Batch;
+            if (!(batch.quantity > 0)) {
+                continue;
+            }
+            const current = grouped.get(batch.productId);
+            if (current) {
+                current.push(batch);
+            } else {
+                grouped.set(batch.productId, [batch]);
+            }
+        }
+    }
+
+    // FEFO: el lote que caduca primero se vende primero.
+    for (const batches of grouped.values()) {
+        batches.sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+    }
+
+    return grouped;
+};
+
 export const getBatchById = async (id: string): Promise<Batch | null> => {
     const doc = await collection().doc(id).get();
     if (!doc.exists) {
@@ -54,17 +124,3 @@ export const createBatch = async (
     const ref = await collection().add(payload);
     return { id: ref.id, ...payload };
 };
-
-export const buildBatchPayload = (
-    productId: string,
-    lotNumber: string,
-    expiryDate: string,
-    quantity: number,
-    costPrice?: number,
-) => ({
-    productId,
-    lotNumber,
-    expiryDate: toTimestamp(expiryDate),
-    quantity,
-    costPrice,
-});

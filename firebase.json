@@ -3,12 +3,29 @@
     {
       "source": "functions",
       "codebase": "default",
+      "predeploy": [
+        "npm --prefix functions run build"
+      ],
       "ignore": [
         "node_modules",
         ".git",
         "firebase-debug.log",
         "firebase-debug.*.log",
-        "*.local"
+        "firestore-debug.log",
+        "*.local",
+        "service-account.json",
+        "**/service-account.json",
+        "src",
+        "test",
+        "test-rules",
+        "jest.rules.config.js",
+        "graphify-out",
+        "coverage",
+        ".eslintrc.js",
+        ".eslintignore",
+        "tsconfig.json",
+        "tsconfig.eslint.json",
+        "jest.config.js"
       ]
     }
   ],
@@ -16,7 +33,11 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "emulators": {
+    "singleProjectMode": true,
     "functions": {
       "port": 5001
     },
@@ -26,8 +47,12 @@
     "auth": {
       "port": 9099
     },
+    "storage": {
+      "port": 9199
+    },
     "ui": {
-      "enabled": true
+      "enabled": true,
+      "port": 4000
     }
   }
 }

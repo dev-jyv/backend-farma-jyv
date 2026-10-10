@@ -1,6 +1,8 @@
 import { Category } from '../types';
+import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
-import { db, now } from '../utils/firestore';
+import { paginateQuery } from '../utils/firestore-pagination';
+import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('categories');
 
@@ -10,6 +12,25 @@ export const listCategories = async (filters: {
     page?: number;
     limit?: number;
 }): Promise<{ items: Category[]; total: number }> => {
+    const page = filters.page ?? 1;
+    const limit = filters.limit ?? 100;
+
+    // Sin búsqueda la página la resuelve Firestore (índice `[isActive, name]`).
+    // La rama de búsqueda sigue leyendo y filtrando en memoria a propósito:
+    // recortar antes de filtrar perdería coincidencias fuera de la página.
+    if (!filters.search) {
+        let query: FirebaseFirestore.Query = collection();
+        if (filters.activeOnly !== false) {
+            query = query.where('isActive', '==', true);
+        }
+        return paginateQuery(
+            query.orderBy('name', 'asc'),
+            (doc) => ({ id: doc.id, ...doc.data() } as Category),
+            page,
+            limit,
+        );
+    }
+
     const query = filters.activeOnly !== false
         ? collection().where('isActive', '==', true)
         : collection();
@@ -18,20 +39,42 @@ export const listCategories = async (filters: {
         (doc) => ({ id: doc.id, ...doc.data() } as Category),
     );
 
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        categories = categories.filter(
-            (category) =>
-                category.name.toLowerCase().includes(term) ||
-                (category.description?.toLowerCase().includes(term) ?? false),
-        );
-    }
-
+    const term = filters.search.toLowerCase();
+    categories = categories.filter(
+        (category) =>
+            category.name.toLowerCase().includes(term) ||
+            (category.description?.toLowerCase().includes(term) ?? false),
+    );
     categories.sort((a, b) => a.name.localeCompare(b.name));
 
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 100;
     return paginate(categories, page, limit);
+};
+
+/**
+ * Catálogo completo para el pull del cliente, sin paginar.
+ *
+ * Existe porque traer "todo" por el endpoint paginado costaba
+ * `N × (P+1) / 2` lecturas: el backend resuelve la página N leyendo `N × limit`
+ * documentos (ver `utils/firestore-pagination.ts`), así que pedir las páginas
+ * una tras otra multiplica el costo. Aquí se lee cada documento una vez.
+ *
+ * **No filtra por `isActive`**: con `updatedSince` el cliente necesita enterarse
+ * de las bajas para sacarlas de su copia; filtrando, un categoría desactivado
+ * simplemente dejaría de aparecer en el delta y se quedaría vivo en el cliente
+ * para siempre.
+ *
+ * Solo usa `where` sobre `updatedAt`, que tiene índice de campo único
+ * automático: no hace falta declarar un índice compuesto.
+ */
+export const listCategoriesForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<Category[]> => {
+    let query: FirebaseFirestore.Query = collection();
+    if (filters.updatedSince) {
+        query = query.where('updatedAt', '>=', toTimestamp(filters.updatedSince));
+    }
+    const snapshot = await query.get();
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as Category));
 };
 
 export const getCategoryById = async (id: string): Promise<Category | null> => {
@@ -82,7 +125,17 @@ export const updateCategory = async (
     await collection().doc(id).update({ ...data, updatedAt: timestamp });
     const updated = await getCategoryById(id);
     if (!updated) {
-        throw new Error('Categoría no encontrada tras actualizar');
+        throw notFound('Categoría');
     }
     return updated;
+};
+
+export const countActiveProductsByCategory = async (categoryId: string): Promise<number> => {
+    const snapshot = await db()
+        .collection('products')
+        .where('categoryId', '==', categoryId)
+        .where('isActive', '==', true)
+        .limit(1)
+        .get();
+    return snapshot.size;
 };
