@@ -1,11 +1,9 @@
 /**
- * Gastos fijos: plantillas que generan, a pedido, un gasto devengado por mes.
- *
- * La regla que carga con todo es la idempotencia: generar el mismo mes dos
- * veces no puede duplicar la renta en el estado de resultados.
+ * Gastos fijos: plantillas que sirven de presupuesto de referencia. A
+ * contabilidad solo llega lo que se paga (`payRecurringExpense`) en su mes,
+ * nunca el monto presupuestado.
  */
 
-import * as accruedRepo from '../src/repositories/accrued-expenses.repository';
 import * as recurring from '../src/services/recurring-expenses.service';
 import { AccruedExpenseView } from '../src/services/accounting-core.service';
 import { RecurringExpense } from '../src/types';
@@ -60,8 +58,8 @@ describe('fechas del gasto fijo', () => {
     });
 });
 
-describe('presupuesto contra real', () => {
-    it('suma presupuesto de activas y lo generado y pagado', () => {
+describe('presupuesto contra pagado', () => {
+    it('suma presupuesto de activas y lo pagado; cuenta las que no tienen pago', () => {
         const summary = recurring.summarizeRecurringMonth(
             '2026-03',
             [
@@ -72,30 +70,39 @@ describe('presupuesto contra real', () => {
         );
 
         expect(summary.budgetTotal).toBe(10500);
-        expect(summary.accruedTotal).toBe(9000);
         expect(summary.paidTotal).toBe(4000);
-        expect(summary.pendingToGenerate).toBe(1);
+        expect(summary.unpaidCount).toBe(1);
     });
 
-    it('una inactiva no presupuesta, pero muestra lo que ya generó', () => {
+    it('una inactiva no presupuesta, pero conserva lo que ya se pagó', () => {
         const summary = recurring.summarizeRecurringMonth(
             '2026-03',
             [
                 template({ isActive: false }),
                 template({ id: 'tpl-2', isActive: false }),
             ],
-            [accrual({})],
+            [accrual({ paidTotal: 9000, balance: 0, status: 'paid' })],
         );
 
         expect(summary.lines.map((line) => line.recurringExpenseId)).toEqual(['tpl-1']);
         expect(summary.budgetTotal).toBe(0);
-        expect(summary.accruedTotal).toBe(9000);
-        expect(summary.pendingToGenerate).toBe(0);
+        expect(summary.paidTotal).toBe(9000);
+        expect(summary.unpaidCount).toBe(0);
+    });
+
+    it('una inactiva sin pagos no aparece en el mes', () => {
+        const summary = recurring.summarizeRecurringMonth(
+            '2026-03',
+            [template({ isActive: false })],
+            [],
+        );
+
+        expect(summary.lines).toEqual([]);
+        expect(summary.paidTotal).toBe(0);
     });
 });
 
-describe('generación del mes', () => {
-    const month = '2025-02';
+describe('consulta del mes', () => {
     const created: string[] = [];
 
     afterAll(async () => {
@@ -106,7 +113,7 @@ describe('generación del mes', () => {
         );
     });
 
-    it('generar el mismo mes dos veces no duplica', async () => {
+    it('una plantilla activa aparece con su presupuesto y sin pagos', async () => {
         const rent = await recurring.createRecurringExpense(
             { category: 'rent', concept: unique('Renta'), amount: 8000, dueDay: 3 },
             'admin-user',
@@ -114,24 +121,13 @@ describe('generación del mes', () => {
         );
         created.push(rent.id);
 
-        const first = await recurring.generateRecurringMonth(month, 'admin-user', 'admin');
-        const second = await recurring.generateRecurringMonth(month, 'admin-user', 'admin');
+        const summary = await recurring.getRecurringMonth('2025-02');
+        const line = summary.lines.find((item) => item.recurringExpenseId === rent.id);
 
-        const line = second.summary.lines.find((item) => item.recurringExpenseId === rent.id);
-        expect(first.created).toBeGreaterThanOrEqual(1);
-        expect(line?.accrued?.amount).toBe(8000);
-        expect(line?.accrued?.accruedAt.toDate().toISOString()).toBe(
-            '2025-02-03T12:00:00.000Z',
-        );
-
-        const accruals = await accruedRepo.listAccrued({
-            from: new Date('2025-02-01T00:00:00Z'),
-            to: new Date('2025-02-28T23:59:59Z'),
-        });
-        expect(accruals.filter((item) => item.recurringExpenseId === rent.id)).toHaveLength(1);
+        expect(line).toMatchObject({ budget: 8000, paid: 0, isActive: true, lastPaymentAt: null });
     });
 
-    it('una plantilla inactiva no genera', async () => {
+    it('una plantilla inactiva sin pagos no aparece', async () => {
         const light = await recurring.createRecurringExpense(
             { category: 'electricity', concept: unique('Luz'), amount: 1200, dueDay: 10 },
             'admin-user',
@@ -145,15 +141,9 @@ describe('generación del mes', () => {
             'admin',
         );
 
-        const result = await recurring.generateRecurringMonth('2025-03', 'admin-user', 'admin');
+        const summary = await recurring.getRecurringMonth('2025-03');
 
-        expect(
-            result.summary.lines.some((item) => item.recurringExpenseId === light.id),
-        ).toBe(false);
-        const [stored] = await accruedRepo.getByIds([
-            recurring.recurringAccrualId(light.id, '2025-03'),
-        ]);
-        expect(stored).toBeUndefined();
+        expect(summary.lines.some((item) => item.recurringExpenseId === light.id)).toBe(false);
     });
 
     it('exige descripción en las categorías que no se explican solas', async () => {
@@ -164,5 +154,16 @@ describe('generación del mes', () => {
                 'admin',
             ),
         ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    });
+
+    it('pagar una plantilla inexistente responde no encontrado', async () => {
+        await expect(
+            recurring.payRecurringExpense(
+                'no-existe',
+                { month: '2025-02', amount: 100, paymentMethod: 'cash' },
+                'admin-user',
+                'admin',
+            ),
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 });
