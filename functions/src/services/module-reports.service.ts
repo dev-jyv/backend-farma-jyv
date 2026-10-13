@@ -31,16 +31,16 @@ const SCOPE_TITLES: Record<ReportScope, string> = {
     financial: 'Financiero',
 };
 
-const NO_CASHIER = 'Sin identificar';
+export const NO_CASHIER = 'Sin identificar';
 const MAX_CONCEPT_ITEMS = 6;
 
-const dateFormatter = new Intl.DateTimeFormat('es-MX', {
+export const dateFormatter = new Intl.DateTimeFormat('es-MX', {
     timeZone: REPORTS_TIME_ZONE,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
 });
-const timeFormatter = new Intl.DateTimeFormat('es-MX', {
+export const timeFormatter = new Intl.DateTimeFormat('es-MX', {
     timeZone: REPORTS_TIME_ZONE,
     hour: '2-digit',
     minute: '2-digit',
@@ -59,7 +59,7 @@ const monthFormatter = new Intl.DateTimeFormat('es-MX', {
     year: 'numeric',
 });
 
-const escapeHtml = (value: string): string =>
+export const escapeHtml = (value: string): string =>
     value
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -170,7 +170,7 @@ export const buildSalesRows = (
             }];
         });
 
-const STYLES = `
+export const STYLES = `
 <style>
     * { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; color: #1f2937; font-size: 11px; margin: 0; }
@@ -188,7 +188,7 @@ const STYLES = `
     .low { color: #b91c1c; font-weight: bold; }
 </style>`;
 
-const page = (input: {
+export const page = (input: {
     title: string;
     subtitle: string;
     generatedBy: string;
@@ -256,7 +256,7 @@ ${[...byDay.entries()].map(([date, day]) => `<tr><td>${escapeHtml(date)}</td>
 };
 
 /** Nombres de quien cobró (o registró) por uid; los que no se resuelven quedan fuera. */
-const resolveUserNames = async (ids: readonly string[]): Promise<Map<string, string>> => {
+export const resolveUserNames = async (ids: readonly string[]): Promise<Map<string, string>> => {
     const unique = [...new Set(ids.filter(Boolean))];
     const profiles = await Promise.all(unique.map((uid) => usersRepo.getUserProfile(uid)));
     const names = new Map<string, string>();
@@ -407,6 +407,28 @@ export interface InvoicePdfRow {
     registeredAt: string;
 }
 
+export const buildInvoiceRows = (
+    invoices: ReadonlyArray<{
+        supplierId: string;
+        invoiceNumber: string;
+        invoiceDate: { toDate(): Date };
+        createdBy: string;
+        createdAt: { toDate(): Date };
+    }>,
+    suppliers: ReadonlyMap<string, { name: string }>,
+    userNames: ReadonlyMap<string, string>,
+): InvoicePdfRow[] =>
+    invoices.map((invoice) => {
+        const created = invoice.createdAt.toDate();
+        return {
+            supplier: suppliers.get(invoice.supplierId)?.name ?? 'Proveedor eliminado',
+            date: dateFormatter.format(invoice.invoiceDate.toDate()),
+            number: invoice.invoiceNumber,
+            registeredBy: userNames.get(invoice.createdBy) ?? NO_CASHIER,
+            registeredAt: `${dateFormatter.format(created)} ${timeFormatter.format(created)}`,
+        };
+    });
+
 export const invoicesReportHtml = (input: {
     range: ReportRange;
     rows: InvoicePdfRow[];
@@ -443,16 +465,7 @@ export const buildInvoicesPdf = async (input: {
         suppliersRepo.getSuppliersByIds(invoices.map((invoice) => invoice.supplierId)),
         resolveUserNames(invoices.map((invoice) => invoice.createdBy)),
     ]);
-    const rows: InvoicePdfRow[] = invoices.map((invoice) => {
-        const created = invoice.createdAt.toDate();
-        return {
-            supplier: suppliers.get(invoice.supplierId)?.name ?? 'Proveedor eliminado',
-            date: dateFormatter.format(invoice.invoiceDate.toDate()),
-            number: invoice.invoiceNumber,
-            registeredBy: userNames.get(invoice.createdBy) ?? NO_CASHIER,
-            registeredAt: `${dateFormatter.format(created)} ${timeFormatter.format(created)}`,
-        };
-    });
+    const rows = buildInvoiceRows(invoices, suppliers, userNames);
     const html = invoicesReportHtml({ range, rows, generatedBy: input.generatedBy, generatedAt: now });
     return { pdf: await renderHtmlToPdf(html), fileName: `facturas-${range.slug}.pdf` };
 };

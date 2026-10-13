@@ -1,23 +1,28 @@
-import { Controller, Get, Query, Res } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { z } from 'zod';
-import { dailySalesExportQuerySchema, monthlyExportQuerySchema } from '../../schemas';
+import {
+    dailySalesExportQuerySchema,
+    monthlyExportQuerySchema,
+    reportExportQuerySchema,
+} from '../../schemas';
 import * as moduleReports from '../../services/module-reports.service';
+import { exportReport } from '../../services/report-export/export-report';
+import { REPORT_KEYS } from '../../services/report-export/registry';
 import { AuthUser } from '../../types';
+import { sendFile } from '../../common/send-file';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 
 type DailyQuery = z.infer<typeof dailySalesExportQuerySchema>;
 type MonthlyQuery = z.infer<typeof monthlyExportQuerySchema>;
+type ReportExportQuery = z.infer<typeof reportExportQuerySchema>;
 
-const sendPdf = (res: Response, file: { pdf: Buffer; fileName: string }): void => {
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
-    // Sin esto el navegador no puede leer el nombre del archivo desde otro origen.
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition');
-    res.send(file.pdf);
-};
+const reportKeySchema = z.enum(REPORT_KEYS);
+
+const sendPdf = (res: Response, file: { pdf: Buffer; fileName: string }): void =>
+    sendFile(res, { body: file.pdf, contentType: 'application/pdf', fileName: file.fileName });
 
 const nameOf = (user: AuthUser): string => user.displayName || user.email;
 
@@ -110,6 +115,30 @@ export class ReportExportsController {
         sendPdf(res, await moduleReports.buildInvoicesPdf({
             month: query.month,
             generatedBy: nameOf(user),
+        }));
+    }
+
+    /**
+     * Descarga genérica: `GET /reports/exports/:report?format=pdf|xlsx|csv`. Va después de
+     * las rutas `*.pdf` para que no las capture; esas siguen igual para no romper al front.
+     * Cada reporte puede añadir su propia restricción (el libro de controlados exige
+     * administrador o gerente) además de `dashboard:read`.
+     */
+    @Get(':report')
+    @RequirePermission('dashboard', 'read')
+    async download(
+        @Param('report', new ZodValidationPipe(reportKeySchema)) report: string,
+        @Query(new ZodValidationPipe(reportExportQuerySchema)) query: ReportExportQuery,
+        @CurrentUser() user: AuthUser,
+        @Res() res: Response,
+    ) {
+        const { format, ...filters } = query;
+        sendFile(res, await exportReport({
+            report,
+            format,
+            query: filters,
+            generatedBy: nameOf(user),
+            roleSlug: user.role.slug,
         }));
     }
 }
