@@ -11,6 +11,15 @@ import { fromDate } from '../utils/firestore';
 import { MemoryCache } from '../utils/memory-cache';
 import { fromCents, toCents } from '../utils/taxes';
 import { getZonedYmd, zonedStartOfDayMs } from '../utils/timezone';
+import {
+    Granularity,
+    SeriesOptions,
+    SeriesPoint,
+    SeriesRow,
+    buildSeries,
+    clampPeriods,
+    seriesStartMs,
+} from './analytics-series';
 import { REPORTS_TIME_ZONE } from './sales-reports.service';
 
 /**
@@ -61,7 +70,7 @@ const stockDelta = (type: StockMovementType, quantity: number): number => {
 // Meses locales de la farmacia
 // ---------------------------------------------------------------------------
 
-const monthOf = (ms: number): string =>
+export const monthOf = (ms: number): string =>
     getZonedYmd(ms, REPORTS_TIME_ZONE).slice(0, 7);
 
 export const addMonths = (month: string, delta: number): string => {
@@ -70,10 +79,10 @@ export const addMonths = (month: string, delta: number): string => {
     return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
 };
 
-const monthStartMs = (month: string): number =>
+export const monthStartMs = (month: string): number =>
     zonedStartOfDayMs(`${month}-01`, REPORTS_TIME_ZONE);
 
-const monthRange = (from: string, to: string): string[] => {
+export const monthRange = (from: string, to: string): string[] => {
     const months: string[] = [];
     for (let m = from; m <= to; m = addMonths(m, 1)) {
         months.push(m);
@@ -93,6 +102,8 @@ export interface AnalyticsInput {
     };
     now: Date;
     months: number;
+    /** Si viene, la respuesta agrega `series` por día o semana. */
+    series?: SeriesOptions;
     sales: Array<Pick<Sale, 'items' | 'voidedAt'> & { createdAt: TimestampLike }>;
     returns: Array<{
         createdAt: TimestampLike;
@@ -190,6 +201,12 @@ export interface ProductAnalytics {
         };
     };
     monthly: MonthlyPoint[];
+    /**
+     * Solo con `granularity` día o semana: ventas netas de devoluciones por
+     * cubeta, la más reciente al final. Stock y costo siguen siendo mensuales.
+     */
+    granularity?: Exclude<Granularity, 'month'>;
+    series?: SeriesPoint[];
     priceChanges: Array<{ date: string; before: number; after: number }>;
     purchases: Array<{
         entryId: string;
@@ -272,6 +289,7 @@ export const buildProductAnalytics = (input: AnalyticsInput): ProductAnalytics =
     const firstMonth = windowStart < currentYearStart ? windowStart : currentYearStart;
     const allMonths = monthRange(firstMonth, currentMonth);
     const accs = new Map(allMonths.map((m) => [m, emptyAcc()]));
+    const seriesRows: SeriesRow[] = [];
 
     // Ventas (anuladas fuera) -------------------------------------------------
     for (const sale of input.sales) {
@@ -279,14 +297,23 @@ export const buildProductAnalytics = (input: AnalyticsInput): ProductAnalytics =
             continue;
         }
         const acc = accs.get(monthOf(sale.createdAt.toMillis()));
-        if (!acc) {
-            continue;
-        }
         for (const item of sale.items.filter(isSaleProductItem)) {
             if (item.productId !== product.id) {
                 continue;
             }
             const netCents = toCents(item.netAmount ?? item.subtotal - item.discountAmount);
+            if (input.series) {
+                seriesRows.push({
+                    ms: sale.createdAt.toMillis(),
+                    units: item.quantity,
+                    netCents,
+                    commissionCents: 0,
+                    unitPrice: item.unitPrice,
+                });
+            }
+            if (!acc) {
+                continue;
+            }
             acc.units += item.quantity;
             acc.netCents += netCents;
             acc.baseCents += item.taxes ? toCents(item.taxes.base) : netCents;
@@ -307,11 +334,19 @@ export const buildProductAnalytics = (input: AnalyticsInput): ProductAnalytics =
     // de un mes con devoluciones queda ligeramente subestimado.
     for (const saleReturn of input.returns) {
         const acc = accs.get(monthOf(saleReturn.createdAt.toMillis()));
-        if (!acc) {
-            continue;
-        }
         for (const item of saleReturn.items) {
             if (item.productId !== product.id) {
+                continue;
+            }
+            if (input.series) {
+                seriesRows.push({
+                    ms: saleReturn.createdAt.toMillis(),
+                    units: -item.quantity,
+                    netCents: -toCents(item.refundAmount),
+                    commissionCents: 0,
+                });
+            }
+            if (!acc) {
                 continue;
             }
             acc.returnedUnits += item.quantity;
@@ -448,6 +483,12 @@ export const buildProductAnalytics = (input: AnalyticsInput): ProductAnalytics =
             },
         },
         monthly,
+        ...(input.series
+            ? {
+                granularity: input.series.granularity,
+                series: buildSeries(seriesRows, nowMs, input.series),
+            }
+            : {}),
         priceChanges: priceChanges.map((change) => ({
             date: new Date(change.ms).toISOString(),
             before: change.before,
@@ -483,8 +524,16 @@ const cache = new MemoryCache<ProductAnalytics>(CACHE_TTL_MS, 100);
 export const getProductAnalytics = async (
     productId: string,
     months: number = DEFAULT_ANALYTICS_MONTHS,
+    options: { granularity?: Granularity; periods?: number } = {},
 ): Promise<ProductAnalytics> => {
-    const cacheKey = `${productId}:${months}`;
+    const series: SeriesOptions | undefined = options.granularity && options.granularity !== 'month'
+        ? {
+            granularity: options.granularity,
+            periods: clampPeriods(options.granularity, options.periods),
+        }
+        : undefined;
+    const cacheKey =
+        `${productId}:${months}:${series ? `${series.granularity}${series.periods}` : 'm'}`;
     const cached = cache.get(cacheKey);
     if (cached) {
         return cached;
@@ -499,7 +548,10 @@ export const getProductAnalytics = async (
     const currentMonth = monthOf(now.getTime());
     const windowStart = addMonths(currentMonth, -(months - 1));
     const yearStart = `${currentMonth.slice(0, 4)}-01`;
-    const sinceMs = monthStartMs(windowStart < yearStart ? windowStart : yearStart);
+    const monthsSinceMs = monthStartMs(windowStart < yearStart ? windowStart : yearStart);
+    const sinceMs = series
+        ? Math.min(monthsSinceMs, seriesStartMs(now.getTime(), series))
+        : monthsSinceMs;
     const since = new Date(sinceMs);
     const unavailable: string[] = [];
 
@@ -531,6 +583,7 @@ export const getProductAnalytics = async (
         product,
         now,
         months,
+        series,
         sales,
         returns,
         movements: movements.slice(0, MOVEMENTS_CAP),
@@ -542,4 +595,59 @@ export const getProductAnalytics = async (
     });
     cache.set(cacheKey, result);
     return result;
+};
+
+// ---------------------------------------------------------------------------
+// Búsqueda por nombre (para el asistente de IA, que no conoce ids)
+// ---------------------------------------------------------------------------
+
+export interface ProductMatch {
+    id: string;
+    name: string;
+    sku: string;
+    activeIngredient: string | null;
+    salePrice: number;
+}
+
+const normalizeText = (value: string): string =>
+    value
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+
+/**
+ * Catálogo activo en memoria por 5 minutos: buscar por nombre no debe leer
+ * todos los productos en cada pregunta del asistente.
+ */
+const catalogCache = new MemoryCache<ProductMatch[]>(5 * 60 * 1000, 1);
+const CATALOG_KEY = 'active';
+
+export const findProductsByName = async (
+    query: string,
+    limit = 5,
+): Promise<ProductMatch[]> => {
+    const term = normalizeText(query);
+    if (!term) {
+        return [];
+    }
+    let catalog = catalogCache.get(CATALOG_KEY);
+    if (!catalog) {
+        const products = await productsRepo.listProducts({ activeOnly: true });
+        catalog = products.map((product) => ({
+            id: product.id,
+            name: product.name,
+            sku: product.sku,
+            activeIngredient: product.activeIngredient ?? null,
+            salePrice: product.salePrice,
+        }));
+        catalogCache.set(CATALOG_KEY, catalog);
+    }
+    return catalog
+        .filter((product) =>
+            normalizeText(product.name).includes(term) ||
+            normalizeText(product.sku).includes(term) ||
+            normalizeText(product.activeIngredient ?? '').includes(term))
+        .slice(0, Math.min(Math.max(limit, 1), 10));
 };

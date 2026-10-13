@@ -1,6 +1,6 @@
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as salesRepo from '../repositories/sales.repository';
-import { PaymentMethod, Sale, isSaleProductItem } from '../types';
+import { PaymentMethod, Sale, isSaleProductItem, isSaleServiceItem } from '../types';
 import { MemoryCache } from '../utils/memory-cache';
 import { fromCents, toCents } from '../utils/taxes';
 import { addDaysYmd, getZonedYmd, zonedStartOfDayMs } from '../utils/timezone';
@@ -146,6 +146,41 @@ export interface ProductSummaryLine {
     share: number;
 }
 
+export interface ServiceSummaryLine {
+    serviceId: string;
+    serviceName: string;
+    units: number;
+    revenue: number;
+    /** Participación sobre el ingreso de servicios del periodo, en %. */
+    share: number;
+}
+
+export interface ProviderSummaryLine {
+    /** `null` = servicios cobrados sin doctor. */
+    providerId: string | null;
+    providerName: string | null;
+    units: number;
+    revenue: number;
+    commission: number;
+}
+
+/**
+ * Rama del consultorio. Un servicio no tiene costo de venta ni se devuelve, así
+ * que su "neto" es el ingreso menos la comisión del doctor.
+ */
+export interface ServicesBlock {
+    /** Ventas que incluyen algún servicio. */
+    tickets: number;
+    units: number;
+    /** Cobrado por servicios, impuestos incluidos. */
+    total: number;
+    commission: number;
+    net: number;
+    ticketAverage: number;
+    topServices: ServiceSummaryLine[];
+    byProvider: ProviderSummaryLine[];
+}
+
 export interface PeriodTotals {
     tickets: number;
     /** Cobrado bruto, impuestos incluidos. */
@@ -159,6 +194,9 @@ export interface PeriodTotals {
     ticketAverage: number;
     pharmacyTotal: number;
     servicesTotal: number;
+    /** Ventas con algo de mercancía y su importe (la rama de farmacia). */
+    pharmacy: { tickets: number; total: number };
+    services: ServicesBlock;
     merchandise: {
         units: number;
         /** Base sin impuestos de la mercancía vendida. */
@@ -175,7 +213,13 @@ export interface PeriodTotals {
         /** Base de las partidas sin costo: venta cuyo margen se desconoce. */
         uncostedBase: number;
     };
-    byDay: Array<{ date: string; tickets: number; total: number }>;
+    byDay: Array<{
+        date: string;
+        tickets: number;
+        total: number;
+        pharmacy: number;
+        services: number;
+    }>;
     byPayment: Array<{ method: PaymentMethod; tickets: number; total: number }>;
     topProducts: ProductSummaryLine[];
     uncostedProducts: ProductSummaryLine[];
@@ -209,7 +253,25 @@ export const summarizePeriod = (
     let ticketsWithoutCost = 0;
     let merchNetCents = 0;
 
-    const byDay = new Map<string, { tickets: number; cents: number }>();
+    let pharmacyTickets = 0;
+    let serviceTickets = 0;
+    let serviceUnits = 0;
+    let serviceNetCents = 0;
+    let serviceCommissionCents = 0;
+    const serviceMap = new Map<string, { name: string; units: number; cents: number }>();
+    const providerMap = new Map<string, {
+        name: string | null;
+        units: number;
+        cents: number;
+        commissionCents: number;
+    }>();
+
+    const byDay = new Map<string, {
+        tickets: number;
+        cents: number;
+        pharmacyCents: number;
+        servicesCents: number;
+    }>();
     const byPayment = new Map<PaymentMethod, { tickets: number; cents: number }>();
     const products = new Map<string, ProductAcc>();
 
@@ -226,15 +288,56 @@ export const summarizePeriod = (
         pharmacyCents += toCents(sale.pharmacyTotal ?? sale.total);
 
         const day = getZonedYmd(sale.createdAt.toMillis(), REPORTS_TIME_ZONE);
-        const dayAcc = byDay.get(day) ?? { tickets: 0, cents: 0 };
+        const dayAcc = byDay.get(day) ?? {
+            tickets: 0,
+            cents: 0,
+            pharmacyCents: 0,
+            servicesCents: 0,
+        };
         dayAcc.tickets += 1;
         dayAcc.cents += totalCents;
+        dayAcc.pharmacyCents += toCents(sale.pharmacyTotal ?? sale.total);
+        dayAcc.servicesCents += toCents(sale.servicesTotal ?? 0);
         byDay.set(day, dayAcc);
+        if (toCents(sale.pharmacyTotal ?? sale.total) > 0) {
+            pharmacyTickets += 1;
+        }
 
         const payment = byPayment.get(sale.paymentMethod) ?? { tickets: 0, cents: 0 };
         payment.tickets += 1;
         payment.cents += totalCents;
         byPayment.set(sale.paymentMethod, payment);
+
+        let saleHasServices = false;
+        for (const item of sale.items.filter(isSaleServiceItem)) {
+            saleHasServices = true;
+            const netCents = toCents(item.netAmount ?? item.subtotal - item.discountAmount);
+            const commissionCents = toCents(item.commissionAmount ?? 0);
+            serviceUnits += item.quantity;
+            serviceNetCents += netCents;
+            serviceCommissionCents += commissionCents;
+
+            const service = serviceMap.get(item.serviceId)
+                ?? { name: item.serviceName, units: 0, cents: 0 };
+            service.units += item.quantity;
+            service.cents += netCents;
+            serviceMap.set(item.serviceId, service);
+
+            const providerKey = item.providerId ?? '';
+            const provider = providerMap.get(providerKey) ?? {
+                name: item.providerName,
+                units: 0,
+                cents: 0,
+                commissionCents: 0,
+            };
+            provider.units += item.quantity;
+            provider.cents += netCents;
+            provider.commissionCents += commissionCents;
+            providerMap.set(providerKey, provider);
+        }
+        if (saleHasServices) {
+            serviceTickets += 1;
+        }
 
         let saleHasUncosted = false;
         for (const item of sale.items.filter(isSaleProductItem)) {
@@ -293,6 +396,36 @@ export const summarizePeriod = (
         ticketAverage: tickets ? fromCents(Math.round(grossCents / tickets)) : 0,
         pharmacyTotal: fromCents(pharmacyCents),
         servicesTotal: fromCents(servicesCents),
+        pharmacy: { tickets: pharmacyTickets, total: fromCents(pharmacyCents) },
+        services: {
+            tickets: serviceTickets,
+            units: serviceUnits,
+            total: fromCents(serviceNetCents),
+            commission: fromCents(serviceCommissionCents),
+            net: fromCents(serviceNetCents - serviceCommissionCents),
+            ticketAverage: serviceTickets
+                ? fromCents(Math.round(serviceNetCents / serviceTickets))
+                : 0,
+            topServices: [...serviceMap.entries()]
+                .sort(([, a], [, b]) => b.cents - a.cents)
+                .slice(0, TOP_PRODUCTS)
+                .map(([serviceId, acc]) => ({
+                    serviceId,
+                    serviceName: acc.name,
+                    units: acc.units,
+                    revenue: fromCents(acc.cents),
+                    share: pct(acc.cents, serviceNetCents) ?? 0,
+                })),
+            byProvider: [...providerMap.entries()]
+                .sort(([, a], [, b]) => b.cents - a.cents)
+                .map(([key, acc]) => ({
+                    providerId: key || null,
+                    providerName: acc.name,
+                    units: acc.units,
+                    revenue: fromCents(acc.cents),
+                    commission: fromCents(acc.commissionCents),
+                })),
+        },
         merchandise: {
             units,
             base: fromCents(merchBaseCents),
@@ -304,7 +437,13 @@ export const summarizePeriod = (
             uncostedBase: fromCents(uncostedBaseCents),
         },
         byDay: [...byDay.entries()]
-            .map(([date, acc]) => ({ date, tickets: acc.tickets, total: fromCents(acc.cents) }))
+            .map(([date, acc]) => ({
+                date,
+                tickets: acc.tickets,
+                total: fromCents(acc.cents),
+                pharmacy: fromCents(acc.pharmacyCents),
+                services: fromCents(acc.servicesCents),
+            }))
             .sort((a, b) => a.date.localeCompare(b.date)),
         byPayment: [...byPayment.entries()]
             .map(([method, acc]) => ({ method, tickets: acc.tickets, total: fromCents(acc.cents) }))
@@ -332,6 +471,10 @@ export interface Comparison {
     tickets: number | null;
     ticketAverage: number | null;
     profit: number | null;
+    /** Variación del importe de cada rama y de las comisiones. */
+    pharmacy: number | null;
+    services: number | null;
+    commission: number | null;
     /** Diferencia del margen en puntos porcentuales. */
     marginPoints: number | null;
 }
@@ -347,6 +490,9 @@ export const compareTotals = (current: PeriodTotals, previous: PeriodTotals): Co
     tickets: change(current.tickets, previous.tickets),
     ticketAverage: change(current.ticketAverage, previous.ticketAverage),
     profit: change(current.merchandise.profit, previous.merchandise.profit),
+    pharmacy: change(current.pharmacy.total, previous.pharmacy.total),
+    services: change(current.services.total, previous.services.total),
+    commission: change(current.services.commission, previous.services.commission),
     marginPoints: marginDelta(current.merchandise.marginRate, previous.merchandise.marginRate),
 });
 
@@ -354,6 +500,8 @@ export type HighlightCode =
     | 'noSales'
     | 'salesUp'
     | 'salesDown'
+    | 'servicesUp'
+    | 'servicesDown'
     | 'marginDown'
     | 'lowCostCoverage'
     | 'refunds'
@@ -381,6 +529,13 @@ export const buildHighlights = (
             code: comparison.net > 0 ? 'salesUp' : 'salesDown',
             severity: comparison.net > 0 ? 'success' : 'warn',
             params: { pct: Math.abs(comparison.net) },
+        });
+    }
+    if (comparison.services !== null && Math.abs(comparison.services) >= SALES_CHANGE_ALERT_PCT) {
+        highlights.push({
+            code: comparison.services > 0 ? 'servicesUp' : 'servicesDown',
+            severity: comparison.services > 0 ? 'success' : 'warn',
+            params: { pct: Math.abs(comparison.services) },
         });
     }
     if (comparison.marginPoints !== null && comparison.marginPoints <= -MARGIN_DROP_ALERT_PTS) {
@@ -425,6 +580,58 @@ export interface BusinessSummary {
     comparison: Comparison;
     highlights: Highlight[];
 }
+
+export type SummaryScope = 'all' | 'pharmacy' | 'services';
+
+const SERVICE_CODES: HighlightCode[] = ['servicesUp', 'servicesDown'];
+/** Avisos que mezclan las dos ramas: no aplican a la vista de solo farmacia. */
+const BRANCH_MIXED_CODES: HighlightCode[] = [...SERVICE_CODES, 'salesUp', 'salesDown'];
+
+/**
+ * Recorta el resumen a una rama para quien no necesita las dos (el asistente de
+ * IA: menos datos, menos tokens y sin mezclar cifras). `all` lo deja completo.
+ * En `pharmacy` y `services` los campos de la otra rama desaparecen y el
+ * `byDay` pasa a llevar solo el total de la rama pedida.
+ */
+export const scopeSummary = (summary: BusinessSummary, scope: SummaryScope): unknown => {
+    if (scope === 'all') {
+        return { scope, ...summary };
+    }
+    const pick = (totals: PeriodTotals) => scope === 'pharmacy'
+        ? {
+            pharmacy: totals.pharmacy,
+            refunds: totals.refunds,
+            discounts: totals.discounts,
+            merchandise: totals.merchandise,
+            topProducts: totals.topProducts,
+            uncostedProducts: totals.uncostedProducts,
+            byDay: totals.byDay.map((d) => ({ date: d.date, total: d.pharmacy })),
+        }
+        : {
+            services: totals.services,
+            byDay: totals.byDay.map((d) => ({ date: d.date, total: d.services })),
+        };
+    const comparison = scope === 'pharmacy'
+        ? {
+            pharmacy: summary.comparison.pharmacy,
+            profit: summary.comparison.profit,
+            marginPoints: summary.comparison.marginPoints,
+        }
+        : { services: summary.comparison.services, commission: summary.comparison.commission };
+    return {
+        scope,
+        period: summary.period,
+        isPartial: summary.isPartial,
+        generatedAt: summary.generatedAt,
+        current: { window: summary.current.window, totals: pick(summary.current.totals) },
+        previous: { window: summary.previous.window, totals: pick(summary.previous.totals) },
+        comparison,
+        highlights: summary.highlights.filter((h) =>
+            scope === 'services'
+                ? SERVICE_CODES.includes(h.code)
+                : !BRANCH_MIXED_CODES.includes(h.code)),
+    };
+};
 
 const cache = new MemoryCache<BusinessSummary>(CACHE_TTL_MS, 50);
 

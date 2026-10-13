@@ -173,6 +173,10 @@ export const listProductHistoryQuerySchema = z.object({
 /** Ventana del análisis de un producto, en meses (1–24; por defecto 12). */
 export const productAnalyticsQuerySchema = z.object({
     months: z.coerce.number().int().min(1).max(24).default(12),
+    /** `day` / `week` agregan además `series` con las ventas por día o semana. */
+    granularity: z.enum(['day', 'week', 'month']).default('month'),
+    /** Cubetas de `series` (1-90 días, 1-52 semanas); se ajusta al tope de la granularidad. */
+    periods: z.coerce.number().int().min(1).max(90).optional(),
 });
 
 const supplierName = z.string().trim()

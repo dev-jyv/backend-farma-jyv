@@ -4,10 +4,12 @@
  */
 
 import {
+    BusinessSummary,
     SummarySale,
     buildHighlights,
     compareTotals,
     resolvePeriods,
+    scopeSummary,
     summarizePeriod,
 } from '../src/services/business-summary.service';
 
@@ -210,5 +212,90 @@ describe('compareTotals y buildHighlights', () => {
 
         expect(buildHighlights(empty, compareTotals(empty, empty)).map((h) => h.code))
             .toEqual(['noSales']);
+    });
+});
+
+describe('rama de consultorio y alcance', () => {
+    const serviceLine = (overrides: Record<string, unknown> = {}) => ({
+        kind: 'service',
+        serviceId: 's1',
+        serviceName: 'Consulta',
+        providerId: 'd1',
+        providerName: 'Dra. Ana',
+        commissionRate: 40,
+        commissionAmount: 40,
+        quantity: 1,
+        unitPrice: 100,
+        discountAmount: 0,
+        subtotal: 100,
+        netAmount: 100,
+        ...overrides,
+    });
+    const mixed = () => summarizePeriod([
+        sale('2026-10-05T18:00:00.000Z', [line({}), serviceLine()], 216, {
+            pharmacyTotal: 116, servicesTotal: 100,
+        }),
+        sale('2026-10-06T18:00:00.000Z', [
+            serviceLine({ providerId: 'd2', providerName: 'Dr. Luis' }),
+        ], 100, { pharmacyTotal: 0, servicesTotal: 100 }),
+    ], []);
+
+    it('separa farmacia y consultorio con tickets, comisión y neto', () => {
+        const totals = mixed();
+
+        expect(totals.pharmacy).toEqual({ tickets: 1, total: 116 });
+        expect(totals.services).toMatchObject({
+            tickets: 2, units: 2, total: 200, commission: 80, net: 120, ticketAverage: 100,
+        });
+        expect(totals.services.byProvider.map((p) => p.providerId)).toEqual(['d1', 'd2']);
+        expect(totals.services.topServices[0]).toMatchObject({ serviceId: 's1', share: 100 });
+    });
+
+    it('el desglose por día trae el total de cada rama', () => {
+        const days = mixed().byDay;
+
+        expect(days[0]).toMatchObject({ date: '2026-10-05', pharmacy: 116, services: 100 });
+        expect(days[1]).toMatchObject({ date: '2026-10-06', pharmacy: 0, services: 100 });
+    });
+
+    it('compara cada rama por separado', () => {
+        const comparison = compareTotals(mixed(), summarizePeriod([
+            sale('2026-09-05T18:00:00.000Z', [serviceLine()], 100, {
+                pharmacyTotal: 0, servicesTotal: 100,
+            }),
+        ], []));
+
+        expect(comparison.services).toBe(100);
+        expect(comparison.commission).toBe(100);
+        expect(comparison.pharmacy).toBeNull();
+    });
+
+    it('scopeSummary recorta a la rama pedida', () => {
+        const current = mixed();
+        const summary = {
+            period: 'week',
+            isPartial: false,
+            generatedAt: 'x',
+            current: { window: {}, totals: current },
+            previous: { window: {}, totals: current },
+            comparison: compareTotals(current, current),
+            highlights: [{ code: 'servicesUp', severity: 'success', params: {} }],
+        } as unknown as BusinessSummary;
+
+        const services = scopeSummary(summary, 'services') as {
+            current: { totals: Record<string, unknown> };
+            highlights: unknown[];
+        };
+        const pharmacy = scopeSummary(summary, 'pharmacy') as {
+            current: { totals: Record<string, unknown> };
+            highlights: unknown[];
+        };
+
+        expect(Object.keys(services.current.totals)).toEqual(['services', 'byDay']);
+        expect(services.highlights).toHaveLength(1);
+        expect(pharmacy.current.totals).not.toHaveProperty('services');
+        expect(pharmacy.current.totals).toHaveProperty('merchandise');
+        expect(pharmacy.highlights).toHaveLength(0);
+        expect(scopeSummary(summary, 'all')).toMatchObject({ scope: 'all' });
     });
 });

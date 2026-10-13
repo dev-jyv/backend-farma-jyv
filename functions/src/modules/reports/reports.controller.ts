@@ -39,8 +39,12 @@ export class ReportsController {
     async businessSummary(
         @Query(new ZodValidationPipe(businessSummaryQuerySchema)) query: BusinessSummaryQuery,
     ) {
-        const data = await businessSummaryService.getBusinessSummary(query.period, query.anchor);
-        return { data };
+        const summary = await businessSummaryService.getBusinessSummary(query.period, query.anchor);
+        return {
+            data: query.scope === 'all'
+                ? summary
+                : businessSummaryService.scopeSummary(summary, query.scope),
+        };
     }
 
     @Get('sales-summary')

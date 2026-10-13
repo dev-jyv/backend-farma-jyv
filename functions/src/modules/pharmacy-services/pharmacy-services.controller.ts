@@ -6,10 +6,12 @@ import {
     createPharmacyServiceSchema,
     idParamSchema,
     listPharmacyServicesQuerySchema,
+    productAnalyticsQuerySchema,
     syncPharmacyServicesQuerySchema,
     updatePharmacyServiceSchema,
 } from '../../schemas';
 import * as pharmacyServicesService from '../../services/pharmacy-services.service';
+import * as serviceAnalyticsService from '../../services/service-analytics.service';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
@@ -17,6 +19,7 @@ import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
 type ListQuery = z.infer<typeof listPharmacyServicesQuerySchema>;
 type SyncQuery = z.infer<typeof syncPharmacyServicesQuerySchema>;
+type AnalyticsQuery = z.infer<typeof productAnalyticsQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 type CreateInput = z.infer<typeof createPharmacyServiceSchema>;
 type UpdateInput = z.infer<typeof updatePharmacyServiceSchema>;
@@ -50,6 +53,24 @@ export class PharmacyServicesController {
             updatedSince: query.updatedSince,
         });
         return { data: result.items };
+    }
+
+    /**
+     * Análisis de un servicio: ventas, precio cobrado, comisiones y reparto por
+     * doctor. Expone lo que se le paga a cada doctor, así que exige
+     * `dashboard:read` (solo administrador), no la lectura del catálogo.
+     */
+    @Get(':id/analytics')
+    @RequirePermission('dashboard', 'read')
+    async analytics(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Query(new ZodValidationPipe(productAnalyticsQuerySchema)) query: AnalyticsQuery,
+    ) {
+        const data = await serviceAnalyticsService.getServiceAnalytics(params.id, query.months, {
+            granularity: query.granularity,
+            periods: query.periods,
+        });
+        return { data };
     }
 
     @Get(':id')

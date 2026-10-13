@@ -1,10 +1,13 @@
 import { getOpenRouterChatModel } from '../config/env';
 import { AppError } from '../utils/errors';
 import * as analytics from './analytics.service';
+import * as businessSummary from './business-summary.service';
 import * as insights from './insights.service';
 import * as inventoryAlerts from './inventory-alerts.service';
 import { getInventorySummary } from './inventory-summary.service';
 import { openRouterRequest } from './openrouter.service';
+import * as productAnalytics from './product-analytics.service';
+import * as serviceAnalytics from './service-analytics.service';
 
 const CALL_TIMEOUT_MS = 25_000;
 const MAX_TOOL_ROUNDS = 4;
@@ -44,6 +47,14 @@ interface ToolArgs {
     to?: string;
     limit?: number;
     days?: number;
+    period?: string;
+    scope?: string;
+    anchor?: string;
+    serviceId?: string;
+    providerId?: string;
+    productId?: string;
+    query?: string;
+    months?: number;
 }
 
 const periodProperties = {
@@ -70,8 +81,104 @@ const TOOLS: Record<string, ToolDefinition> = {
         properties: periodProperties,
         run: (args) => analytics.getSalesSummary(args),
     },
+    business_summary: {
+        description:
+            'Resumen semanal o mensual comparado con el periodo anterior. `scope` separa las ' +
+            'dos ramas del negocio: "pharmacy" (mercancía: ventas, utilidad y margen SOLO sobre ' +
+            'lo que tiene costo, cobertura de costo, productos que más venden y sin costo), ' +
+            '"services" (consultorio: ingreso por servicios, comisiones por doctor, servicios ' +
+            'más cobrados) o "all" (las dos juntas, con su desglose). Es la fuente preferida ' +
+            'para "cómo va la semana/el mes" y para utilidad.',
+        properties: {
+            period: { type: 'string', enum: ['week', 'month'] },
+            scope: { type: 'string', enum: ['all', 'pharmacy', 'services'] },
+            anchor: {
+                type: 'string',
+                description: 'Cualquier día del periodo (YYYY-MM-DD); por defecto hoy.',
+            },
+        },
+        run: async (args) => {
+            const summary = await businessSummary.getBusinessSummary(
+                args.period === 'month' ? 'month' : 'week',
+                typeof args.anchor === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.anchor)
+                    ? args.anchor
+                    : undefined,
+            );
+            const scope = args.scope === 'pharmacy' || args.scope === 'services'
+                ? args.scope
+                : 'all';
+            return businessSummary.scopeSummary(summary, scope);
+        },
+    },
+    top_services: {
+        description: 'Servicios del consultorio más cobrados del periodo (cantidad e importe).',
+        properties: { ...periodProperties, limit: { type: 'integer' } },
+        run: (args) => analytics.getTopServices(args),
+    },
+    commissions: {
+        description:
+            'Comisiones del periodo por doctor (con `providerId` se acota a uno): servicios ' +
+            'cobrados, importe y comisión.',
+        properties: { ...periodProperties, providerId: { type: 'string' } },
+        run: (args) => analytics.getCommissionsByProvider(args),
+    },
+    find_service: {
+        description:
+            'Busca servicios del consultorio por nombre o clave y devuelve sus ids. Úsala antes ' +
+            'de service_analytics cuando el usuario nombre un servicio.',
+        properties: { query: { type: 'string' } },
+        run: (args) => serviceAnalytics.findServicesByName(String(args.query ?? '')),
+    },
+    service_analytics: {
+        description:
+            'Análisis de UN servicio (necesita su id, de find_service): ventas del mes y del ' +
+            'año, precio cobrado por mes, comisiones y reparto por doctor.',
+        properties: {
+            serviceId: { type: 'string' },
+            months: { type: 'integer', description: 'Ventana en meses, 1 a 24 (default 12).' },
+        },
+        run: (args) => {
+            if (!args.serviceId || typeof args.serviceId !== 'string') {
+                throw new Error('Falta serviceId: búscalo primero con find_service');
+            }
+            const requested = Math.trunc(Number(args.months))
+                || productAnalytics.DEFAULT_ANALYTICS_MONTHS;
+            const months = Math.min(Math.max(requested, 1), productAnalytics.MAX_ANALYTICS_MONTHS);
+            return serviceAnalytics.getServiceAnalytics(args.serviceId, months);
+        },
+    },
+    find_product: {
+        description:
+            'Busca productos activos por nombre, SKU o principio activo y devuelve sus ids. ' +
+            'Úsala antes de product_analytics cuando el usuario nombre un producto.',
+        properties: { query: { type: 'string' } },
+        run: (args) => productAnalytics.findProductsByName(String(args.query ?? '')),
+    },
+    product_analytics: {
+        description:
+            'Análisis de UN producto (necesita su id, de find_product): ventas del mes y del ' +
+            'año, ' +
+            'precio y costo por mes, cambios de precio, stock por mes, valor de inventario y ' +
+            'compras recientes.',
+        properties: {
+            productId: { type: 'string' },
+            months: { type: 'integer', description: 'Ventana en meses, 1 a 24 (default 12).' },
+        },
+        run: (args) => {
+            if (!args.productId || typeof args.productId !== 'string') {
+                throw new Error('Falta productId: búscalo primero con find_product');
+            }
+            const requested = Math.trunc(Number(args.months))
+                || productAnalytics.DEFAULT_ANALYTICS_MONTHS;
+            const months = Math.min(Math.max(requested, 1), productAnalytics.MAX_ANALYTICS_MONTHS);
+            return productAnalytics.getProductAnalytics(args.productId, months);
+        },
+    },
     profit: {
-        description: 'Utilidad y margen del periodo, calculados sobre la base sin impuestos.',
+        description:
+            'Utilidad y margen del periodo sobre la base sin impuestos. OJO: las partidas sin ' +
+            'costo capturado cuentan como costo 0 y el margen sale inflado; `salesWithoutCost` ' +
+            'dice cuántas ventas están en ese caso. Para cifras confiables usa business_summary.',
         properties: { ...periodProperties, limit: { type: 'integer' } },
         run: (args) => analytics.getProfitReport(args),
     },
@@ -112,7 +219,11 @@ const TOOLS: Record<string, ToolDefinition> = {
     },
 };
 
-const SYSTEM_PROMPT = [
+/**
+ * Se arma en cada conversación: la fecha se calculaba al cargar el módulo y una
+ * instancia que viviera días seguiría diciendo el "hoy" del arranque.
+ */
+const buildSystemPrompt = (): string => [
     'Eres el analista de negocio de una farmacia mexicana (FarmaJyV). Ayudas al dueño a ' +
         'entender ventas, utilidad, inventario y caducidades.',
     'Responde siempre en español, claro y breve. Montos en pesos mexicanos (MXN).',
@@ -120,6 +231,16 @@ const SYSTEM_PROMPT = [
         'herramienta no trae lo necesario, dilo.',
     'La utilidad se mide sobre la base sin impuestos, no sobre el total cobrado. Las ' +
         'devoluciones ya vienen restadas en los reportes.',
+    'Muchos productos no tienen costo capturado. Para utilidad y margen prefiere ' +
+        'business_summary (calcula el margen solo sobre lo que tiene costo y trae la cobertura ' +
+        'de costo). Si usas profit y salesWithoutCost > 0, advierte que el margen está inflado.',
+    'Para preguntas de un producto, busca su id con find_product y luego usa product_analytics. ' +
+        'Para un servicio del consultorio, find_service y luego service_analytics.',
+    'El negocio tiene dos ramas: farmacia (mercancía) y consultorio (servicios). Analízalas por ' +
+        'separado (scope "pharmacy" o "services") o juntas (scope "all") según lo que pida el ' +
+        'usuario; si no lo aclara, usa "all" y muestra el desglose. Un servicio no tiene costo ' +
+        'de venta ni se devuelve: su neto es el ingreso menos la comisión del doctor, y no ' +
+        'debes mezclarlo con el margen de la mercancía.',
     'Si el usuario no da fechas, elige un periodo razonable (por ejemplo el mes en curso) y ' +
         'dilo en la respuesta. Hoy es ' +
         new Date().toISOString().slice(0, 10) +
@@ -165,7 +286,7 @@ const runTool = async (call: ToolCall): Promise<string> => {
 
 export const chat = async (history: AssistantMessage[]): Promise<AssistantReply> => {
     const model = getOpenRouterChatModel();
-    const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
+    const messages: ChatMessage[] = [{ role: 'system', content: buildSystemPrompt() }, ...history];
     const toolsUsed: string[] = [];
 
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round += 1) {

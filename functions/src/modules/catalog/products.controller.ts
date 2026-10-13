@@ -70,7 +70,10 @@ export class ProductsController {
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Query(new ZodValidationPipe(productAnalyticsQuerySchema)) query: ProductAnalyticsQuery,
     ) {
-        const data = await productAnalyticsService.getProductAnalytics(params.id, query.months);
+        const data = await productAnalyticsService.getProductAnalytics(params.id, query.months, {
+            granularity: query.granularity,
+            periods: query.periods,
+        });
         return { data };
     }
 
