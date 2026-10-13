@@ -1,13 +1,15 @@
+import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as productsRepo from '../repositories/products.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as usersRepo from '../repositories/users.repository';
-import { Sale, isSaleProductItem, isSaleServiceItem } from '../types';
+import { CashMovement, ExpensePaymentMethod, Sale, isSaleProductItem, isSaleServiceItem } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { fromCents, toCents } from '../utils/taxes';
 import { addDaysYmd, getZonedYmd, zonedStartOfDayMs } from '../utils/timezone';
+import { listExpenses } from './accounting.service';
 import { addMonths, monthStartMs } from './product-analytics.service';
 import { renderHtmlToPdf } from './report-pdf.service';
 import { PAYMENT_METHOD_LABELS, REPORTS_TIME_ZONE } from './sales-reports.service';
@@ -453,4 +455,411 @@ export const buildInvoicesPdf = async (input: {
     });
     const html = invoicesReportHtml({ range, rows, generatedBy: input.generatedBy, generatedAt: now });
     return { pdf: await renderHtmlToPdf(html), fileName: `facturas-${range.slug}.pdf` };
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Stock bajo (farmacia)                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface LowStockPdfRow extends InventoryPdfRow {
+    /** Lo que falta para llegar al mínimo; 0 si ya está en el mínimo. */
+    missing: number;
+}
+
+/** En o bajo su mínimo, del más crítico (agotado) al menos. */
+export const buildLowStockRows = (
+    products: Parameters<typeof buildInventoryRows>[0],
+    batches: Parameters<typeof buildInventoryRows>[1],
+): LowStockPdfRow[] =>
+    buildInventoryRows(products, batches)
+        // Sin mínimo configurado no hay "faltante": un producto en 0 sin mínimo (descontinuado,
+        // recién dado de alta) no es stock bajo.
+        .filter((row) => row.minStock > 0 && row.stock <= row.minStock)
+        .map((row) => ({ ...row, missing: Math.max(row.minStock - row.stock, 0) }))
+        .sort((a, b) =>
+            (a.minStock > 0 ? a.stock / a.minStock : 0) - (b.minStock > 0 ? b.stock / b.minStock : 0)
+            || a.name.localeCompare(b.name, 'es'));
+
+export const lowStockReportHtml = (input: {
+    rows: LowStockPdfRow[];
+    generatedBy: string;
+    generatedAt: Date;
+}): string => {
+    const body = input.rows.length === 0
+        ? '<p class="empty">Ningún producto activo está en o bajo su mínimo.</p>'
+        : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th><th class="num">Mínimo</th>
+<th class="num">Faltante</th><th>Estado</th></tr></thead><tbody>
+${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+<td class="num${row.stock === 0 ? ' low' : ''}">${row.stock}</td><td class="num">${row.minStock}</td>
+<td class="num">${row.missing}</td><td>${row.stock === 0 ? 'Agotado' : 'Bajo'}</td></tr>`).join('')}
+<tr class="total"><td colspan="6">Total · ${input.rows.length} productos
+(${input.rows.filter((row) => row.stock === 0).length} agotados)</td></tr>
+</tbody></table>`;
+    return page({
+        title: 'Stock bajo · Farmacia',
+        subtitle: `Productos en o bajo su mínimo al ${dateFormatter.format(input.generatedAt)}`,
+        generatedBy: input.generatedBy,
+        generatedAt: input.generatedAt,
+        body,
+    });
+};
+
+export const buildLowStockPdf = async (input: {
+    generatedBy: string;
+    now?: Date;
+}): Promise<{ pdf: Buffer; fileName: string }> => {
+    const now = input.now ?? new Date();
+    const [products, batches] = await Promise.all([
+        productsRepo.listProducts({ activeOnly: true }),
+        batchesRepo.listBatchesWithStock(),
+    ]);
+    const html = lowStockReportHtml({
+        rows: buildLowStockRows(products, batches),
+        generatedBy: input.generatedBy,
+        generatedAt: now,
+    });
+    return { pdf: await renderHtmlToPdf(html), fileName: `stock-bajo-${todayYmd(now)}.pdf` };
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Gastos del mes (farmacia)                                                 */
+/* -------------------------------------------------------------------------- */
+
+const EXPENSE_PAYMENT_LABELS: Record<ExpensePaymentMethod, string> = {
+    cash: 'Efectivo',
+    transfer: 'Transferencia',
+    card: 'Tarjeta',
+};
+
+export interface ExpensePdfRow {
+    /** Fecha a la que pertenece el gasto (`occurredAt`), no la de captura. */
+    date: string;
+    /** Hora en que se registró. */
+    time: string;
+    category: string;
+    concept: string;
+    createdBy: string;
+    payment: string;
+    amount: number;
+}
+
+export const buildExpenseRows = (
+    movements: readonly CashMovement[],
+    userNames: ReadonlyMap<string, string>,
+): ExpensePdfRow[] =>
+    [...movements]
+        .sort((a, b) =>
+            (a.occurredAt ?? a.createdAt).toMillis() - (b.occurredAt ?? b.createdAt).toMillis())
+        .map((movement) => {
+            const registered = movement.createdAt.toDate();
+            return {
+                date: dateFormatter.format((movement.occurredAt ?? movement.createdAt).toDate()),
+                time: timeFormatter.format(registered),
+                category: (movement.category && EXPENSE_CATEGORY_LABELS[movement.category]) || 'Sin categoría',
+                concept: [movement.reason, movement.description].filter(Boolean).join(' — '),
+                createdBy: movement.createdByLabel
+                    || userNames.get(movement.createdBy)
+                    || NO_CASHIER,
+                payment: EXPENSE_PAYMENT_LABELS[movement.paymentMethod ?? 'cash'],
+                amount: movement.amount,
+            };
+        });
+
+export const expensesReportHtml = (input: {
+    range: ReportRange;
+    rows: ExpensePdfRow[];
+    generatedBy: string;
+    generatedAt: Date;
+}): string => {
+    const { rows } = input;
+    let body: string;
+    if (rows.length === 0) {
+        body = '<p class="empty">Sin gastos registrados en el mes.</p>';
+    } else {
+        const byCategory = new Map<string, { count: number; cents: number }>();
+        for (const row of rows) {
+            const entry = byCategory.get(row.category) ?? { count: 0, cents: 0 };
+            entry.count += 1;
+            entry.cents += toCents(row.amount);
+            byCategory.set(row.category, entry);
+        }
+        const totalCents = rows.reduce((total, row) => total + toCents(row.amount), 0);
+        body = `<h2>Por categoría</h2>
+<table><thead><tr><th>Categoría</th><th class="num">Gastos</th><th class="num">Total</th></tr></thead><tbody>
+${[...byCategory.entries()]
+        .sort((a, b) => b[1].cents - a[1].cents)
+        .map(([category, entry]) => `<tr><td>${escapeHtml(category)}</td><td class="num">${entry.count}</td>
+<td class="num">${escapeHtml(formatCurrency(fromCents(entry.cents)))}</td></tr>`).join('')}
+</tbody></table>
+<h2>Detalle de gastos</h2>
+<table><thead><tr><th>Fecha</th><th>Hora</th><th>Categoría</th><th>Concepto</th><th>Registró</th><th>Pago</th><th class="num">Importe</th></tr></thead><tbody>
+${rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.time)}</td>
+<td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.concept)}</td><td>${escapeHtml(row.createdBy)}</td>
+<td>${escapeHtml(row.payment)}</td><td class="num">${escapeHtml(formatCurrency(row.amount))}</td></tr>`).join('')}
+<tr class="total"><td colspan="6">Total · ${rows.length} gastos</td>
+<td class="num">${escapeHtml(formatCurrency(fromCents(totalCents)))}</td></tr>
+</tbody></table>`;
+    }
+    return page({
+        title: 'Gastos del mes · Farmacia',
+        subtitle: input.range.label,
+        generatedBy: input.generatedBy,
+        generatedAt: input.generatedAt,
+        body,
+    });
+};
+
+/** Tope alto a propósito: un auxiliar de gastos recortado es peor que uno grande. */
+const MAX_EXPENSE_ROWS = 5000;
+
+export const buildExpensesPdf = async (input: {
+    /** `YYYY-MM`; por defecto este mes. */
+    month?: string;
+    generatedBy: string;
+    now?: Date;
+}): Promise<{ pdf: Buffer; fileName: string }> => {
+    const now = input.now ?? new Date();
+    const range = monthRange(input.month ?? currentMonth(now));
+    const { items } = await listExpenses({
+        from: range.from,
+        to: range.to,
+        page: 1,
+        limit: MAX_EXPENSE_ROWS,
+        maxLimit: MAX_EXPENSE_ROWS,
+    });
+    const userNames = await resolveUserNames(items.map((movement) => movement.createdBy));
+    const html = expensesReportHtml({
+        range,
+        rows: buildExpenseRows(items, userNames),
+        generatedBy: input.generatedBy,
+        generatedAt: now,
+    });
+    return { pdf: await renderHtmlToPdf(html), fileName: `gastos-${range.slug}.pdf` };
+};
+
+/**
+ * Rango ISO de un periodo `YYYY-MM-DD`..`YYYY-MM-DD`. Sin `from` arranca el mes en
+ * curso y sin `to` termina ahora: lo que el asistente necesita cuando el usuario no
+ * da fechas.
+ */
+export const periodBounds = (
+    from?: unknown,
+    to?: unknown,
+    now = new Date(),
+): { from: string; to: string } => {
+    const valid = (value: unknown): value is string => {
+        if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            return false;
+        }
+        // `Date.parse` acepta `2026-02-31` y lo corre a marzo: se compara de ida y vuelta.
+        const [year, month, day] = value.split('-').map(Number);
+        const parsed = new Date(Date.UTC(year, month - 1, day));
+        return parsed.getUTCFullYear() === year
+            && parsed.getUTCMonth() === month - 1
+            && parsed.getUTCDate() === day;
+    };
+    // Sin `from`, el periodo arranca el mes de `to` (o el en curso): así un `to` en un mes
+    // anterior no produce un rango invertido.
+    const result = {
+        from: valid(from)
+            ? dayRange(from).from
+            : monthRange(valid(to) ? to.slice(0, 7) : currentMonth(now)).from,
+        to: valid(to) ? dayRange(to).to : now.toISOString(),
+    };
+    if (result.from > result.to) {
+        throw new Error('La fecha inicial es posterior a la final.');
+    }
+    return result;
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Próximos a caducar (farmacia)                                             */
+/* -------------------------------------------------------------------------- */
+
+/** Ventana del reporte: lo vencido con existencia y lo que caduca dentro de este plazo. */
+export const EXPIRY_WINDOW_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface ExpiryPdfRow {
+    name: string;
+    sku: string;
+    lot: string;
+    /** `DD/MM/AAAA`. */
+    expiry: string;
+    /** Negativo = ya venció. */
+    daysLeft: number;
+    quantity: number;
+    status: 'Vencido' | '30 días' | '60 días' | '90 días';
+}
+
+export const buildExpiryRows = (
+    products: ReadonlyArray<{ id: string; name: string; sku: string }>,
+    batches: ReadonlyArray<{
+        productId: string;
+        lotNumber: string;
+        quantity: number;
+        expiryDate: { toMillis(): number; toDate(): Date };
+    }>,
+    now: Date,
+): ExpiryPdfRow[] => {
+    const byId = new Map(products.map((product) => [product.id, product]));
+    return batches
+        .filter((batch) => batch.quantity > 0 && byId.has(batch.productId))
+        .map((batch) => {
+            const product = byId.get(batch.productId)!;
+            const daysLeft = Math.ceil((batch.expiryDate.toMillis() - now.getTime()) / DAY_MS);
+            const status: ExpiryPdfRow['status'] = daysLeft < 0
+                ? 'Vencido'
+                : daysLeft <= 30 ? '30 días' : daysLeft <= 60 ? '60 días' : '90 días';
+            return {
+                name: product.name,
+                sku: product.sku,
+                lot: batch.lotNumber,
+                expiry: dateFormatter.format(batch.expiryDate.toDate()),
+                daysLeft,
+                quantity: batch.quantity,
+                status,
+                ms: batch.expiryDate.toMillis(),
+            };
+        })
+        .filter((row) => row.daysLeft <= EXPIRY_WINDOW_DAYS)
+        .sort((a, b) => a.ms - b.ms || a.name.localeCompare(b.name, 'es'))
+        .map(({ ms: _ms, ...row }) => row);
+};
+
+export const expiryReportHtml = (input: {
+    rows: ExpiryPdfRow[];
+    generatedBy: string;
+    generatedAt: Date;
+}): string => {
+    const expired = input.rows.filter((row) => row.status === 'Vencido');
+    const body = input.rows.length === 0
+        ? `<p class="empty">Ningún lote con existencia caduca en los próximos ${EXPIRY_WINDOW_DAYS} días.</p>`
+        : `<table><thead><tr><th>Producto</th><th>SKU</th><th>Lote</th><th>Caduca</th>
+<th class="num">Días</th><th class="num">Cantidad</th><th>Estado</th></tr></thead><tbody>
+${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+<td>${escapeHtml(row.lot)}</td><td>${escapeHtml(row.expiry)}</td>
+<td class="num${row.daysLeft < 0 ? ' low' : ''}">${row.daysLeft}</td><td class="num">${row.quantity}</td>
+<td${row.status === 'Vencido' ? ' class="low"' : ''}>${escapeHtml(row.status)}</td></tr>`).join('')}
+<tr class="total"><td colspan="7">Total · ${input.rows.length} lotes
+(${expired.length} vencidos, ${expired.reduce((total, row) => total + row.quantity, 0)} unidades vencidas)</td></tr>
+</tbody></table>`;
+    return page({
+        title: 'Próximos a caducar · Farmacia',
+        subtitle: `Lotes con existencia vencidos o que caducan en ${EXPIRY_WINDOW_DAYS} días`,
+        generatedBy: input.generatedBy,
+        generatedAt: input.generatedAt,
+        body,
+    });
+};
+
+export const buildExpiryPdf = async (input: {
+    generatedBy: string;
+    now?: Date;
+}): Promise<{ pdf: Buffer; fileName: string }> => {
+    const now = input.now ?? new Date();
+    const [products, batches] = await Promise.all([
+        productsRepo.listProducts({ activeOnly: false }),
+        batchesRepo.listBatchesWithStock(),
+    ]);
+    const html = expiryReportHtml({
+        rows: buildExpiryRows(products, batches, now),
+        generatedBy: input.generatedBy,
+        generatedAt: now,
+    });
+    return { pdf: await renderHtmlToPdf(html), fileName: `proximos-a-caducar-${todayYmd(now)}.pdf` };
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Productos sin costo (farmacia)                                            */
+/* -------------------------------------------------------------------------- */
+
+export interface NoCostPdfRow {
+    name: string;
+    sku: string;
+    stock: number;
+    /** Unidades en lotes sin costo capturado. */
+    unitsWithoutCost: number;
+    lotsWithoutCost: number;
+    salePrice: number;
+}
+
+/**
+ * Productos con existencia cuyo lote no tiene costo capturado: son los que
+ * hacen que la utilidad y el margen salgan inflados. El costo vive en el lote,
+ * no en el producto.
+ */
+export const buildNoCostRows = (
+    products: ReadonlyArray<{ id: string; name: string; sku: string; salePrice: number }>,
+    batches: ReadonlyArray<{ productId: string; quantity: number; costPrice?: number | null }>,
+): NoCostPdfRow[] => {
+    const byProduct = new Map<string, { stock: number; units: number; lots: number }>();
+    for (const batch of batches) {
+        if (batch.quantity <= 0) {
+            continue;
+        }
+        const entry = byProduct.get(batch.productId) ?? { stock: 0, units: 0, lots: 0 };
+        entry.stock += batch.quantity;
+        if (batch.costPrice === undefined || batch.costPrice === null) {
+            entry.units += batch.quantity;
+            entry.lots += 1;
+        }
+        byProduct.set(batch.productId, entry);
+    }
+    return products
+        .filter((product) => (byProduct.get(product.id)?.lots ?? 0) > 0)
+        .map((product) => {
+            const entry = byProduct.get(product.id)!;
+            return {
+                name: product.name,
+                sku: product.sku,
+                stock: entry.stock,
+                unitsWithoutCost: entry.units,
+                lotsWithoutCost: entry.lots,
+                salePrice: product.salePrice,
+            };
+        })
+        .sort((a, b) => b.unitsWithoutCost - a.unitsWithoutCost || a.name.localeCompare(b.name, 'es'));
+};
+
+export const noCostReportHtml = (input: {
+    rows: NoCostPdfRow[];
+    generatedBy: string;
+    generatedAt: Date;
+}): string => {
+    const body = input.rows.length === 0
+        ? '<p class="empty">Todos los lotes con existencia tienen costo capturado.</p>'
+        : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th>
+<th class="num">Unidades sin costo</th><th class="num">Lotes sin costo</th><th class="num">Precio de venta</th></tr></thead><tbody>
+${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+<td class="num">${row.stock}</td><td class="num low">${row.unitsWithoutCost}</td>
+<td class="num">${row.lotsWithoutCost}</td><td class="num">${escapeHtml(formatCurrency(row.salePrice))}</td></tr>`).join('')}
+<tr class="total"><td colspan="6">Total · ${input.rows.length} productos
+(${input.rows.reduce((total, row) => total + row.unitsWithoutCost, 0)} unidades sin costo)</td></tr>
+</tbody></table>
+<p class="meta">Sin costo capturado la utilidad y el margen de estos productos salen inflados.</p>`;
+    return page({
+        title: 'Productos sin costo · Farmacia',
+        subtitle: 'Productos con existencia cuyo lote no tiene costo capturado',
+        generatedBy: input.generatedBy,
+        generatedAt: input.generatedAt,
+        body,
+    });
+};
+
+export const buildNoCostPdf = async (input: {
+    generatedBy: string;
+    now?: Date;
+}): Promise<{ pdf: Buffer; fileName: string }> => {
+    const now = input.now ?? new Date();
+    const [products, batches] = await Promise.all([
+        productsRepo.listProducts({ activeOnly: true }),
+        batchesRepo.listBatchesWithStock(),
+    ]);
+    const html = noCostReportHtml({
+        rows: buildNoCostRows(products, batches),
+        generatedBy: input.generatedBy,
+        generatedAt: now,
+    });
+    return { pdf: await renderHtmlToPdf(html), fileName: `productos-sin-costo-${todayYmd(now)}.pdf` };
 };

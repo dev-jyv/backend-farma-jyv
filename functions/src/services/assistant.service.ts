@@ -1,15 +1,36 @@
 import { getOpenRouterChatModel } from '../config/env';
 import { AppError } from '../utils/errors';
+import * as batchesRepo from '../repositories/batches.repository';
+import * as productsRepo from '../repositories/products.repository';
+import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
+import { getZonedYmd } from '../utils/timezone';
+import * as accounting from './accounting.service';
 import * as analytics from './analytics.service';
 import * as businessSummary from './business-summary.service';
+import * as cashSessions from './cash-sessions.service';
+import * as dashboardCharts from './dashboard-charts.service';
 import * as insights from './insights.service';
 import * as inventoryAlerts from './inventory-alerts.service';
 import { getInventorySummary } from './inventory-summary.service';
+import * as invoices from './invoices.service';
+import {
+    buildExpiryRows,
+    buildLowStockRows,
+    buildNoCostRows,
+    periodBounds,
+} from './module-reports.service';
 import { openRouterRequest } from './openrouter.service';
 import * as productAnalytics from './product-analytics.service';
+import { REPORTS_TIME_ZONE } from './sales-reports.service';
 import * as serviceAnalytics from './service-analytics.service';
 
 const CALL_TIMEOUT_MS = 25_000;
+/** Gastos que se leen para agregar (igual que el PDF) y páginas de facturas para sumar el saldo. */
+const MAX_EXPENSE_ROWS = 5000;
+const MAX_INVOICE_PAGES = 10;
+
+/** Fecha `YYYY-MM-DD` en la zona de la farmacia, no en UTC: después de las 18:00 UTC ya es otro día. */
+const localYmd = (date: Date): string => getZonedYmd(date.getTime(), REPORTS_TIME_ZONE);
 const MAX_TOOL_ROUNDS = 4;
 /** Tope de caracteres por resultado de herramienta, para no inflar el contexto del modelo. */
 const MAX_TOOL_RESULT_CHARS = 12_000;
@@ -55,6 +76,9 @@ interface ToolArgs {
     productId?: string;
     query?: string;
     months?: number;
+    status?: string;
+    granularity?: string;
+    asOf?: string;
 }
 
 const periodProperties = {
@@ -217,6 +241,263 @@ const TOOLS: Record<string, ToolDefinition> = {
         properties: {},
         run: () => insights.getReorderSuggestions({}),
     },
+    income_statement: {
+        description:
+            'Estado de resultados contable del periodo: ingresos, costo de ventas, gastos por ' +
+            'categoría y utilidad neta. Es la fuente para "cuánto gané de verdad" una vez ' +
+            'descontados los gastos. Sin fechas usa el mes en curso.',
+        properties: periodProperties,
+        run: (args) => accounting.getIncomeStatement(periodBounds(args.from, args.to)),
+    },
+    expenses: {
+        description:
+            'Gastos del periodo (renta, sueldos, luz, proveedores…): total, por categoría y los ' +
+            'más recientes con quién los registró. Sin fechas usa el mes en curso.',
+        properties: periodProperties,
+        run: async (args) => {
+            const { from, to } = periodBounds(args.from, args.to);
+            // Se agrega sobre todos los gastos del periodo (mismo tope que el PDF): un total
+            // sobre un recorte se citaría como si fuera el del mes.
+            const { items, meta } = await accounting.listExpenses({
+                from,
+                to,
+                page: 1,
+                limit: MAX_EXPENSE_ROWS,
+                maxLimit: MAX_EXPENSE_ROWS,
+            });
+            const byCategory = new Map<string, { count: number; total: number }>();
+            for (const movement of items) {
+                const label = (movement.category && EXPENSE_CATEGORY_LABELS[movement.category])
+                    || 'Sin categoría';
+                const entry = byCategory.get(label) ?? { count: 0, total: 0 };
+                entry.count += 1;
+                entry.total += movement.amount;
+                byCategory.set(label, entry);
+            }
+            return {
+                from,
+                to,
+                count: items.length,
+                totalAmount: items.reduce((total, movement) => total + movement.amount, 0),
+                truncated: meta.total > items.length,
+                byCategory: [...byCategory.entries()]
+                    .map(([category, entry]) => ({ category, ...entry }))
+                    .sort((a, b) => b.total - a.total),
+                latest: items.slice(0, 25).map((movement) => ({
+                    date: localYmd((movement.occurredAt ?? movement.createdAt).toDate()),
+                    category: (movement.category && EXPENSE_CATEGORY_LABELS[movement.category])
+                        || 'Sin categoría',
+                    reason: movement.reason,
+                    amount: movement.amount,
+                    registeredBy: movement.createdByLabel ?? null,
+                })),
+            };
+        },
+    },
+    financial_position: {
+        description:
+            'Posición financiera actual: efectivo y bancos (estimados), valor del inventario por ' +
+            'categoría, cuentas por pagar. Para "cuánto tengo" o "cuánto debo".',
+        properties: {},
+        run: () => accounting.getFinancialPosition(),
+    },
+    balance_sheet: {
+        description: 'Balance general (activo, pasivo, capital) a una fecha; por defecto hoy.',
+        properties: { asOf: { type: 'string', description: 'Fecha ISO (YYYY-MM-DD).' } },
+        run: (args) =>
+            accounting.getBalanceSheet(
+                typeof args.asOf === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(args.asOf)
+                    ? { asOf: periodBounds(undefined, args.asOf).to }
+                    : {},
+            ),
+    },
+    payables: {
+        description: 'Cuentas por pagar: gastos devengados pendientes de pago y su antigüedad.',
+        properties: {},
+        run: () => accounting.getPayables(),
+    },
+    supplier_invoices: {
+        description:
+            'Facturas de proveedores con su saldo. `status`: pending, partial, paid u overdue ' +
+            '(vencidas). Úsala para "cuánto le debo a proveedores" o "qué facturas vencen".',
+        properties: {
+            ...periodProperties,
+            status: { type: 'string', enum: ['pending', 'partial', 'paid', 'overdue'] },
+            limit: { type: 'integer', description: 'Máximo de facturas, 1 a 100 (default 50).' },
+        },
+        run: async (args) => {
+            const status = ['pending', 'partial', 'paid', 'overdue'].includes(String(args.status))
+                ? (args.status as 'pending' | 'partial' | 'paid' | 'overdue')
+                : undefined;
+            const range = args.from || args.to ? periodBounds(args.from, args.to) : {};
+            const shown = Math.min(Math.max(Math.trunc(Number(args.limit)) || 50, 1), 100);
+            // El saldo pendiente se suma sobre TODAS las que coinciden (hasta un tope), no solo
+            // sobre las que se listan: «cuánto debo» no puede salir de la primera página.
+            const all: Awaited<ReturnType<typeof invoices.listInvoices>>['items'] = [];
+            let total = 0;
+            for (let page = 1; page <= MAX_INVOICE_PAGES; page += 1) {
+                const result = await invoices.listInvoices({
+                    ...range,
+                    paymentStatus: status,
+                    page,
+                    limit: 100,
+                });
+                all.push(...result.items);
+                total = result.meta.total;
+                if (all.length >= total || result.items.length === 0) {
+                    break;
+                }
+            }
+            const items = all.slice(0, shown);
+            return {
+                total,
+                shown: items.length,
+                outstandingBalance: all.reduce((sum, invoice) => sum + invoice.balance, 0),
+                balanceIsPartial: all.length < total,
+                invoices: items.map((invoice) => ({
+                    supplier: invoice.supplier?.name ?? null,
+                    number: invoice.invoiceNumber,
+                    date: localYmd(invoice.invoiceDate.toDate()),
+                    dueDate: invoice.dueDate ? localYmd(invoice.dueDate.toDate()) : null,
+                    total: invoice.totalAmount,
+                    paid: invoice.paidTotal ?? 0,
+                    balance: invoice.balance,
+                    status: invoice.paymentStatus,
+                    overdue: invoice.isOverdue,
+                })),
+            };
+        },
+    },
+    cash_sessions: {
+        description:
+            'Cortes de caja (turnos) del periodo: quién abrió y cerró, efectivo esperado vs ' +
+            'contado y diferencia. Para detectar faltantes o sobrantes.',
+        properties: { ...periodProperties, limit: { type: 'integer' } },
+        run: async (args) => {
+            const range = args.from || args.to ? periodBounds(args.from, args.to) : {};
+            const { items } = await cashSessions.listCashSessions({
+                ...range,
+                page: 1,
+                limit: Math.min(Math.max(Math.trunc(Number(args.limit)) || 30, 1), 100),
+            });
+            return items.map((session) => ({
+                openedBy: session.openedByLabel,
+                closedBy: session.closedByLabel,
+                openedAt: session.openedAt.toDate().toISOString(),
+                closedAt: session.closedAt?.toDate().toISOString() ?? null,
+                openingAmount: session.openingAmount,
+                expectedCash: session.expectedCashAmount,
+                countedCash: session.countedCashAmount,
+                difference: session.cashDifference,
+                adjustmentStatus: session.adjustmentStatus ?? null,
+            }));
+        },
+    },
+    upcoming_fixed_payments: {
+        description: 'Próximos pagos fijos (renta, servicios…) del más urgente al más lejano.',
+        properties: {},
+        run: () => dashboardCharts.getUpcomingFixedPayments(),
+    },
+    dashboard_charts: {
+        description:
+            'Ventas, compras y gastos del POS por día (periodo YYYY-MM), mes (YYYY) o año. ' +
+            'Para tendencias y comparar ventas contra compras y gastos.',
+        properties: {
+            granularity: { type: 'string', enum: ['day', 'month', 'year'] },
+            period: { type: 'string', description: 'YYYY-MM para day, YYYY para month.' },
+        },
+        run: (args) =>
+            dashboardCharts.getDashboardCharts({
+                granularity: args.granularity === 'day' || args.granularity === 'year'
+                    ? args.granularity
+                    : 'month',
+                period: typeof args.period === 'string' && /^\d{4}(-\d{2})?$/.test(args.period)
+                    ? args.period
+                    : undefined,
+            }),
+    },
+    repeat_customers: {
+        description:
+            'Clientes recurrentes del periodo: cuántos hay, tasa de recompra y concentración de ' +
+            'compras. Solo agregados: no incluye nombres ni datos personales.',
+        properties: periodProperties,
+        run: async (args) => {
+            const report = await insights.getRepeatCustomers(periodBounds(args.from, args.to));
+            return {
+                identifiedSales: report.identifiedSales,
+                anonymousSales: report.anonymousSales,
+                customers: report.customers,
+                repeatCustomers: report.repeatCustomers,
+                repeatRate: report.repeatRate,
+                topSpendersAnonymous: report.items
+                    .slice(0, 5)
+                    .map((item) => ({ purchases: item.purchases, total: item.total })),
+            };
+        },
+    },
+    low_stock: {
+        description:
+            'Productos activos en o bajo su stock mínimo, del más crítico al menos, con el ' +
+            'faltante para llegar al mínimo.',
+        properties: { limit: { type: 'integer' } },
+        run: async (args) => {
+            const [products, batches] = await Promise.all([
+                productsRepo.listProducts({ activeOnly: true }),
+                batchesRepo.listBatchesWithStock(),
+            ]);
+            const rows = buildLowStockRows(products, batches);
+            return {
+                total: rows.length,
+                outOfStock: rows.filter((row) => row.stock === 0).length,
+                products: rows
+                    .slice(0, Math.min(Math.max(Math.trunc(Number(args.limit)) || 30, 1), 60))
+                    .map((row) => ({
+                        name: row.name,
+                        sku: row.sku,
+                        stock: row.stock,
+                        minStock: row.minStock,
+                        missing: row.missing,
+                    })),
+            };
+        },
+    },
+    expiring_batches: {
+        description:
+            'Lotes con existencia vencidos o que caducan en los próximos 90 días, con producto, ' +
+            'lote, fecha y cantidad.',
+        properties: { limit: { type: 'integer' } },
+        run: async (args) => {
+            const [products, batches] = await Promise.all([
+                productsRepo.listProducts({ activeOnly: false }),
+                batchesRepo.listBatchesWithStock(),
+            ]);
+            const rows = buildExpiryRows(products, batches, new Date());
+            return {
+                total: rows.length,
+                expiredUnits: rows
+                    .filter((row) => row.status === 'Vencido')
+                    .reduce((total, row) => total + row.quantity, 0),
+                batches: rows.slice(0, Math.min(Math.max(Math.trunc(Number(args.limit)) || 40, 1), 80)),
+            };
+        },
+    },
+    products_without_cost: {
+        description:
+            'Productos con existencia cuyo lote no tiene costo capturado. Explica por qué la ' +
+            'utilidad y el margen pueden salir inflados.',
+        properties: { limit: { type: 'integer' } },
+        run: async (args) => {
+            const [products, batches] = await Promise.all([
+                productsRepo.listProducts({ activeOnly: true }),
+                batchesRepo.listBatchesWithStock(),
+            ]);
+            const rows = buildNoCostRows(products, batches);
+            return {
+                total: rows.length,
+                products: rows.slice(0, Math.min(Math.max(Math.trunc(Number(args.limit)) || 30, 1), 60)),
+            };
+        },
+    },
 };
 
 /**
@@ -224,8 +505,16 @@ const TOOLS: Record<string, ToolDefinition> = {
  * instancia que viviera días seguiría diciendo el "hoy" del arranque.
  */
 const buildSystemPrompt = (): string => [
-    'Eres el analista de negocio de una farmacia mexicana (FarmaJyV). Ayudas al dueño a ' +
-        'entender ventas, utilidad, inventario y caducidades.',
+    'Eres el analista de negocio de una farmacia mexicana con consultorio (FarmaJyV). Ayudas al ' +
+        'dueño con TODO lo del negocio: ventas, utilidad, gastos, estado de resultados, ' +
+        'posición financiera, cuentas por pagar y facturas de proveedores, cortes de caja, ' +
+        'inventario, stock bajo, caducidades, productos sin costo, promociones, clientes ' +
+        'recurrentes, comisiones y desempeño del consultorio.',
+    'Elige la herramienta por tema: gastos → expenses; "cuánto gané de verdad" → ' +
+        'income_statement; "cuánto tengo / debo" → financial_position, payables o ' +
+        'supplier_invoices; faltantes de caja → cash_sessions; resurtir → low_stock y ' +
+        'reorder_suggestions; caducidad → expiring_batches; margen dudoso → ' +
+        'products_without_cost. Combina varias herramientas cuando la pregunta lo requiera.',
     'Responde siempre en español, claro y breve. Montos en pesos mexicanos (MXN).',
     'Usa las herramientas para obtener cifras reales; nunca inventes números. Si una ' +
         'herramienta no trae lo necesario, dilo.',

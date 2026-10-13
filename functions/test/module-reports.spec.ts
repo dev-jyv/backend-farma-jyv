@@ -4,15 +4,25 @@
  */
 
 import {
+    buildExpenseRows,
+    buildExpiryRows,
     buildInventoryRows,
+    buildLowStockRows,
+    buildNoCostRows,
+    expensesReportHtml,
+    expiryReportHtml,
+    lowStockReportHtml,
+    noCostReportHtml,
     buildSalesRows,
     dayRange,
     inventoryReportHtml,
     invoicesReportHtml,
     monthRange,
+    periodBounds,
     salesReportHtml,
 } from '../src/services/module-reports.service';
-import type { Sale } from '../src/types';
+import { dailySalesExportQuerySchema } from '../src/schemas';
+import type { CashMovement, Sale } from '../src/types';
 
 const at = (iso: string) => {
     const date = new Date(iso);
@@ -179,5 +189,136 @@ describe('inventario', () => {
         });
         expect(html).toContain('Inventario · Farmacia');
         expect(html).toContain('class="num low">0</td>');
+    });
+});
+
+describe('parámetros de exportación', () => {
+    it('acepta una fecha real y rechaza las que no existen en el calendario', () => {
+        const parse = (date?: string) =>
+            dailySalesExportQuerySchema.safeParse({ scope: 'pharmacy', date });
+
+        expect(parse('2026-10-15').success).toBe(true);
+        expect(parse(undefined).success).toBe(true);
+        for (const invalid of ['2026-02-31', '9999-99-99', '2026-13-45', '2026-4-5']) {
+            expect(parse(invalid).success).toBe(false);
+        }
+    });
+});
+
+describe('stock bajo, caducidad, sin costo y gastos', () => {
+    const generatedAt = new Date('2026-10-15T18:00:00.000Z');
+    const products = [
+        { id: 'a', name: 'Aspirina', sku: 'A', salePrice: 10, minStock: 5 },
+        { id: 'b', name: 'Zinc', sku: 'Z', salePrice: 20, minStock: 4 },
+        { id: 'c', name: 'Vitamina', sku: 'V', salePrice: 30, minStock: 2 },
+    ];
+
+    it('stock bajo: solo en o bajo el mínimo, el agotado primero y con su faltante', () => {
+        const rows = buildLowStockRows(products, [
+            { productId: 'a', quantity: 3, costPrice: 1 },
+            { productId: 'c', quantity: 10, costPrice: 1 },
+        ]);
+
+        expect(rows.map((row) => row.name)).toEqual(['Zinc', 'Aspirina']);
+        expect(rows[0]).toMatchObject({ stock: 0, missing: 4 });
+        expect(rows[1]).toMatchObject({ stock: 3, missing: 2 });
+        expect(lowStockReportHtml({ rows, generatedBy: 'A', generatedAt })).toContain('1 agotados');
+    });
+
+    it('stock bajo: un producto sin mínimo configurado no cuenta aunque esté en cero', () => {
+        const rows = buildLowStockRows(
+            [...products, { id: 'd', name: 'Descontinuado', sku: 'D', salePrice: 5, minStock: 0 }],
+            [],
+        );
+
+        expect(rows.map((row) => row.name)).toEqual(['Aspirina', 'Vitamina', 'Zinc']);
+    });
+
+    it('periodBounds: sin fechas, el mes en curso hasta ahora', () => {
+        const now = new Date('2026-10-15T18:00:00.000Z');
+        const { from, to } = periodBounds(undefined, undefined, now);
+
+        expect(from).toBe('2026-10-01T06:00:00.000Z');
+        expect(to).toBe(now.toISOString());
+    });
+
+    it('periodBounds: un `to` en un mes anterior arranca ese mes, no el en curso', () => {
+        const { from, to } = periodBounds(undefined, '2026-09-05', new Date('2026-10-15T18:00:00.000Z'));
+
+        expect(from).toBe('2026-09-01T06:00:00.000Z');
+        expect(to).toBe('2026-09-06T05:59:59.999Z');
+    });
+
+    it('periodBounds: ignora días imposibles y rechaza un rango invertido', () => {
+        const now = new Date('2026-10-15T18:00:00.000Z');
+
+        expect(periodBounds('2026-02-31', undefined, now).from).toBe('2026-10-01T06:00:00.000Z');
+        expect(() => periodBounds('2026-10-10', '2026-10-01', now)).toThrow('posterior');
+    });
+
+    it('próximos a caducar: vencidos y hasta 90 días, ordenados, sin lotes vacíos ni lejanos', () => {
+        const at = (iso: string) => {
+            const date = new Date(iso);
+            return { toMillis: () => date.getTime(), toDate: () => date };
+        };
+        const rows = buildExpiryRows(products, [
+            { productId: 'a', lotNumber: 'L2', quantity: 4, expiryDate: at('2026-11-20T12:00:00Z') },
+            { productId: 'b', lotNumber: 'L1', quantity: 2, expiryDate: at('2026-10-01T12:00:00Z') },
+            { productId: 'c', lotNumber: 'L3', quantity: 9, expiryDate: at('2027-06-01T12:00:00Z') },
+            { productId: 'a', lotNumber: 'L4', quantity: 0, expiryDate: at('2026-10-20T12:00:00Z') },
+        ], generatedAt);
+
+        expect(rows.map((row) => row.lot)).toEqual(['L1', 'L2']);
+        expect(rows[0]).toMatchObject({ status: 'Vencido', quantity: 2 });
+        expect(rows[0].daysLeft).toBeLessThan(0);
+        expect(rows[1].status).toBe('60 días');
+        expect(expiryReportHtml({ rows, generatedBy: 'A', generatedAt })).toContain('1 vencidos');
+    });
+
+    it('sin costo: productos con existencia en lotes sin costo, el de más unidades primero', () => {
+        const rows = buildNoCostRows(products, [
+            { productId: 'a', quantity: 3 },
+            { productId: 'a', quantity: 2, costPrice: 4 },
+            { productId: 'b', quantity: 7, costPrice: null },
+            { productId: 'c', quantity: 5, costPrice: 9 },
+            { productId: 'c', quantity: 0 },
+        ]);
+
+        expect(rows.map((row) => row.name)).toEqual(['Zinc', 'Aspirina']);
+        expect(rows[1]).toMatchObject({ stock: 5, unitsWithoutCost: 3, lotsWithoutCost: 1 });
+        expect(noCostReportHtml({ rows: [], generatedBy: 'A', generatedAt }))
+            .toContain('tienen costo capturado');
+    });
+
+    it('gastos: fecha del gasto, hora de captura, quién lo registró y total por categoría', () => {
+        const at = (iso: string) => {
+            const date = new Date(iso);
+            return { toMillis: () => date.getTime(), toDate: () => date };
+        };
+        const expense = (overrides: Record<string, unknown>) => ({
+            id: 'm',
+            type: 'expense',
+            amount: 100,
+            reason: 'Renta',
+            category: 'rent',
+            createdBy: 'u1',
+            createdAt: at('2026-10-05T16:30:00.000Z'),
+            ...overrides,
+        }) as unknown as CashMovement;
+
+        const rows = buildExpenseRows([
+            expense({ amount: 250, reason: 'Luz', category: 'electricity', occurredAt: at('2026-09-30T16:00:00.000Z') }),
+            expense({ createdByLabel: 'Ana (caja)' }),
+        ], new Map([['u1', 'Luis Pérez']]));
+
+        expect(rows[0]).toMatchObject({ date: '30/09/2026', createdBy: 'Luis Pérez', payment: 'Efectivo' });
+        expect(rows[1]).toMatchObject({ createdBy: 'Ana (caja)', concept: 'Renta' });
+        expect(rows[1].time).toMatch(/^10:30/);
+
+        const html = expensesReportHtml({
+            range: monthRange('2026-10'), rows, generatedBy: 'A', generatedAt,
+        });
+        expect(html).toContain('Por categoría');
+        expect(html).toContain('Total · 2 gastos');
     });
 });

@@ -24,7 +24,10 @@ const nameOf = (user: AuthUser): string => user.displayName || user.email;
 /**
  * Descargas PDF del módulo de Reportes. Bajo `dashboard:read` (solo
  * administrador): incluyen quién cobró cada venta y, en el financiero, cifras de
- * todo el negocio. Escriben la respuesta con `@Res()` a propósito: el
+ * todo el negocio. `dashboard` es el área paraguas de la analítica del negocio
+ * (igual que `business-summary` y el asistente): quien la recibe en un rol
+ * personalizado lee estos datos aunque no tenga `expenses`/`accounting` aparte;
+ * hoy solo el administrador la tiene. Escriben la respuesta con `@Res()` a propósito: el
  * interceptor de la app envuelve todo en `{ data }` y un PDF envuelto en JSON no
  * lo abre nadie.
  */
@@ -64,6 +67,37 @@ export class ReportExportsController {
     @RequirePermission('dashboard', 'read')
     async inventory(@CurrentUser() user: AuthUser, @Res() res: Response) {
         sendPdf(res, await moduleReports.buildInventoryPdf({ generatedBy: nameOf(user) }));
+    }
+
+    @Get('low-stock.pdf')
+    @RequirePermission('dashboard', 'read')
+    async lowStock(@CurrentUser() user: AuthUser, @Res() res: Response) {
+        sendPdf(res, await moduleReports.buildLowStockPdf({ generatedBy: nameOf(user) }));
+    }
+
+    @Get('expiring.pdf')
+    @RequirePermission('dashboard', 'read')
+    async expiring(@CurrentUser() user: AuthUser, @Res() res: Response) {
+        sendPdf(res, await moduleReports.buildExpiryPdf({ generatedBy: nameOf(user) }));
+    }
+
+    @Get('no-cost.pdf')
+    @RequirePermission('dashboard', 'read')
+    async noCost(@CurrentUser() user: AuthUser, @Res() res: Response) {
+        sendPdf(res, await moduleReports.buildNoCostPdf({ generatedBy: nameOf(user) }));
+    }
+
+    @Get('expenses-monthly.pdf')
+    @RequirePermission('dashboard', 'read')
+    async expensesMonthly(
+        @Query(new ZodValidationPipe(monthlyExportQuerySchema)) query: MonthlyQuery,
+        @CurrentUser() user: AuthUser,
+        @Res() res: Response,
+    ) {
+        sendPdf(res, await moduleReports.buildExpensesPdf({
+            month: query.month,
+            generatedBy: nameOf(user),
+        }));
     }
 
     @Get('invoices.pdf')

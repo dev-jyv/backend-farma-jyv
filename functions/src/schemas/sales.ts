@@ -502,7 +502,18 @@ const exportScope = z.enum(['pharmacy', 'clinic', 'financial']);
 
 export const dailySalesExportQuerySchema = z.object({
     scope: exportScope,
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+    date: z.string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
+        // `2026-02-31` pasa el formato y `Date` lo corre a marzo en silencio; `9999-99-99` ni
+        // siquiera es una fecha y reventaba el reporte con un 500.
+        .refine((value) => {
+            const [year, month, day] = value.split('-').map(Number);
+            const parsed = new Date(Date.UTC(year, month - 1, day));
+            return parsed.getUTCFullYear() === year
+                && parsed.getUTCMonth() === month - 1
+                && parsed.getUTCDate() === day;
+        }, 'La fecha no existe en el calendario')
+        .optional(),
 });
 
 export const monthlyExportQuerySchema = z.object({
