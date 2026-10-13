@@ -55,17 +55,18 @@ const service = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
-const sale = (iso: string, items: unknown[], overrides: Record<string, unknown> = {}) => ({
-    id: iso,
-    folio: `F-${iso.slice(8, 10)}`,
-    createdAt: at(iso),
-    voidedAt: null,
-    cashierId: 'u1',
-    paymentMethod: 'cash',
-    total: 160,
-    items,
-    ...overrides,
-}) as unknown as Sale;
+const sale = (iso: string, items: unknown[], overrides: Record<string, unknown> = {}) =>
+    ({
+        id: iso,
+        folio: `F-${iso.slice(8, 10)}`,
+        createdAt: at(iso),
+        voidedAt: null,
+        cashierId: 'u1',
+        paymentMethod: 'cash',
+        total: 160,
+        items,
+        ...overrides,
+    }) as unknown as Sale;
 
 const names = new Map([['u1', 'Luis Pérez']]);
 
@@ -73,7 +74,7 @@ describe('buildSalesRows', () => {
     // 14 de octubre de 2026, 20:44 en Ciudad de México.
     const mixed = sale('2026-10-15T02:44:00.000Z', [product(), service()]);
 
-    it('farmacia cuenta solo mercancía y clínica solo servicios, con el importe de su parte', () => {
+    it('farmacia cuenta solo mercancía y clínica solo servicios,', () => {
         const [pharmacy] = buildSalesRows([mixed], 'pharmacy', names);
         const [clinic] = buildSalesRows([mixed], 'clinic', names);
         const [financial] = buildSalesRows([mixed], 'financial', names);
@@ -101,12 +102,18 @@ describe('buildSalesRows', () => {
     });
 
     it('omite anuladas y ventas sin partidas del ámbito, y ordena por hora', () => {
-        const rows = buildSalesRows([
-            sale('2026-10-15T20:00:00.000Z', [product({ productName: 'Tarde' })]),
-            sale('2026-10-15T16:00:00.000Z', [service()]),
-            sale('2026-10-15T17:00:00.000Z', [product()], { voidedAt: at('2026-10-15T18:00:00.000Z') }),
-            sale('2026-10-15T15:00:00.000Z', [product({ productName: 'Temprano' })]),
-        ], 'pharmacy', names);
+        const rows = buildSalesRows(
+            [
+                sale('2026-10-15T20:00:00.000Z', [product({ productName: 'Tarde' })]),
+                sale('2026-10-15T16:00:00.000Z', [service()]),
+                sale('2026-10-15T17:00:00.000Z', [product()], {
+                    voidedAt: at('2026-10-15T18:00:00.000Z'),
+                }),
+                sale('2026-10-15T15:00:00.000Z', [product({ productName: 'Temprano' })]),
+            ],
+            'pharmacy',
+            names,
+        );
 
         expect(rows.map((row) => row.concept)).toEqual(['2× Temprano', '2× Tarde']);
     });
@@ -120,10 +127,17 @@ describe('HTML de los reportes', () => {
             scope: 'pharmacy',
             kind: 'daily',
             range: dayRange('2026-10-15'),
-            rows: [{
-                date: '15/10/2026', time: '12:00 p. m.', folio: 'F-1', cashier: '<b>Luis</b>',
-                payment: 'Efectivo', concept: '1× Jarabe & tos', amount: 50,
-            }],
+            rows: [
+                {
+                    date: '15/10/2026',
+                    time: '12:00 p. m.',
+                    folio: 'F-1',
+                    cashier: '<b>Luis</b>',
+                    payment: 'Efectivo',
+                    concept: '1× Jarabe & tos',
+                    amount: 50,
+                },
+            ],
             generatedBy: 'Admin "Uno"',
             generatedAt,
         });
@@ -138,11 +152,30 @@ describe('HTML de los reportes', () => {
     it('el mensual agrega el resumen por día y un mes vacío lo dice', () => {
         const range = monthRange('2026-10');
         const empty = salesReportHtml({
-            scope: 'clinic', kind: 'monthly', range, rows: [], generatedBy: 'A', generatedAt,
+            scope: 'clinic',
+            kind: 'monthly',
+            range,
+            rows: [],
+            generatedBy: 'A',
+            generatedAt,
         });
         const full = salesReportHtml({
-            scope: 'clinic', kind: 'monthly', range, generatedBy: 'A', generatedAt,
-            rows: [{ date: '01/10/2026', time: '9:00', folio: 'F', cashier: 'X', payment: 'Efectivo', concept: 'c', amount: 10 }],
+            scope: 'clinic',
+            kind: 'monthly',
+            range,
+            generatedBy: 'A',
+            generatedAt,
+            rows: [
+                {
+                    date: '01/10/2026',
+                    time: '9:00',
+                    folio: 'F',
+                    cashier: 'X',
+                    payment: 'Efectivo',
+                    concept: 'c',
+                    amount: 10,
+                },
+            ],
         });
 
         expect(empty).toContain('Sin ventas registradas en el mes');
@@ -153,10 +186,15 @@ describe('HTML de los reportes', () => {
     it('lista las facturas con proveedor, fecha, número y quién la registró', () => {
         const html = invoicesReportHtml({
             range: monthRange('2026-10'),
-            rows: [{
-                supplier: 'Nadro', date: '03/10/2026', number: 'A-123',
-                registeredBy: 'Luis', registeredAt: '03/10/2026 10:00 a. m.',
-            }],
+            rows: [
+                {
+                    supplier: 'Nadro',
+                    date: '03/10/2026',
+                    number: 'A-123',
+                    registeredBy: 'Luis',
+                    registeredAt: '03/10/2026 10:00 a. m.',
+                },
+            ],
             generatedBy: 'Admin',
             generatedAt,
         });
@@ -181,11 +219,18 @@ describe('inventario', () => {
         );
 
         expect(rows.map((row) => row.name)).toEqual(['Aspirina', 'Zinc']);
-        expect(rows[0]).toMatchObject({ stock: 5, costValue: 12, missingCost: true, retailValue: 50 });
+        expect(rows[0]).toMatchObject({
+            stock: 5,
+            costValue: 12,
+            missingCost: true,
+            retailValue: 50,
+        });
         expect(rows[1]).toMatchObject({ stock: 0, costValue: 0, retailValue: 0 });
 
         const html = inventoryReportHtml({
-            rows, generatedBy: 'Admin', generatedAt: new Date('2026-10-15T18:00:00.000Z'),
+            rows,
+            generatedBy: 'Admin',
+            generatedAt: new Date('2026-10-15T18:00:00.000Z'),
         });
         expect(html).toContain('Inventario · Farmacia');
         expect(html).toContain('class="num low">0</td>');
@@ -243,7 +288,11 @@ describe('stock bajo, caducidad, sin costo y gastos', () => {
     });
 
     it('periodBounds: un `to` en un mes anterior arranca ese mes, no el en curso', () => {
-        const { from, to } = periodBounds(undefined, '2026-09-05', new Date('2026-10-15T18:00:00.000Z'));
+        const { from, to } = periodBounds(
+            undefined,
+            '2026-09-05',
+            new Date('2026-10-15T18:00:00.000Z'),
+        );
 
         expect(from).toBe('2026-09-01T06:00:00.000Z');
         expect(to).toBe('2026-09-06T05:59:59.999Z');
@@ -256,17 +305,41 @@ describe('stock bajo, caducidad, sin costo y gastos', () => {
         expect(() => periodBounds('2026-10-10', '2026-10-01', now)).toThrow('posterior');
     });
 
-    it('próximos a caducar: vencidos y hasta 90 días, ordenados, sin lotes vacíos ni lejanos', () => {
+    it('próximos a caducar: vencidos y hasta 90 días, ordenados, sin lotes vacíos', () => {
         const at = (iso: string) => {
             const date = new Date(iso);
             return { toMillis: () => date.getTime(), toDate: () => date };
         };
-        const rows = buildExpiryRows(products, [
-            { productId: 'a', lotNumber: 'L2', quantity: 4, expiryDate: at('2026-11-20T12:00:00Z') },
-            { productId: 'b', lotNumber: 'L1', quantity: 2, expiryDate: at('2026-10-01T12:00:00Z') },
-            { productId: 'c', lotNumber: 'L3', quantity: 9, expiryDate: at('2027-06-01T12:00:00Z') },
-            { productId: 'a', lotNumber: 'L4', quantity: 0, expiryDate: at('2026-10-20T12:00:00Z') },
-        ], generatedAt);
+        const rows = buildExpiryRows(
+            products,
+            [
+                {
+                    productId: 'a',
+                    lotNumber: 'L2',
+                    quantity: 4,
+                    expiryDate: at('2026-11-20T12:00:00Z'),
+                },
+                {
+                    productId: 'b',
+                    lotNumber: 'L1',
+                    quantity: 2,
+                    expiryDate: at('2026-10-01T12:00:00Z'),
+                },
+                {
+                    productId: 'c',
+                    lotNumber: 'L3',
+                    quantity: 9,
+                    expiryDate: at('2027-06-01T12:00:00Z'),
+                },
+                {
+                    productId: 'a',
+                    lotNumber: 'L4',
+                    quantity: 0,
+                    expiryDate: at('2026-10-20T12:00:00Z'),
+                },
+            ],
+            generatedAt,
+        );
 
         expect(rows.map((row) => row.lot)).toEqual(['L1', 'L2']);
         expect(rows[0]).toMatchObject({ status: 'Vencido', quantity: 2 });
@@ -286,8 +359,9 @@ describe('stock bajo, caducidad, sin costo y gastos', () => {
 
         expect(rows.map((row) => row.name)).toEqual(['Zinc', 'Aspirina']);
         expect(rows[1]).toMatchObject({ stock: 5, unitsWithoutCost: 3, lotsWithoutCost: 1 });
-        expect(noCostReportHtml({ rows: [], generatedBy: 'A', generatedAt }))
-            .toContain('tienen costo capturado');
+        expect(noCostReportHtml({ rows: [], generatedBy: 'A', generatedAt })).toContain(
+            'tienen costo capturado',
+        );
     });
 
     it('gastos: fecha del gasto, hora de captura, quién lo registró y total por categoría', () => {
@@ -295,28 +369,44 @@ describe('stock bajo, caducidad, sin costo y gastos', () => {
             const date = new Date(iso);
             return { toMillis: () => date.getTime(), toDate: () => date };
         };
-        const expense = (overrides: Record<string, unknown>) => ({
-            id: 'm',
-            type: 'expense',
-            amount: 100,
-            reason: 'Renta',
-            category: 'rent',
-            createdBy: 'u1',
-            createdAt: at('2026-10-05T16:30:00.000Z'),
-            ...overrides,
-        }) as unknown as CashMovement;
+        const expense = (overrides: Record<string, unknown>) =>
+            ({
+                id: 'm',
+                type: 'expense',
+                amount: 100,
+                reason: 'Renta',
+                category: 'rent',
+                createdBy: 'u1',
+                createdAt: at('2026-10-05T16:30:00.000Z'),
+                ...overrides,
+            }) as unknown as CashMovement;
 
-        const rows = buildExpenseRows([
-            expense({ amount: 250, reason: 'Luz', category: 'electricity', occurredAt: at('2026-09-30T16:00:00.000Z') }),
-            expense({ createdByLabel: 'Ana (caja)' }),
-        ], new Map([['u1', 'Luis Pérez']]));
+        const rows = buildExpenseRows(
+            [
+                expense({
+                    amount: 250,
+                    reason: 'Luz',
+                    category: 'electricity',
+                    occurredAt: at('2026-09-30T16:00:00.000Z'),
+                }),
+                expense({ createdByLabel: 'Ana (caja)' }),
+            ],
+            new Map([['u1', 'Luis Pérez']]),
+        );
 
-        expect(rows[0]).toMatchObject({ date: '30/09/2026', createdBy: 'Luis Pérez', payment: 'Efectivo' });
+        expect(rows[0]).toMatchObject({
+            date: '30/09/2026',
+            createdBy: 'Luis Pérez',
+            payment: 'Efectivo',
+        });
         expect(rows[1]).toMatchObject({ createdBy: 'Ana (caja)', concept: 'Renta' });
         expect(rows[1].time).toMatch(/^10:30/);
 
         const html = expensesReportHtml({
-            range: monthRange('2026-10'), rows, generatedBy: 'A', generatedAt,
+            range: monthRange('2026-10'),
+            rows,
+            generatedBy: 'A',
+            generatedAt,
         });
         expect(html).toContain('Por categoría');
         expect(html).toContain('Total · 2 gastos');

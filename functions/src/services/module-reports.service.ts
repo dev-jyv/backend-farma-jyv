@@ -1,3 +1,4 @@
+/* eslint-disable max-len -- prompts y plantillas HTML que no se parten */
 import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
@@ -5,7 +6,13 @@ import * as productsRepo from '../repositories/products.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as usersRepo from '../repositories/users.repository';
-import { CashMovement, ExpensePaymentMethod, Sale, isSaleProductItem, isSaleServiceItem } from '../types';
+import {
+    CashMovement,
+    ExpensePaymentMethod,
+    Sale,
+    isSaleProductItem,
+    isSaleServiceItem,
+} from '../types';
 import { formatCurrency } from '../utils/currency';
 import { fromCents, toCents } from '../utils/taxes';
 import { addDaysYmd, getZonedYmd, zonedStartOfDayMs } from '../utils/timezone';
@@ -85,7 +92,9 @@ export const currentMonth = (now = new Date()): string => todayYmd(now).slice(0,
 export const dayRange = (ymd: string): ReportRange => ({
     from: new Date(zonedStartOfDayMs(ymd, REPORTS_TIME_ZONE)).toISOString(),
     to: new Date(zonedStartOfDayMs(addDaysYmd(ymd, 1), REPORTS_TIME_ZONE) - 1).toISOString(),
-    label: longDayFormatter.format(new Date(zonedStartOfDayMs(ymd, REPORTS_TIME_ZONE) + 12 * 3600 * 1000)),
+    label: longDayFormatter.format(
+        new Date(zonedStartOfDayMs(ymd, REPORTS_TIME_ZONE) + 12 * 3600 * 1000),
+    ),
     slug: ymd,
 });
 
@@ -113,8 +122,11 @@ export interface SalesPdfRow {
     amount: number;
 }
 
-const netCentsOf = (item: { netAmount?: number; subtotal: number; discountAmount: number }): number =>
-    toCents(item.netAmount ?? item.subtotal - item.discountAmount);
+const netCentsOf = (item: {
+    netAmount?: number;
+    subtotal: number;
+    discountAmount: number;
+}): number => toCents(item.netAmount ?? item.subtotal - item.discountAmount);
 
 const joinConcepts = (parts: string[]): string =>
     parts.length > MAX_CONCEPT_ITEMS
@@ -138,9 +150,11 @@ export const buildSalesRows = (
             const products = sale.items.filter(isSaleProductItem);
             const services = sale.items.filter(isSaleServiceItem);
             const productPart = products.map((item) => `${item.quantity}× ${item.productName}`);
-            const servicePart = services.map((item) =>
-                `${item.quantity > 1 ? `${item.quantity}× ` : ''}${item.serviceName}` +
-                (item.providerName ? ` (${item.providerName})` : ''));
+            const servicePart = services.map(
+                (item) =>
+                    `${item.quantity > 1 ? `${item.quantity}× ` : ''}${item.serviceName}` +
+                    (item.providerName ? ` (${item.providerName})` : ''),
+            );
 
             let concepts: string[];
             let amount: number;
@@ -159,15 +173,17 @@ export const buildSalesRows = (
             }
 
             const at = sale.createdAt.toDate();
-            return [{
-                date: dateFormatter.format(at),
-                time: timeFormatter.format(at),
-                folio: sale.folio,
-                cashier: cashierNames.get(sale.cashierId) ?? NO_CASHIER,
-                payment: PAYMENT_METHOD_LABELS[sale.paymentMethod] ?? sale.paymentMethod,
-                concept: joinConcepts(concepts),
-                amount,
-            }];
+            return [
+                {
+                    date: dateFormatter.format(at),
+                    time: timeFormatter.format(at),
+                    folio: sale.folio,
+                    cashier: cashierNames.get(sale.cashierId) ?? NO_CASHIER,
+                    payment: PAYMENT_METHOD_LABELS[sale.paymentMethod] ?? sale.paymentMethod,
+                    concept: joinConcepts(concepts),
+                    amount,
+                },
+            ];
         });
 
 export const STYLES = `
@@ -226,17 +242,26 @@ export const salesReportHtml = (input: {
             day.cents += toCents(row.amount);
             byDay.set(row.date, day);
         }
-        const daySummary = input.kind === 'monthly'
-            ? `<h2>Resumen por día</h2>
+        const daySummary =
+            input.kind === 'monthly'
+                ? `<h2>Resumen por día</h2>
 <table><thead><tr><th>Día</th><th class="num">Ventas</th><th class="num">Total</th></tr></thead><tbody>
-${[...byDay.entries()].map(([date, day]) => `<tr><td>${escapeHtml(date)}</td>
-<td class="num">${day.count}</td><td class="num">${escapeHtml(formatCurrency(fromCents(day.cents)))}</td></tr>`).join('')}
+${[...byDay.entries()]
+        .map(
+            ([date, day]) => `<tr><td>${escapeHtml(date)}</td>
+<td class="num">${day.count}</td><td class="num">${escapeHtml(formatCurrency(fromCents(day.cents)))}</td></tr>`,
+        )
+        .join('')}
 </tbody></table>`
-            : '';
-        const detailRows = rows.map((row) => `<tr>
+                : '';
+        const detailRows = rows
+            .map(
+                (row) => `<tr>
 <td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.time)}</td><td>${escapeHtml(row.folio)}</td>
 <td>${escapeHtml(row.cashier)}</td><td>${escapeHtml(row.payment)}</td><td>${escapeHtml(row.concept)}</td>
-<td class="num">${escapeHtml(formatCurrency(row.amount))}</td></tr>`).join('');
+<td class="num">${escapeHtml(formatCurrency(row.amount))}</td></tr>`,
+            )
+            .join('');
         body = `${daySummary}
 <h2>Detalle de ventas</h2>
 <table><thead><tr><th>Fecha</th><th>Hora</th><th>Folio</th><th>Cobró</th><th>Pago</th><th>Concepto</th><th class="num">Importe</th></tr></thead>
@@ -279,9 +304,10 @@ export const buildSalesPdf = async (input: {
     now?: Date;
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
-    const range = input.kind === 'daily'
-        ? dayRange(input.period ?? todayYmd(now))
-        : monthRange(input.period ?? currentMonth(now));
+    const range =
+        input.kind === 'daily'
+            ? dayRange(input.period ?? todayYmd(now))
+            : monthRange(input.period ?? currentMonth(now));
     const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
     const cashierNames = await resolveUserNames(sales.map((sale) => sale.cashierId));
     const rows = buildSalesRows(sales, input.scope, cashierNames);
@@ -315,7 +341,13 @@ export interface InventoryPdfRow {
 }
 
 export const buildInventoryRows = (
-    products: ReadonlyArray<{ id: string; name: string; sku: string; salePrice: number; minStock: number }>,
+    products: ReadonlyArray<{
+        id: string;
+        name: string;
+        sku: string;
+        salePrice: number;
+        minStock: number;
+    }>,
     batches: ReadonlyArray<{ productId: string; quantity: number; costPrice?: number }>,
 ): InventoryPdfRow[] => {
     const stock = new Map<string, { units: number; costCents: number; missingCost: boolean }>();
@@ -355,15 +387,20 @@ export const inventoryReportHtml = (input: {
     const costCents = rows.reduce((total, row) => total + toCents(row.costValue), 0);
     const retailCents = rows.reduce((total, row) => total + toCents(row.retailValue), 0);
     const low = rows.filter((row) => row.stock <= row.minStock).length;
-    const body = rows.length === 0
-        ? '<p class="empty">No hay productos activos.</p>'
-        : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th><th class="num">Mínimo</th>
+    const body =
+        rows.length === 0
+            ? '<p class="empty">No hay productos activos.</p>'
+            : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th><th class="num">Mínimo</th>
 <th class="num">Valor a costo</th><th class="num">Valor a precio de venta</th></tr></thead><tbody>
-${rows.map((row) => `<tr>
+${rows
+        .map(
+            (row) => `<tr>
 <td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
 <td class="num${row.stock <= row.minStock ? ' low' : ''}">${row.stock}</td><td class="num">${row.minStock}</td>
 <td class="num">${escapeHtml(formatCurrency(row.costValue))}${row.missingCost ? ' *' : ''}</td>
-<td class="num">${escapeHtml(formatCurrency(row.retailValue))}</td></tr>`).join('')}
+<td class="num">${escapeHtml(formatCurrency(row.retailValue))}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="2">Total · ${rows.length} productos</td><td class="num">${units}</td><td></td>
 <td class="num">${escapeHtml(formatCurrency(fromCents(costCents)))}</td>
 <td class="num">${escapeHtml(formatCurrency(fromCents(retailCents)))}</td></tr>
@@ -392,7 +429,10 @@ export const buildInventoryPdf = async (input: {
         generatedBy: input.generatedBy,
         generatedAt: now,
     });
-    return { pdf: await renderHtmlToPdf(html), fileName: `inventario-farmacia-${todayYmd(now)}.pdf` };
+    return {
+        pdf: await renderHtmlToPdf(html),
+        fileName: `inventario-farmacia-${todayYmd(now)}.pdf`,
+    };
 };
 
 /* -------------------------------------------------------------------------- */
@@ -435,11 +475,16 @@ export const invoicesReportHtml = (input: {
     generatedBy: string;
     generatedAt: Date;
 }): string => {
-    const body = input.rows.length === 0
-        ? '<p class="empty">Sin facturas registradas en el mes.</p>'
-        : `<table><thead><tr><th>Proveedor</th><th>Fecha</th><th>No. de factura</th><th>Registró</th><th>Registrada</th></tr></thead><tbody>
-${input.rows.map((row) => `<tr><td>${escapeHtml(row.supplier)}</td><td>${escapeHtml(row.date)}</td>
-<td>${escapeHtml(row.number)}</td><td>${escapeHtml(row.registeredBy)}</td><td>${escapeHtml(row.registeredAt)}</td></tr>`).join('')}
+    const body =
+        input.rows.length === 0
+            ? '<p class="empty">Sin facturas registradas en el mes.</p>'
+            : `<table><thead><tr><th>Proveedor</th><th>Fecha</th><th>No. de factura</th><th>Registró</th><th>Registrada</th></tr></thead><tbody>
+${input.rows
+        .map(
+            (row) => `<tr><td>${escapeHtml(row.supplier)}</td><td>${escapeHtml(row.date)}</td>
+<td>${escapeHtml(row.number)}</td><td>${escapeHtml(row.registeredBy)}</td><td>${escapeHtml(row.registeredAt)}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="5">Total · ${input.rows.length} facturas</td></tr>
 </tbody></table>`;
     return page({
@@ -459,14 +504,20 @@ export const buildInvoicesPdf = async (input: {
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
     const range = monthRange(input.month ?? currentMonth(now));
-    const invoices = (await invoicesRepo.listInvoices({ from: range.from, to: range.to }))
-        .sort((a, b) => a.invoiceDate.toMillis() - b.invoiceDate.toMillis());
+    const invoices = (await invoicesRepo.listInvoices({ from: range.from, to: range.to })).sort(
+        (a, b) => a.invoiceDate.toMillis() - b.invoiceDate.toMillis(),
+    );
     const [suppliers, userNames] = await Promise.all([
         suppliersRepo.getSuppliersByIds(invoices.map((invoice) => invoice.supplierId)),
         resolveUserNames(invoices.map((invoice) => invoice.createdBy)),
     ]);
     const rows = buildInvoiceRows(invoices, suppliers, userNames);
-    const html = invoicesReportHtml({ range, rows, generatedBy: input.generatedBy, generatedAt: now });
+    const html = invoicesReportHtml({
+        range,
+        rows,
+        generatedBy: input.generatedBy,
+        generatedAt: now,
+    });
     return { pdf: await renderHtmlToPdf(html), fileName: `facturas-${range.slug}.pdf` };
 };
 
@@ -489,22 +540,30 @@ export const buildLowStockRows = (
         // recién dado de alta) no es stock bajo.
         .filter((row) => row.minStock > 0 && row.stock <= row.minStock)
         .map((row) => ({ ...row, missing: Math.max(row.minStock - row.stock, 0) }))
-        .sort((a, b) =>
-            (a.minStock > 0 ? a.stock / a.minStock : 0) - (b.minStock > 0 ? b.stock / b.minStock : 0)
-            || a.name.localeCompare(b.name, 'es'));
+        .sort(
+            (a, b) =>
+                (a.minStock > 0 ? a.stock / a.minStock : 0) -
+                    (b.minStock > 0 ? b.stock / b.minStock : 0) ||
+                a.name.localeCompare(b.name, 'es'),
+        );
 
 export const lowStockReportHtml = (input: {
     rows: LowStockPdfRow[];
     generatedBy: string;
     generatedAt: Date;
 }): string => {
-    const body = input.rows.length === 0
-        ? '<p class="empty">Ningún producto activo está en o bajo su mínimo.</p>'
-        : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th><th class="num">Mínimo</th>
+    const body =
+        input.rows.length === 0
+            ? '<p class="empty">Ningún producto activo está en o bajo su mínimo.</p>'
+            : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th><th class="num">Mínimo</th>
 <th class="num">Faltante</th><th>Estado</th></tr></thead><tbody>
-${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+${input.rows
+        .map(
+            (row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
 <td class="num${row.stock === 0 ? ' low' : ''}">${row.stock}</td><td class="num">${row.minStock}</td>
-<td class="num">${row.missing}</td><td>${row.stock === 0 ? 'Agotado' : 'Bajo'}</td></tr>`).join('')}
+<td class="num">${row.missing}</td><td>${row.stock === 0 ? 'Agotado' : 'Bajo'}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="6">Total · ${input.rows.length} productos
 (${input.rows.filter((row) => row.stock === 0).length} agotados)</td></tr>
 </tbody></table>`;
@@ -561,18 +620,21 @@ export const buildExpenseRows = (
     userNames: ReadonlyMap<string, string>,
 ): ExpensePdfRow[] =>
     [...movements]
-        .sort((a, b) =>
-            (a.occurredAt ?? a.createdAt).toMillis() - (b.occurredAt ?? b.createdAt).toMillis())
+        .sort(
+            (a, b) =>
+                (a.occurredAt ?? a.createdAt).toMillis() - (b.occurredAt ?? b.createdAt).toMillis(),
+        )
         .map((movement) => {
             const registered = movement.createdAt.toDate();
             return {
                 date: dateFormatter.format((movement.occurredAt ?? movement.createdAt).toDate()),
                 time: timeFormatter.format(registered),
-                category: (movement.category && EXPENSE_CATEGORY_LABELS[movement.category]) || 'Sin categoría',
+                category:
+                    (movement.category && EXPENSE_CATEGORY_LABELS[movement.category]) ||
+                    'Sin categoría',
                 concept: [movement.reason, movement.description].filter(Boolean).join(' — '),
-                createdBy: movement.createdByLabel
-                    || userNames.get(movement.createdBy)
-                    || NO_CASHIER,
+                createdBy:
+                    movement.createdByLabel || userNames.get(movement.createdBy) || NO_CASHIER,
                 payment: EXPENSE_PAYMENT_LABELS[movement.paymentMethod ?? 'cash'],
                 amount: movement.amount,
             };
@@ -601,14 +663,24 @@ export const expensesReportHtml = (input: {
 <table><thead><tr><th>Categoría</th><th class="num">Gastos</th><th class="num">Total</th></tr></thead><tbody>
 ${[...byCategory.entries()]
         .sort((a, b) => b[1].cents - a[1].cents)
-        .map(([category, entry]) => `<tr><td>${escapeHtml(category)}</td><td class="num">${entry.count}</td>
-<td class="num">${escapeHtml(formatCurrency(fromCents(entry.cents)))}</td></tr>`).join('')}
+        .map(
+            ([
+                category,
+                entry,
+            ]) => `<tr><td>${escapeHtml(category)}</td><td class="num">${entry.count}</td>
+<td class="num">${escapeHtml(formatCurrency(fromCents(entry.cents)))}</td></tr>`,
+        )
+        .join('')}
 </tbody></table>
 <h2>Detalle de gastos</h2>
 <table><thead><tr><th>Fecha</th><th>Hora</th><th>Categoría</th><th>Concepto</th><th>Registró</th><th>Pago</th><th class="num">Importe</th></tr></thead><tbody>
-${rows.map((row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.time)}</td>
+${rows
+        .map(
+            (row) => `<tr><td>${escapeHtml(row.date)}</td><td>${escapeHtml(row.time)}</td>
 <td>${escapeHtml(row.category)}</td><td>${escapeHtml(row.concept)}</td><td>${escapeHtml(row.createdBy)}</td>
-<td>${escapeHtml(row.payment)}</td><td class="num">${escapeHtml(formatCurrency(row.amount))}</td></tr>`).join('')}
+<td>${escapeHtml(row.payment)}</td><td class="num">${escapeHtml(formatCurrency(row.amount))}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="6">Total · ${rows.length} gastos</td>
 <td class="num">${escapeHtml(formatCurrency(fromCents(totalCents)))}</td></tr>
 </tbody></table>`;
@@ -667,9 +739,11 @@ export const periodBounds = (
         // `Date.parse` acepta `2026-02-31` y lo corre a marzo: se compara de ida y vuelta.
         const [year, month, day] = value.split('-').map(Number);
         const parsed = new Date(Date.UTC(year, month - 1, day));
-        return parsed.getUTCFullYear() === year
-            && parsed.getUTCMonth() === month - 1
-            && parsed.getUTCDate() === day;
+        return (
+            parsed.getUTCFullYear() === year &&
+            parsed.getUTCMonth() === month - 1 &&
+            parsed.getUTCDate() === day
+        );
     };
     // Sin `from`, el periodo arranca el mes de `to` (o el en curso): así un `to` en un mes
     // anterior no produce un rango invertido.
@@ -721,9 +795,14 @@ export const buildExpiryRows = (
         .map((batch) => {
             const product = byId.get(batch.productId)!;
             const daysLeft = Math.ceil((batch.expiryDate.toMillis() - now.getTime()) / DAY_MS);
-            const status: ExpiryPdfRow['status'] = daysLeft < 0
-                ? 'Vencido'
-                : daysLeft <= 30 ? '30 días' : daysLeft <= 60 ? '60 días' : '90 días';
+            const status: ExpiryPdfRow['status'] =
+                daysLeft < 0
+                    ? 'Vencido'
+                    : daysLeft <= 30
+                        ? '30 días'
+                        : daysLeft <= 60
+                            ? '60 días'
+                            : '90 días';
             return {
                 name: product.name,
                 sku: product.sku,
@@ -746,14 +825,19 @@ export const expiryReportHtml = (input: {
     generatedAt: Date;
 }): string => {
     const expired = input.rows.filter((row) => row.status === 'Vencido');
-    const body = input.rows.length === 0
-        ? `<p class="empty">Ningún lote con existencia caduca en los próximos ${EXPIRY_WINDOW_DAYS} días.</p>`
-        : `<table><thead><tr><th>Producto</th><th>SKU</th><th>Lote</th><th>Caduca</th>
+    const body =
+        input.rows.length === 0
+            ? `<p class="empty">Ningún lote con existencia caduca en los próximos ${EXPIRY_WINDOW_DAYS} días.</p>`
+            : `<table><thead><tr><th>Producto</th><th>SKU</th><th>Lote</th><th>Caduca</th>
 <th class="num">Días</th><th class="num">Cantidad</th><th>Estado</th></tr></thead><tbody>
-${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+${input.rows
+        .map(
+            (row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
 <td>${escapeHtml(row.lot)}</td><td>${escapeHtml(row.expiry)}</td>
 <td class="num${row.daysLeft < 0 ? ' low' : ''}">${row.daysLeft}</td><td class="num">${row.quantity}</td>
-<td${row.status === 'Vencido' ? ' class="low"' : ''}>${escapeHtml(row.status)}</td></tr>`).join('')}
+<td${row.status === 'Vencido' ? ' class="low"' : ''}>${escapeHtml(row.status)}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="7">Total · ${input.rows.length} lotes
 (${expired.length} vencidos, ${expired.reduce((total, row) => total + row.quantity, 0)} unidades vencidas)</td></tr>
 </tbody></table>`;
@@ -780,7 +864,10 @@ export const buildExpiryPdf = async (input: {
         generatedBy: input.generatedBy,
         generatedAt: now,
     });
-    return { pdf: await renderHtmlToPdf(html), fileName: `proximos-a-caducar-${todayYmd(now)}.pdf` };
+    return {
+        pdf: await renderHtmlToPdf(html),
+        fileName: `proximos-a-caducar-${todayYmd(now)}.pdf`,
+    };
 };
 
 /* -------------------------------------------------------------------------- */
@@ -832,7 +919,9 @@ export const buildNoCostRows = (
                 salePrice: product.salePrice,
             };
         })
-        .sort((a, b) => b.unitsWithoutCost - a.unitsWithoutCost || a.name.localeCompare(b.name, 'es'));
+        .sort(
+            (a, b) => b.unitsWithoutCost - a.unitsWithoutCost || a.name.localeCompare(b.name, 'es'),
+        );
 };
 
 export const noCostReportHtml = (input: {
@@ -840,13 +929,18 @@ export const noCostReportHtml = (input: {
     generatedBy: string;
     generatedAt: Date;
 }): string => {
-    const body = input.rows.length === 0
-        ? '<p class="empty">Todos los lotes con existencia tienen costo capturado.</p>'
-        : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th>
+    const body =
+        input.rows.length === 0
+            ? '<p class="empty">Todos los lotes con existencia tienen costo capturado.</p>'
+            : `<table><thead><tr><th>Producto</th><th>SKU</th><th class="num">Existencia</th>
 <th class="num">Unidades sin costo</th><th class="num">Lotes sin costo</th><th class="num">Precio de venta</th></tr></thead><tbody>
-${input.rows.map((row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
+${input.rows
+        .map(
+            (row) => `<tr><td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.sku)}</td>
 <td class="num">${row.stock}</td><td class="num low">${row.unitsWithoutCost}</td>
-<td class="num">${row.lotsWithoutCost}</td><td class="num">${escapeHtml(formatCurrency(row.salePrice))}</td></tr>`).join('')}
+<td class="num">${row.lotsWithoutCost}</td><td class="num">${escapeHtml(formatCurrency(row.salePrice))}</td></tr>`,
+        )
+        .join('')}
 <tr class="total"><td colspan="6">Total · ${input.rows.length} productos
 (${input.rows.reduce((total, row) => total + row.unitsWithoutCost, 0)} unidades sin costo)</td></tr>
 </tbody></table>
@@ -874,5 +968,8 @@ export const buildNoCostPdf = async (input: {
         generatedBy: input.generatedBy,
         generatedAt: now,
     });
-    return { pdf: await renderHtmlToPdf(html), fileName: `productos-sin-costo-${todayYmd(now)}.pdf` };
+    return {
+        pdf: await renderHtmlToPdf(html),
+        fileName: `productos-sin-costo-${todayYmd(now)}.pdf`,
+    };
 };

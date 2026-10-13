@@ -50,7 +50,7 @@ describe('renderCsv', () => {
     });
 
     it('neutraliza fórmulas en texto y entrecomilla las comas', () => {
-        expect(lines[2].startsWith(`"'=HYPERLINK(""http://x"")",`)).toBe(true);
+        expect(lines[2].startsWith('"\'=HYPERLINK(""http://x"")",')).toBe(true);
         expect(lines[3].startsWith('"Jarabe, 120 ml",')).toBe(true);
     });
 });
@@ -154,10 +154,12 @@ describe('resolveReportPeriod', () => {
     });
 
     it('rechaza un rango invertido o de más de un año', () => {
-        expect(() => resolveReportPeriod({ from: '2026-10-07', to: '2026-10-01' }, now))
-            .toThrow('posterior');
-        expect(() => resolveReportPeriod({ from: '2024-01-01', to: '2026-01-01' }, now))
-            .toThrow('366 días');
+        expect(() => resolveReportPeriod({ from: '2026-10-07', to: '2026-10-01' }, now)).toThrow(
+            'posterior',
+        );
+        expect(() => resolveReportPeriod({ from: '2024-01-01', to: '2026-01-01' }, now)).toThrow(
+            '366 días',
+        );
     });
 });
 
@@ -186,23 +188,27 @@ describe('registro de reportes', () => {
 
 describe('exportReport', () => {
     it('un reporte desconocido es 404', async () => {
-        await expect(exportReport({
-            report: 'no-existe',
-            format: 'csv',
-            query: {},
-            generatedBy: 'Admin',
-            roleSlug: 'admin',
-        })).rejects.toMatchObject({ statusCode: 404 });
+        await expect(
+            exportReport({
+                report: 'no-existe',
+                format: 'csv',
+                query: {},
+                generatedBy: 'Admin',
+                roleSlug: 'admin',
+            }),
+        ).rejects.toMatchObject({ statusCode: 404 });
     });
 
     it('el libro de controlados solo lo exporta administrador o gerente', async () => {
-        await expect(exportReport({
-            report: 'libro-controlados',
-            format: 'csv',
-            query: {},
-            generatedBy: 'Caja',
-            roleSlug: 'cashier',
-        })).rejects.toMatchObject({ statusCode: 403 });
+        await expect(
+            exportReport({
+                report: 'libro-controlados',
+                format: 'csv',
+                query: {},
+                generatedBy: 'Caja',
+                roleSlug: 'cashier',
+            }),
+        ).rejects.toMatchObject({ statusCode: 403 });
     });
 });
 
@@ -222,11 +228,13 @@ describe('impuestos', () => {
             ],
             total: 3,
         });
-        (salesRepo.listSaleReturns as jest.Mock).mockResolvedValue([{
-            createdAt: at('2026-10-11T18:00:00Z'),
-            refundTotal: 58,
-            taxSummary: { base: 50, ivaTotal: 8, iepsTotal: 0, taxTotal: 8, total: 58 },
-        }]);
+        (salesRepo.listSaleReturns as jest.Mock).mockResolvedValue([
+            {
+                createdAt: at('2026-10-11T18:00:00Z'),
+                refundTotal: 58,
+                taxSummary: { base: 50, ivaTotal: 8, iepsTotal: 0, taxTotal: 8, total: 58 },
+            },
+        ]);
 
         const result = await impuestos.load({
             query: { date: '2026-10-10', from: '2026-10-10', to: '2026-10-11' },
