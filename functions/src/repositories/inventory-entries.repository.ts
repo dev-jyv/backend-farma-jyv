@@ -52,3 +52,22 @@ export const getInventoryEntryById = async (id: string): Promise<InventoryEntry 
     }
     return { id: doc.id, ...doc.data() } as InventoryEntry;
 };
+
+/**
+ * Las `limit` entradas más recientes que incluyen el producto. Lee solo esas
+ * (no toda la colección, como `listInventoryEntries({ productId })`).
+ * Índice `[productIds CONTAINS, createdAt DESC]`.
+ */
+export const listRecentEntriesByProduct = async (
+    productId: string,
+    limit: number,
+): Promise<InventoryEntry[]> => {
+    const snapshot = await collection()
+        .where('productIds', 'array-contains', productId)
+        .orderBy('createdAt', 'desc')
+        .limit(limit)
+        .get();
+    return snapshot.docs.map(
+        (doc) => ({ id: doc.id, ...doc.data() } as InventoryEntry),
+    );
+};

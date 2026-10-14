@@ -198,6 +198,23 @@ export const listSalesByProductsBetween = async (
     return [...byId.values()];
 };
 
+/**
+ * Ventas en `[from, to)` que cobraron el servicio, anuladas incluidas (quien
+ * agrega decide). Índice `[serviceIds CONTAINS, createdAt ASC]`.
+ */
+export const listSalesByServiceBetween = async (
+    serviceId: string,
+    from: FirebaseFirestore.Timestamp,
+    to: FirebaseFirestore.Timestamp,
+): Promise<Sale[]> => {
+    const snapshot = await collection()
+        .where('serviceIds', 'array-contains', serviceId)
+        .where('createdAt', '>=', from)
+        .where('createdAt', '<', to)
+        .get();
+    return snapshot.docs.map((doc) => mapSale(doc.id, doc.data()));
+};
+
 /** Solo fecha e importe de las ventas no anuladas: para series largas sin leer partidas. */
 export const listSaleTotalsBetween = async (
     from: Date,

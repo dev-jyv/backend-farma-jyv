@@ -327,6 +327,14 @@ export const reportPeriodQuerySchema = z.object({
     limit: z.coerce.number().int().positive().max(200).optional(),
 });
 
+/** Resumen semanal o mensual; `anchor` es cualquier día del periodo (por defecto hoy). */
+export const businessSummaryQuerySchema = z.object({
+    period: z.enum(['week', 'month']).default('week'),
+    /** `all` (default) devuelve las dos ramas; `pharmacy`/`services` recortan a una. */
+    scope: z.enum(['all', 'pharmacy', 'services']).default('all'),
+    anchor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)').optional(),
+});
+
 /**
  * Reporte de comisiones. `providerId` es un id de `serviceProviders` —el doctor
  * del catálogo, que no es usuario del sistema—, no un uid. Cuando viene, el
@@ -487,4 +495,44 @@ export const updateCustomerSchema = z.object({
 
 export const listCustomersQuerySchema = z.object({
     ...paginationFields,
+});
+
+/** PDFs del módulo de Reportes. Sin `date`/`month` toman hoy / este mes (hora de la farmacia). */
+const exportScope = z.enum(['pharmacy', 'clinic', 'financial']);
+
+const ymdDate = z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD)')
+    // `2026-02-31` pasa el formato y `Date` lo corre a marzo en silencio; `9999-99-99` ni
+    // siquiera es una fecha y reventaba el reporte con un 500.
+    .refine((value) => {
+        const [year, month, day] = value.split('-').map(Number);
+        const parsed = new Date(Date.UTC(year, month - 1, day));
+        return parsed.getUTCFullYear() === year
+            && parsed.getUTCMonth() === month - 1
+            && parsed.getUTCDate() === day;
+    }, 'La fecha no existe en el calendario');
+
+export const dailySalesExportQuerySchema = z.object({
+    scope: exportScope,
+    date: ymdDate.optional(),
+});
+
+export const monthlyExportQuerySchema = z.object({
+    scope: exportScope.default('financial'),
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Mes inválido (YYYY-MM)').optional(),
+});
+
+/**
+ * Descarga genérica `GET /reports/exports/:report?format=`. Cada reporte usa solo
+ * los parámetros que le tocan: el periodo es un rango libre (`from`/`to`), un día
+ * (`date`) o un mes (`month`), en ese orden de prioridad.
+ */
+export const reportExportQuerySchema = z.object({
+    format: z.enum(['pdf', 'xlsx', 'csv']).default('pdf'),
+    from: ymdDate.optional(),
+    to: ymdDate.optional(),
+    date: ymdDate.optional(),
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Mes inválido (YYYY-MM)').optional(),
+    scope: exportScope.optional(),
+    days: z.coerce.number().int().min(1).max(365).optional(),
 });

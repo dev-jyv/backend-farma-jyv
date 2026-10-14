@@ -387,6 +387,20 @@ export const renderHtmlToPdf = async (html: string): Promise<Buffer> => {
     const browser = await launchBrowser();
     try {
         const page = await browser.newPage();
+        // Los reportes son HTML autocontenido: sin scripts ni recursos externos. Se corta
+        // todo lo demás para que un campo mal escapado no pueda hacer que Chromium pida
+        // una URL de afuera (SSRF desde la Function).
+        await page.setJavaScriptEnabled(false);
+        await page.setRequestInterception(true);
+        page.on('request', (request) => {
+            const url = request.url();
+            // La página puede cerrarse o la solicitud resolverse a la vez: sin `catch`, el
+            // rechazo de Puppeteer sería una `unhandledRejection` que tumba la instancia.
+            const settle = url.startsWith('data:') || url === 'about:blank'
+                ? request.continue()
+                : request.abort();
+            settle.catch(() => undefined);
+        });
         await page.setContent(html, { waitUntil: 'load' });
         const pdf = await page.pdf({
             format: 'A4',

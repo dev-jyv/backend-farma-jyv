@@ -1,6 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { z } from 'zod';
 import {
+    businessSummaryQuerySchema,
     commissionsQuerySchema,
     dashboardChartsQuerySchema,
     deadStockQuerySchema,
@@ -9,11 +10,13 @@ import {
     reportPeriodQuerySchema,
 } from '../../schemas';
 import * as analyticsService from '../../services/analytics.service';
+import * as businessSummaryService from '../../services/business-summary.service';
 import * as dashboardChartsService from '../../services/dashboard-charts.service';
 import * as insightsService from '../../services/insights.service';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 
+type BusinessSummaryQuery = z.infer<typeof businessSummaryQuerySchema>;
 type ReportPeriodQuery = z.infer<typeof reportPeriodQuerySchema>;
 type DeadStockQuery = z.infer<typeof deadStockQuerySchema>;
 type CommissionsQuery = z.infer<typeof commissionsQuerySchema>;
@@ -27,6 +30,23 @@ type DashboardChartsQuery = z.infer<typeof dashboardChartsQuerySchema>;
  */
 @Controller('reports')
 export class ReportsController {
+    /**
+     * Resumen semanal o mensual comparado con el periodo anterior, con la
+     * cobertura de costo explícita. Determinista y de costo fijo (sin IA).
+     */
+    @Get('business-summary')
+    @RequirePermission('dashboard', 'read')
+    async businessSummary(
+        @Query(new ZodValidationPipe(businessSummaryQuerySchema)) query: BusinessSummaryQuery,
+    ) {
+        const summary = await businessSummaryService.getBusinessSummary(query.period, query.anchor);
+        return {
+            data: query.scope === 'all'
+                ? summary
+                : businessSummaryService.scopeSummary(summary, query.scope),
+        };
+    }
+
     @Get('sales-summary')
     @RequirePermission('dashboard', 'read')
     async salesSummary(

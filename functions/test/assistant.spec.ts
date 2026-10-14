@@ -17,18 +17,43 @@ jest.mock('../src/services/analytics.service', () => ({
     getTopProducts: jest.fn(),
     getSalesByCashier: jest.fn(),
     getDeadStock: jest.fn(),
+    getTopServices: jest.fn(),
+    getCommissionsByProvider: jest.fn(),
 }));
 jest.mock('../src/services/insights.service', () => ({
     getSalesByHour: jest.fn(),
     getReorderSuggestions: jest.fn(),
 }));
 jest.mock('../src/services/inventory-alerts.service', () => ({ getInventoryAlerts: jest.fn() }));
+jest.mock('../src/services/business-summary.service', () => ({
+    getBusinessSummary: jest.fn(),
+    scopeSummary: jest.fn((summary: unknown, scope: string) => ({ scope, summary })),
+}));
+jest.mock('../src/services/service-analytics.service', () => ({
+    findServicesByName: jest.fn(),
+    getServiceAnalytics: jest.fn(),
+}));
+jest.mock('../src/services/product-analytics.service', () => ({
+    findProductsByName: jest.fn(),
+    getProductAnalytics: jest.fn(),
+    DEFAULT_ANALYTICS_MONTHS: 12,
+    MAX_ANALYTICS_MONTHS: 24,
+}));
 jest.mock('../src/services/inventory-summary.service', () => ({
     getInventorySummary: jest.fn(),
 }));
 
 import { assistantChatSchema } from '../src/schemas/assistant';
 import { chat } from '../src/services/assistant.service';
+import { getBusinessSummary, scopeSummary } from '../src/services/business-summary.service';
+import {
+    findServicesByName,
+    getServiceAnalytics,
+} from '../src/services/service-analytics.service';
+import {
+    findProductsByName,
+    getProductAnalytics,
+} from '../src/services/product-analytics.service';
 
 const toolCall = (name: string, args = '{}', id = 'call_1') => ({
     id,
@@ -172,5 +197,120 @@ describe('assistantChatSchema', () => {
                 ],
             }).success,
         ).toBe(true);
+    });
+});
+
+describe('assistant: resumen y análisis de producto', () => {
+    const lastToolMessage = () => {
+        const call = openRouterRequest.mock.calls[1][1];
+        return JSON.parse(call.messages[call.messages.length - 1].content);
+    };
+
+    beforeEach(() => {
+        openRouterRequest.mockReset();
+        (getBusinessSummary as jest.Mock).mockReset();
+        (findProductsByName as jest.Mock).mockReset();
+        (getProductAnalytics as jest.Mock).mockReset();
+    });
+
+    it('business_summary usa el periodo pedido y cae a semana si es inválido', async () => {
+        (getBusinessSummary as jest.Mock).mockResolvedValue({ ok: true });
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(
+                toolCall('business_summary', '{"period":"month","anchor":"2026-09-15"}', 'a'),
+                toolCall('business_summary', '{"period":"year","anchor":"mañana"}', 'b'),
+            ))
+            .mockResolvedValueOnce(answer('listo'));
+
+        await chat(history);
+
+        expect(getBusinessSummary).toHaveBeenNthCalledWith(1, 'month', '2026-09-15');
+        expect(getBusinessSummary).toHaveBeenNthCalledWith(2, 'week', undefined);
+    });
+
+    it('find_product y product_analytics encadenan el id y acotan los meses', async () => {
+        (findProductsByName as jest.Mock).mockResolvedValue([{ id: 'p1', name: 'Paracetamol' }]);
+        (getProductAnalytics as jest.Mock).mockResolvedValue({ product: { id: 'p1' } });
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(toolCall('find_product', '{"query":"parace"}', 'a')))
+            .mockResolvedValueOnce(askToCall(
+                toolCall('product_analytics', '{"productId":"p1","months":99}', 'b'),
+            ))
+            .mockResolvedValueOnce(answer('listo'));
+
+        const result = await chat(history);
+
+        expect(findProductsByName).toHaveBeenCalledWith('parace');
+        expect(getProductAnalytics).toHaveBeenCalledWith('p1', 24);
+        expect(result.toolsUsed).toEqual(['find_product', 'product_analytics']);
+    });
+
+    it('product_analytics sin productId devuelve el error sin tumbar el chat', async () => {
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(toolCall('product_analytics', '{}')))
+            .mockResolvedValueOnce(answer('necesito el producto'));
+
+        const result = await chat(history);
+
+        expect(getProductAnalytics).not.toHaveBeenCalled();
+        expect(lastToolMessage().error).toMatch(/find_product/);
+        expect(result.reply).toBe('necesito el producto');
+    });
+
+    it('el prompt lleva la fecha de hoy calculada al momento de la conversación', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2031-05-17T15:00:00.000Z'));
+        openRouterRequest.mockResolvedValueOnce(answer('ok'));
+
+        await chat(history);
+        jest.useRealTimers();
+
+        const system = openRouterRequest.mock.calls[0][1].messages[0].content as string;
+        expect(system).toContain('Hoy es 2031-05-17');
+    });
+
+    it('business_summary pasa el alcance y cae a "all" si es inválido', async () => {
+        (getBusinessSummary as jest.Mock).mockResolvedValue({ ok: true });
+        (scopeSummary as jest.Mock).mockClear();
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(
+                toolCall('business_summary', '{"scope":"services"}', 'a'),
+                toolCall('business_summary', '{"scope":"todo"}', 'b'),
+            ))
+            .mockResolvedValueOnce(answer('listo'));
+
+        await chat(history);
+
+        expect(scopeSummary).toHaveBeenNthCalledWith(1, { ok: true }, 'services');
+        expect(scopeSummary).toHaveBeenNthCalledWith(2, { ok: true }, 'all');
+    });
+
+    it('find_service y service_analytics encadenan el id y acotan los meses', async () => {
+        (findServicesByName as jest.Mock).mockResolvedValue([{ id: 's1', name: 'Consulta' }]);
+        (getServiceAnalytics as jest.Mock).mockResolvedValue({ service: { id: 's1' } });
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(toolCall('find_service', '{"query":"consul"}', 'a')))
+            .mockResolvedValueOnce(askToCall(
+                toolCall('service_analytics', '{"serviceId":"s1","months":0}', 'b'),
+            ))
+            .mockResolvedValueOnce(answer('listo'));
+
+        const result = await chat(history);
+
+        expect(findServicesByName).toHaveBeenCalledWith('consul');
+        expect(getServiceAnalytics).toHaveBeenCalledWith('s1', 12);
+        expect(result.toolsUsed).toEqual(['find_service', 'service_analytics']);
+    });
+
+    it('service_analytics sin serviceId devuelve el error sin tumbar el chat', async () => {
+        (getServiceAnalytics as jest.Mock).mockReset();
+        openRouterRequest
+            .mockResolvedValueOnce(askToCall(toolCall('service_analytics', '{}')))
+            .mockResolvedValueOnce(answer('necesito el servicio'));
+
+        const result = await chat(history);
+
+        expect(getServiceAnalytics).not.toHaveBeenCalled();
+        expect(lastToolMessage().error).toMatch(/find_service/);
+        expect(result.reply).toBe('necesito el servicio');
     });
 });

@@ -8,10 +8,12 @@ import {
     idParamSchema,
     listProductHistoryQuerySchema,
     listProductsQuerySchema,
+    productAnalyticsQuerySchema,
     syncProductsQuerySchema,
     updateProductPricesSchema,
     updateProductSchema,
 } from '../../schemas';
+import * as productAnalyticsService from '../../services/product-analytics.service';
 import * as productsService from '../../services/products.service';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
@@ -21,6 +23,7 @@ import { ZodValidationPipe } from '../../common/zod-validation.pipe';
 type ListProductsQuery = z.infer<typeof listProductsQuerySchema>;
 type SyncProductsQuery = z.infer<typeof syncProductsQuerySchema>;
 type ListProductHistoryQuery = z.infer<typeof listProductHistoryQuerySchema>;
+type ProductAnalyticsQuery = z.infer<typeof productAnalyticsQuerySchema>;
 type IdParam = z.infer<typeof idParamSchema>;
 type CreateProductInput = z.infer<typeof createProductSchema>;
 type BulkCreateProductsInput = z.infer<typeof bulkCreateProductsSchema>;
@@ -52,6 +55,26 @@ export class ProductsController {
             updatedSince: query.updatedSince,
         });
         return { data: result.items };
+    }
+
+    /**
+     * Análisis de un producto en una sola respuesta (ventas, precio, costo, stock
+     * y valor de inventario). Expone costos y márgenes, así que exige
+     * `inventory:write`: el gerente y el administrador la tienen, el cajero
+     * (que sí lee `products`) no. No usa `dashboard:read` porque el rol gerente
+     * excluye esa área.
+     */
+    @Get(':id/analytics')
+    @RequirePermission('inventory', 'write')
+    async analytics(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Query(new ZodValidationPipe(productAnalyticsQuerySchema)) query: ProductAnalyticsQuery,
+    ) {
+        const data = await productAnalyticsService.getProductAnalytics(params.id, query.months, {
+            granularity: query.granularity,
+            periods: query.periods,
+        });
+        return { data };
     }
 
     @Get(':id/purchase-history')
