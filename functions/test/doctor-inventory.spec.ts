@@ -174,6 +174,17 @@ describe('GET /doctor/inventory - caché', () => {
         }
     });
 
+    it('la carga completa servida de caché entrega como cursor la hora de lectura', async () => {
+        await crearProducto();
+        const primera = await doctorInventory.getDoctorInventory();
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        const segunda = await doctorInventory.getDoctorInventory();
+
+        // Un cursor más nuevo que la copia perdería los cambios hechos entre la
+        // lectura y el segundo request.
+        expect(segunda.meta.serverTime).toBe(primera.meta.serverTime);
+    });
+
     it('expira pasado el TTL', async () => {
         await crearProducto();
         const spy = jest.spyOn(productsRepo, 'listProducts');

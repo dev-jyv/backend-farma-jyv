@@ -80,23 +80,24 @@ const enrichInvoicesPage = async (
     );
 };
 
-export const listInvoices = async (filters: {
+type InvoiceListFilters = {
     supplierId?: string;
     from?: string;
     to?: string;
     hasInvoice?: boolean;
     paymentStatus?: InvoicePaymentStatus | 'overdue';
     search?: string;
-    page?: number;
-    limit?: number;
-}): Promise<{ items: InvoiceWithDetails[]; meta: ListMeta }> => {
-    const { page, limit } = parsePagination(filters.page, filters.limit);
-    let invoices = await invoicesRepo.listInvoices({
-        supplierId: filters.supplierId,
-        from: filters.from,
-        to: filters.to,
-        hasInvoice: filters.hasInvoice,
-    });
+};
+
+/** Filtros que solo se pueden aplicar en memoria sobre las facturas leídas. */
+const needsInMemoryFilter = (filters: InvoiceListFilters): boolean =>
+    Boolean(filters.paymentStatus || filters.search);
+
+const applyInMemoryFilters = async (
+    source: Invoice[],
+    filters: InvoiceListFilters,
+): Promise<Invoice[]> => {
+    let invoices = source;
 
     if (filters.paymentStatus) {
         // En memoria y no en la consulta: el estado es derivado, así que no hay
@@ -123,6 +124,36 @@ export const listInvoices = async (filters: {
         });
     }
 
+    return invoices;
+};
+
+export const listInvoices = async (
+    filters: InvoiceListFilters & { page?: number; limit?: number },
+): Promise<{ items: InvoiceWithDetails[]; meta: ListMeta }> => {
+    const { page, limit } = parsePagination(filters.page, filters.limit);
+    const repoFilters = {
+        supplierId: filters.supplierId,
+        from: filters.from,
+        to: filters.to,
+        hasInvoice: filters.hasInvoice,
+    };
+
+    if (!needsInMemoryFilter(filters)) {
+        // Sin filtros derivados la página se resuelve en Firestore: se leen solo
+        // los `page * limit` documentos más recientes y el total sale de
+        // `count()`, en vez de leer todas las facturas para cortar 10.
+        const [window, total] = await Promise.all([
+            invoicesRepo.listInvoices(repoFilters, page * limit),
+            invoicesRepo.countInvoices(repoFilters),
+        ]);
+        const items = await enrichInvoicesPage(paginate(window, page, limit).items, false);
+        return { items, meta: buildListMeta(page, limit, total) };
+    }
+
+    const invoices = await applyInMemoryFilters(
+        await invoicesRepo.listInvoices(repoFilters),
+        filters,
+    );
     const paginated = paginate(invoices, page, limit);
     const items = await enrichInvoicesPage(paginated.items, false);
 
@@ -130,6 +161,28 @@ export const listInvoices = async (filters: {
         items,
         meta: buildListMeta(page, limit, paginated.total),
     };
+};
+
+/**
+ * Todas las facturas que coinciden (hasta `cap`) con una sola lectura. Para
+ * quien necesita sumar sobre el conjunto completo: paginar `listInvoices` en
+ * memoria releía la colección entera en cada página.
+ */
+export const listInvoicesUpTo = async (
+    filters: InvoiceListFilters,
+    cap: number,
+): Promise<{ items: InvoiceWithDetails[]; total: number }> => {
+    const invoices = await applyInMemoryFilters(
+        await invoicesRepo.listInvoices({
+            supplierId: filters.supplierId,
+            from: filters.from,
+            to: filters.to,
+            hasInvoice: filters.hasInvoice,
+        }),
+        filters,
+    );
+    const items = await enrichInvoicesPage(invoices.slice(0, cap), false);
+    return { items, total: invoices.length };
 };
 
 export const getInvoice = async (id: string): Promise<InvoiceWithDetails> => {

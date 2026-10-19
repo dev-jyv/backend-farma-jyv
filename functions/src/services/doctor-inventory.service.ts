@@ -29,9 +29,10 @@ const FULL_CACHE_KEY = 'full';
 /**
  * La carga completa lee todo el catálogo activo: se comparte entre requests de la
  * instancia. 60 s de desfase es tolerable para consultar existencias; el delta
- * (que no pasa por caché) lo corrige en la siguiente sincronización.
+ * (que no pasa por caché) lo corrige en la siguiente sincronización. Guarda la
+ * hora de lectura: es el cursor que se entrega con la carga completa.
  */
-const fullCache = new MemoryCache<DoctorInventoryItem[]>(60_000, 1);
+const fullCache = new MemoryCache<{ items: DoctorInventoryItem[]; readAt: string }>(60_000, 1);
 
 export const clearDoctorInventoryCache = (): void => fullCache.clear();
 
@@ -63,11 +64,17 @@ export const getDoctorInventory = async (
         return { items, meta: { serverTime, full: false, total: items.length } };
     }
 
-    let items = fullCache.get(FULL_CACHE_KEY);
-    if (!items) {
+    let cached = fullCache.get(FULL_CACHE_KEY);
+    if (!cached) {
         const products = await productsRepo.listProducts({ activeOnly: true });
-        items = products.map(toItem);
-        fullCache.set(FULL_CACHE_KEY, items);
+        cached = { items: products.map(toItem), readAt: serverTime };
+        fullCache.set(FULL_CACHE_KEY, cached);
     }
-    return { items, meta: { serverTime, full: true, total: items.length } };
+    // El cursor es la hora en que se leyó el catálogo, no la del request: con una
+    // copia de hasta 60 s, un cambio posterior a la lectura quedaría por debajo
+    // del cursor y ningún delta lo volvería a enviar.
+    return {
+        items: cached.items,
+        meta: { serverTime: cached.readAt, full: true, total: cached.items.length },
+    };
 };

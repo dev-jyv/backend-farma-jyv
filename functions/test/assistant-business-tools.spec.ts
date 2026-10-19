@@ -20,8 +20,8 @@ const listExpenses = jest.fn();
 const getIncomeStatement = jest.fn();
 jest.mock('../src/services/accounting.service', () => ({ listExpenses, getIncomeStatement }));
 
-const listInvoices = jest.fn();
-jest.mock('../src/services/invoices.service', () => ({ listInvoices }));
+const listInvoicesUpTo = jest.fn();
+jest.mock('../src/services/invoices.service', () => ({ listInvoicesUpTo }));
 
 const listCashSessions = jest.fn();
 jest.mock('../src/services/cash-sessions.service', () => ({ listCashSessions }));
@@ -129,7 +129,7 @@ describe('asistente: herramientas de negocio', () => {
     });
 
     it('facturas: ignora un estado inválido y acota el límite', async () => {
-        listInvoices.mockResolvedValue({
+        listInvoicesUpTo.mockResolvedValue({
             items: [
                 {
                     supplier: { name: 'Nadro' },
@@ -143,15 +143,13 @@ describe('asistente: herramientas de negocio', () => {
                     isOverdue: true,
                 },
             ],
-            meta: { total: 1 },
+            total: 1,
         });
 
         const result = await toolResult('supplier_invoices', { status: 'hackeado', limit: 9999 });
 
-        expect(listInvoices.mock.calls[0][0]).toMatchObject({
-            paymentStatus: undefined,
-            limit: 100,
-        });
+        expect(listInvoicesUpTo.mock.calls[0][0]).toMatchObject({ paymentStatus: undefined });
+        expect(listInvoicesUpTo).toHaveBeenCalledTimes(1);
         expect(result).toMatchObject({ outstandingBalance: 300, balanceIsPartial: false });
         expect(result.invoices[0]).toMatchObject({
             supplier: 'Nadro',
@@ -172,15 +170,10 @@ describe('asistente: herramientas de negocio', () => {
             paymentStatus: 'pending',
             isOverdue: false,
         });
-        listInvoices
-            .mockResolvedValueOnce({
-                items: Array.from({ length: 100 }, () => invoice(10)),
-                meta: { total: 130 },
-            })
-            .mockResolvedValueOnce({
-                items: Array.from({ length: 30 }, () => invoice(10)),
-                meta: { total: 130 },
-            });
+        listInvoicesUpTo.mockResolvedValue({
+            items: Array.from({ length: 130 }, () => invoice(10)),
+            total: 130,
+        });
 
         const result = await toolResult('supplier_invoices', { limit: 5 });
 

@@ -335,21 +335,10 @@ const TOOLS: Record<string, ToolDefinition> = {
             const shown = Math.min(Math.max(Math.trunc(Number(args.limit)) || 50, 1), 100);
             // El saldo pendiente se suma sobre TODAS las que coinciden (hasta un tope), no solo
             // sobre las que se listan: «cuánto debo» no puede salir de la primera página.
-            const all: Awaited<ReturnType<typeof invoices.listInvoices>>['items'] = [];
-            let total = 0;
-            for (let page = 1; page <= MAX_INVOICE_PAGES; page += 1) {
-                const result = await invoices.listInvoices({
-                    ...range,
-                    paymentStatus: status,
-                    page,
-                    limit: 100,
-                });
-                all.push(...result.items);
-                total = result.meta.total;
-                if (all.length >= total || result.items.length === 0) {
-                    break;
-                }
-            }
+            const { items: all, total } = await invoices.listInvoicesUpTo(
+                { ...range, paymentStatus: status },
+                100 * MAX_INVOICE_PAGES,
+            );
             const items = all.slice(0, shown);
             return {
                 total,
