@@ -211,8 +211,8 @@ describe('asistente: herramientas de negocio', () => {
 
     it('stock bajo: el agotado primero y el límite se acota', async () => {
         listProducts.mockResolvedValue([
-            { id: 'a', name: 'Aspirina', sku: 'A', salePrice: 10, minStock: 5 },
-            { id: 'b', name: 'Zinc', sku: 'Z', salePrice: 20, minStock: 4 },
+            { id: 'a', name: 'Aspirina', sku: 'A', salePrice: 10, minStock: 5, isActive: true },
+            { id: 'b', name: 'Zinc', sku: 'Z', salePrice: 20, minStock: 4, isActive: true },
         ]);
         listBatchesWithStock.mockResolvedValue([{ productId: 'a', quantity: 2, costPrice: 1 }]);
 

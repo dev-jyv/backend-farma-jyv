@@ -1,8 +1,6 @@
 /* eslint-disable max-len -- prompts y plantillas HTML que no se parten */
 import { getOpenRouterChatModel } from '../config/env';
 import { AppError } from '../utils/errors';
-import * as batchesRepo from '../repositories/batches.repository';
-import * as productsRepo from '../repositories/products.repository';
 import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
 import { getZonedYmd } from '../utils/timezone';
 import * as accounting from './accounting.service';
@@ -24,6 +22,7 @@ import { openRouterRequest } from './openrouter.service';
 import * as productAnalytics from './product-analytics.service';
 import { REPORTS_TIME_ZONE } from './sales-reports.service';
 import * as serviceAnalytics from './service-analytics.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 const CALL_TIMEOUT_MS = 25_000;
 /** Gastos que se leen para agregar (igual que el PDF) y páginas de facturas para sumar el saldo. */
@@ -435,8 +434,8 @@ const TOOLS: Record<string, ToolDefinition> = {
         properties: { limit: { type: 'integer' } },
         run: async (args) => {
             const [products, batches] = await Promise.all([
-                productsRepo.listProducts({ activeOnly: true }),
-                batchesRepo.listBatchesWithStock(),
+                catalogSnapshot.listProducts({ activeOnly: true }),
+                catalogSnapshot.listBatchesWithStock(),
             ]);
             const rows = buildLowStockRows(products, batches);
             return {
@@ -461,8 +460,8 @@ const TOOLS: Record<string, ToolDefinition> = {
         properties: { limit: { type: 'integer' } },
         run: async (args) => {
             const [products, batches] = await Promise.all([
-                productsRepo.listProducts({ activeOnly: false }),
-                batchesRepo.listBatchesWithStock(),
+                catalogSnapshot.listProducts({ activeOnly: false }),
+                catalogSnapshot.listBatchesWithStock(),
             ]);
             const rows = buildExpiryRows(products, batches, new Date());
             return {
@@ -484,8 +483,8 @@ const TOOLS: Record<string, ToolDefinition> = {
         properties: { limit: { type: 'integer' } },
         run: async (args) => {
             const [products, batches] = await Promise.all([
-                productsRepo.listProducts({ activeOnly: true }),
-                batchesRepo.listBatchesWithStock(),
+                catalogSnapshot.listProducts({ activeOnly: true }),
+                catalogSnapshot.listBatchesWithStock(),
             ]);
             const rows = buildNoCostRows(products, batches);
             return {

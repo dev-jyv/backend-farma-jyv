@@ -10,11 +10,10 @@ import {
 import { fromCents, toCents } from '../utils/taxes';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
-import * as productsRepo from '../repositories/products.repository';
-import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
 import * as pharmacyServicesRepo from '../repositories/pharmacy-services.repository';
 import { AbcClass, AbcSummary, classifyAbc, summarizeAbc } from './insights.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * Reportes de gestión. Todo se calcula sobre ventas **no anuladas** y se descuenta
@@ -540,8 +539,8 @@ export const getDeadStock = async (options: {
     const since = new Date(Date.now() - days * MS_PER_DAY).toISOString();
 
     const [products, batches, movements] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: true }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
         movementsRepo.listStockMovements({ from: since }),
     ]);
 

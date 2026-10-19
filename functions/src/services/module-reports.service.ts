@@ -1,8 +1,6 @@
 /* eslint-disable max-len -- prompts y plantillas HTML que no se parten */
 import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
-import * as batchesRepo from '../repositories/batches.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
-import * as productsRepo from '../repositories/products.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as usersRepo from '../repositories/users.repository';
@@ -20,6 +18,7 @@ import { listExpenses } from './accounting.service';
 import { addMonths, monthStartMs } from './product-analytics.service';
 import { renderHtmlToPdf } from './report-pdf.service';
 import { PAYMENT_METHOD_LABELS, REPORTS_TIME_ZONE } from './sales-reports.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * PDFs del módulo de Reportes (farmacia, consultorio y financiero). Cada archivo
@@ -421,8 +420,8 @@ export const buildInventoryPdf = async (input: {
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
     const [products, batches] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: true }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
     ]);
     const html = inventoryReportHtml({
         rows: buildInventoryRows(products, batches),
@@ -582,8 +581,8 @@ export const buildLowStockPdf = async (input: {
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
     const [products, batches] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: true }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
     ]);
     const html = lowStockReportHtml({
         rows: buildLowStockRows(products, batches),
@@ -856,8 +855,8 @@ export const buildExpiryPdf = async (input: {
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
     const [products, batches] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: false }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: false }),
+        catalogSnapshot.listBatchesWithStock(),
     ]);
     const html = expiryReportHtml({
         rows: buildExpiryRows(products, batches, now),
@@ -960,8 +959,8 @@ export const buildNoCostPdf = async (input: {
 }): Promise<{ pdf: Buffer; fileName: string }> => {
     const now = input.now ?? new Date();
     const [products, batches] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: true }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
     ]);
     const html = noCostReportHtml({
         rows: buildNoCostRows(products, batches),

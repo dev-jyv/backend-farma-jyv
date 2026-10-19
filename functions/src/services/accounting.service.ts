@@ -9,7 +9,6 @@ import * as batchesRepo from '../repositories/batches.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
-import * as productsRepo from '../repositories/products.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as salesRepo from '../repositories/sales.repository';
@@ -37,6 +36,7 @@ import {
 } from './accounting-core.service';
 import { getBankTotal } from './bank.service';
 import { settlementOf } from './invoices.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * Contabilidad (solo admin).
@@ -655,8 +655,8 @@ const MISSING_FOR_BALANCE_SHEET: FinancialPosition['missing'] = [
  */
 export const getFinancialPosition = async (): Promise<FinancialPosition> => {
     const [batches, products, categories, payables] = await Promise.all([
-        batchesRepo.listBatchesWithStock(),
-        productsRepo.listProducts({}),
+        catalogSnapshot.listBatchesWithStock(),
+        catalogSnapshot.listProducts({}),
         categoriesRepo.listCategories({}),
         getPayables(),
     ]);
