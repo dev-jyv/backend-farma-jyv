@@ -3,7 +3,24 @@ import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('batches');
 
-export const listBatchesByProduct = async (productId: string): Promise<Batch[]> => {
+export const listBatchesByProduct = async (
+    productId: string,
+    options: { onlyAvailable?: boolean } = {},
+): Promise<Batch[]> => {
+    if (options.onlyAvailable) {
+        // Solo lotes vendibles (`quantity > 0`): los agotados se acumulan para
+        // siempre y su costo de lectura no debe crecer con el historial. La
+        // desigualdad obliga a ordenar primero por `quantity`; la caducidad se
+        // ordena en memoria. Índice: productId + quantity.
+        const snapshot = await collection()
+            .where('productId', '==', productId)
+            .where('quantity', '>', 0)
+            .orderBy('quantity')
+            .get();
+        return snapshot.docs
+            .map((doc) => ({ id: doc.id, ...doc.data() } as Batch))
+            .sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+    }
     const snapshot = await collection()
         .where('productId', '==', productId)
         .orderBy('expiryDate', 'asc')
