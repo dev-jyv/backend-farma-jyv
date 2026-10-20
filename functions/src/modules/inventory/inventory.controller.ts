@@ -22,6 +22,7 @@ import {
     bulkCreateEntriesIdempotent,
     runIdempotentEntry,
 } from '../../services/entry-idempotency.service';
+import { runIdempotentExit } from '../../services/exit-idempotency.service';
 import { idempotencyKeySchema } from '../../schemas/sales';
 import * as alertsService from '../../services/inventory-alerts.service';
 import * as countsService from '../../services/inventory-counts.service';
@@ -299,8 +300,15 @@ export class InventoryController {
     async recordExit(
         @Body(new ZodValidationPipe(inventoryExitSchema)) body: InventoryExitInput,
         @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
-        const result = await inventoryService.recordExit({ ...body, userId: user.uid });
+        const { idempotencyKey, ...exit } = body;
+        const result = await runIdempotentExit({
+            userId: user.uid,
+            key: resolveIdempotencyKey(idempotencyKey, idempotencyHeader),
+            content: exit,
+            run: () => inventoryService.recordExit({ ...exit, userId: user.uid }),
+        });
         return { data: result };
     }
 
