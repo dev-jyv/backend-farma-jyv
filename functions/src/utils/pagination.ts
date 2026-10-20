@@ -5,7 +5,12 @@ export interface ListMeta {
     limit: number;
     total: number;
     totalPages: number;
+    /** Ventana de fechas realmente leída (listados históricos, SPEC 11). */
+    window?: { from: string; to: string | null };
 }
+
+/** Ventana por defecto de los listados históricos (SPEC 11). */
+export const DEFAULT_HISTORY_WINDOW_DAYS = 30;
 
 export const MAX_PAGE_LIMIT = 100;
 

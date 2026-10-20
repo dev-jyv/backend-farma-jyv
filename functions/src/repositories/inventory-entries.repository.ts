@@ -18,9 +18,7 @@ export const listInventoryEntries = async (filters: {
     const onlyProduct =
         filters.productId &&
         !filters.supplierId &&
-        !filters.invoiceId &&
-        !filters.from &&
-        !filters.to;
+        !filters.invoiceId;
     if (onlyProduct) {
         query = query.where('productIds', 'array-contains', filters.productId);
     }
