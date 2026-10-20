@@ -200,11 +200,13 @@ describe('facturas: saldo y abonos', () => {
     });
 
     it('la consulta de saldos deja fuera a las facturas anteriores al módulo', async () => {
-        const tracked = await invoicesRepo.listTrackedInvoices();
+        const tracked = await invoicesRepo.listOutstandingInvoices();
 
-        // `orderBy('paidTotal')` excluye los documentos sin el campo; si eso
-        // cambiara, aquí aparecería una factura `legacy` como deuda viva.
-        expect(tracked.every((invoice) => invoice.paidTotal !== undefined)).toBe(true);
+        // Solo las facturas con control de saldo y saldo vivo llevan `outstanding`;
+        // si eso cambiara, aquí aparecería una factura `legacy` como deuda viva.
+        expect(
+            tracked.every((invoice) => invoice.paidTotal !== undefined && invoice.outstanding),
+        ).toBe(true);
     });
 });
 

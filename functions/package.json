@@ -14,6 +14,7 @@
     "migrate:roles": "npm run build && node lib/scripts/migrate-roles.js",
     "backfill:denormalized": "npm run build && node lib/scripts/backfill-denormalized.js",
     "backfill:search-name": "npm run build && node lib/scripts/backfill-search-name.js",
+    "backfill:outstanding": "npm run build && node lib/scripts/backfill-outstanding.js",
     "backfill:daily-stats": "npm run build && node lib/scripts/backfill-daily-stats.js",
     "logs": "firebase functions:log",
     "test": "firebase emulators:exec --only firestore \"jest\"",

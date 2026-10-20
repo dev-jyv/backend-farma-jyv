@@ -201,13 +201,13 @@ export type InvoiceOption = {
  * Facturas con saldo pendiente en forma ligera, para los selectores. El saldo
  * sale de `settlementOf`, el mismo cálculo que la pantalla de facturas. Las
  * facturas `legacy` se dan por saldadas y no aparecen. Una sola lectura de
- * `listTrackedInvoices`, ordenadas de la más reciente a la más vieja.
+ * `listOutstandingInvoices`, ordenadas de la más reciente a la más vieja.
  */
 export const listInvoiceOptions = async (
     max: number = INVOICE_OPTIONS_MAX,
 ): Promise<{ items: InvoiceOption[]; total: number; truncated: boolean }> => {
     const asOf = new Date();
-    const pending = (await invoicesRepo.listTrackedInvoices())
+    const pending = (await invoicesRepo.listOutstandingInvoices())
         .map((invoice) => ({ invoice, balance: settlementOf(invoice, asOf).balance }))
         .filter(({ balance }) => balance > CENT)
         .sort((a, b) => b.invoice.invoiceDate.toMillis() - a.invoice.invoiceDate.toMillis());

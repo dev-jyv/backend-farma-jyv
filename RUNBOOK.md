@@ -143,6 +143,22 @@ las búsquedas, así que el orden es obligatorio:
 
 La búsqueda ya no cubre RFC, teléfono, correo, folio ni CURP: solo prefijo del nombre.
 
+
+## 2c. Backfill de `outstanding` (SPEC 13) — **antes de desplegar la lectura**
+
+Cuentas por pagar y el pasivo del balance leen ahora `where('outstanding','==',true)`
+en `invoices` y `accruedExpenses`. Un documento con saldo pero sin el marcador **no
+aparece** hasta rellenarlo.
+
+1. `cd functions && npm run backfill:outstanding -- --dry-run` — reporta cuántos faltan.
+2. `npm run backfill:outstanding` — escribe solo lo que falta o difiere (idempotente).
+   Las facturas `legacy` (sin `paidTotal`) quedan sin marcador, como se espera.
+3. Desplegar las funciones.
+4. Repetir el dry-run: debe reportar 0.
+
+Altas, abonos y anulaciones nuevos mantienen el marcador en su misma transacción;
+los abonos y altas hechos entre el backfill y el deploy los cubre el paso 4.
+
 ## 3. Llave de idempotencia obligatoria en ventas
 
 Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock. El
