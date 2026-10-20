@@ -17,7 +17,13 @@ import {
 } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { matchesProductSearch } from '../utils/product-search';
-import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
+import {
+    buildListMeta,
+    DEFAULT_HISTORY_WINDOW_DAYS,
+    ListMeta,
+    paginate,
+    parsePagination,
+} from '../utils/pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
 import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
@@ -145,14 +151,35 @@ const cached = <T>(cache: PromiseCache<T>, key: string, load: () => Promise<T>):
 /** Caches compartidos por una operación de listado; ver `PromiseCache`. */
 export interface EnrichCaches {
     suppliers: PromiseCache<Supplier | null>;
+    /** Producto sin categoría: lo que basta para filtrar por `search` antes de enriquecer. */
+    baseProducts: PromiseCache<Product | null>;
     products: PromiseCache<ProductWithCategory | null>;
     invoices: PromiseCache<InvoiceSummary | null>;
 }
 
 const createEnrichCaches = (): EnrichCaches => ({
     suppliers: new Map(),
+    baseProducts: new Map(),
     products: new Map(),
     invoices: new Map(),
+});
+
+const loadCachedBaseProduct = (
+    productId: string,
+    caches: EnrichCaches,
+): Promise<Product | null> =>
+    cached(caches.baseProducts, productId, () => productsRepo.getProductById(productId));
+
+/**
+ * Sin `from` el listado lee solo los últimos 30 días; un `from` explícito se
+ * respeta tal cual. `window` viaja en `meta` para que el front muestre qué vio.
+ */
+export const resolveHistoryWindow = (
+    from?: string,
+    to?: string,
+): { from: string; to: string | null } => ({
+    from: from ?? new Date(Date.now() - DEFAULT_HISTORY_WINDOW_DAYS * 86_400_000).toISOString(),
+    to: to ?? null,
 });
 
 const loadCachedProduct = (
@@ -160,7 +187,7 @@ const loadCachedProduct = (
     caches: EnrichCaches,
 ): Promise<ProductWithCategory | null> =>
     cached(caches.products, productId, async () => {
-        const baseProduct = await productsRepo.getProductById(productId);
+        const baseProduct = await loadCachedBaseProduct(productId, caches);
         return baseProduct ? loadProductWithCategory(baseProduct) : null;
     });
 
@@ -225,34 +252,39 @@ export const listEntries = async (filters: {
     limit?: number;
 }): Promise<{ items: InventoryEntryWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
-    const entries = await entriesRepo.listInventoryEntries(filters);
+    const window = resolveHistoryWindow(filters.from, filters.to);
+    let entries = await entriesRepo.listInventoryEntries({ ...filters, from: window.from });
 
     const caches = createEnrichCaches();
 
-    if (!filters.search) {
-        const paginated = paginate(entries, page, limit);
-        const items = await Promise.all(
-            paginated.items.map((entry) => enrichEntry(entry, caches)),
+    if (filters.search) {
+        // Filtra antes de enriquecer: solo se lee proveedor y producto base (sin
+        // categoría ni factura); la fila completa se arma solo para la página.
+        const term = filters.search.toLowerCase();
+        const matches = await Promise.all(
+            entries.map(async (entry) => {
+                const supplier = await cached(caches.suppliers, entry.supplierId, () =>
+                    suppliersRepo.getSupplierById(entry.supplierId),
+                );
+                if (supplier?.name.toLowerCase().includes(term)) {
+                    return true;
+                }
+                const products = await Promise.all(
+                    entry.items.map((item) => loadCachedBaseProduct(item.productId, caches)),
+                );
+                return products.some((product) => product && matchesProductSearch(product, term));
+            }),
         );
-        return {
-            items,
-            meta: buildListMeta(page, limit, paginated.total),
-        };
+        entries = entries.filter((_, index) => matches[index]);
     }
 
-    let items = await Promise.all(entries.map((entry) => enrichEntry(entry, caches)));
-
-    const term = filters.search.toLowerCase();
-    items = items.filter(
-        (entry) =>
-            entry.supplier.name.toLowerCase().includes(term) ||
-            entry.items.some((item) => matchesProductSearch(item.product, term)),
+    const paginated = paginate(entries, page, limit);
+    const items = await Promise.all(
+        paginated.items.map((entry) => enrichEntry(entry, caches)),
     );
-
-    const paginated = paginate(items, page, limit);
     return {
-        items: paginated.items,
-        meta: buildListMeta(page, limit, paginated.total),
+        items,
+        meta: { ...buildListMeta(page, limit, paginated.total), window },
     };
 };
 
@@ -716,12 +748,15 @@ export const listMovements = async (filters: {
     after?: string;
 }): Promise<{ items: StockMovementWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
+    const window = resolveHistoryWindow(filters.from, filters.to);
 
     if (!filters.search) {
+        // Sin búsqueda la página se resuelve en Firestore, con cursor (SPEC 08) y
+        // sobre la ventana por defecto (SPEC 11).
         const result = await movementsRepo.listStockMovementsPage({
             productId: filters.productId,
             type: filters.type,
-            from: filters.from,
+            from: window.from,
             to: filters.to,
             page,
             limit,
@@ -731,33 +766,44 @@ export const listMovements = async (filters: {
         const items = await Promise.all(
             result.items.map((movement) => enrichMovement(movement, caches)),
         );
-        return { items, meta: buildListMeta(page, limit, result.total, result.nextCursor) };
+        return {
+            items,
+            meta: { ...buildListMeta(page, limit, result.total, result.nextCursor), window },
+        };
     }
 
-    const movements = await movementsRepo.listStockMovements({
+    let movements = await movementsRepo.listStockMovements({
         productId: filters.productId,
         type: filters.type,
-        from: filters.from,
+        from: window.from,
         to: filters.to,
     });
 
     const caches = createEnrichCaches();
 
-    let items = await Promise.all(
-        movements.map((movement) => enrichMovement(movement, caches)),
-    );
-
+    // Filtra antes de enriquecer: tipo y motivo no cuestan lecturas; el producto
+    // base (sin categoría) solo se lee para lo que no coincidió.
     const term = filters.search.toLowerCase();
-    items = items.filter(
-        (movement) =>
-            matchesProductSearch(movement.product, term) ||
-            movement.type.toLowerCase().includes(term) ||
-            (movement.reason?.toLowerCase().includes(term) ?? false),
+    const matches = await Promise.all(
+        movements.map(async (movement) => {
+            if (
+                movement.type.toLowerCase().includes(term) ||
+                (movement.reason?.toLowerCase().includes(term) ?? false)
+            ) {
+                return true;
+            }
+            const product = await loadCachedBaseProduct(movement.productId, caches);
+            return !!product && matchesProductSearch(product, term);
+        }),
     );
+    movements = movements.filter((_, index) => matches[index]);
 
-    const paginated = paginate(items, page, limit);
+    const paginated = paginate(movements, page, limit);
+    const items = await Promise.all(
+        paginated.items.map((movement) => enrichMovement(movement, caches)),
+    );
     return {
-        items: paginated.items,
-        meta: buildListMeta(page, limit, paginated.total),
+        items,
+        meta: { ...buildListMeta(page, limit, paginated.total), window },
     };
 };

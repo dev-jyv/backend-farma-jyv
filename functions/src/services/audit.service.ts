@@ -1,5 +1,11 @@
 import { AuditAction, AuditEntity, AuditLog } from '../types';
-import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
+import {
+    buildListMeta,
+    DEFAULT_HISTORY_WINDOW_DAYS,
+    ListMeta,
+    paginate,
+    parsePagination,
+} from '../utils/pagination';
 import { db } from '../utils/firestore';
 import * as auditRepo from '../repositories/audit-logs.repository';
 
@@ -98,8 +104,22 @@ export const listAuditLogs = async (filters: {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const logs = await auditRepo.listAuditLogs(filters);
     const paginated = paginate(logs, page, limit);
+    // Con `entityId` o `userId` no hay ventana: pendiente paginar por cursor (SPEC 08).
+    const windowed = !filters.entityId && !filters.userId;
     return {
         items: paginated.items,
-        meta: buildListMeta(page, limit, paginated.total),
+        meta: {
+            ...buildListMeta(page, limit, paginated.total),
+            ...(windowed
+                ? {
+                    window: {
+                        from: filters.from ?? new Date(
+                            Date.now() - DEFAULT_HISTORY_WINDOW_DAYS * 86_400_000,
+                        ).toISOString(),
+                        to: filters.to ?? null,
+                    },
+                }
+                : {}),
+        },
     };
 };

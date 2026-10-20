@@ -7,7 +7,12 @@ export interface ListMeta {
     totalPages: number;
     /** Cursor opaco de la página siguiente (SPEC 08); ausente en la última página. */
     nextCursor?: string;
+    /** Ventana de fechas realmente leída (listados históricos, SPEC 11). */
+    window?: { from: string; to: string | null };
 }
+
+/** Ventana por defecto de los listados históricos (SPEC 11). */
+export const DEFAULT_HISTORY_WINDOW_DAYS = 30;
 
 export const MAX_PAGE_LIMIT = 100;
 
