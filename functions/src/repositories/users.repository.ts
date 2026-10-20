@@ -1,8 +1,8 @@
 import { UserProfile } from '../types';
-import { paginate } from '../utils/pagination';
 import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
 import { MemoryCache } from '../utils/memory-cache';
+import { applyNamePrefix, normalizeSearchName } from '../utils/search-name';
 
 const collection = () => db().collection('users');
 
@@ -44,6 +44,7 @@ export const createUserProfile = async (
     const timestamp = now();
     const profile: Omit<UserProfile, 'id'> = {
         ...data,
+        searchName: normalizeSearchName(data.displayName),
         createdAt: timestamp,
     };
     await collection().doc(uid).set(profile);
@@ -58,7 +59,14 @@ export const updateUserProfile = async (
         Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
     >,
 ): Promise<void> => {
-    await collection().doc(uid).update(data);
+    await collection()
+        .doc(uid)
+        .update({
+            ...data,
+            ...(data.displayName !== undefined
+                ? { searchName: normalizeSearchName(data.displayName) }
+                : {}),
+        });
     invalidateUserProfileCache(uid);
 };
 
@@ -80,41 +88,22 @@ export const listUserProfiles = async (filters: {
     }
 
     /**
-     * Sin búsqueda pagina Firestore. Índices: `[roleId, displayName]`,
-     * `[isActive, displayName]` y `[roleId, isActive, displayName]`, según qué
-     * filtros llegaron.
+     * Pagina Firestore en ambos casos. Sin búsqueda ordena por `displayName`;
+     * con búsqueda, rango por prefijo sobre `searchName`. Índices:
+     * `[roleId, displayName]`, `[isActive, displayName]`,
+     * `[roleId, isActive, displayName]` y sus equivalentes con `searchName`.
      *
      * `syncRoleUsersClaims` entra por aquí con `limit: 10000` para recorrer
      * todos los usuarios de un rol: sigue leyendo lo que necesita, ni más.
      */
-    if (!filters.search) {
-        return paginateQuery(
-            query.orderBy('displayName', 'asc'),
-            (doc) => ({ id: doc.id, ...doc.data() } as UserProfile),
-            filters.page ?? 1,
-            filters.limit ?? 100,
-        );
-    }
-
-    const snapshot = await query.get();
-    let users = snapshot.docs.map(
+    const ordered =
+        applyNamePrefix(query, filters.search) ?? query.orderBy('displayName', 'asc');
+    return paginateQuery(
+        ordered,
         (doc) => ({ id: doc.id, ...doc.data() } as UserProfile),
+        filters.page ?? 1,
+        filters.limit ?? 100,
     );
-
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        users = users.filter(
-            (user) =>
-                user.displayName.toLowerCase().includes(term) ||
-                user.email.toLowerCase().includes(term),
-        );
-    }
-
-    users.sort((a, b) => a.displayName.localeCompare(b.displayName));
-
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 100;
-    return paginate(users, page, limit);
 };
 
 export const countActiveAdmins = async (excludeUid?: string): Promise<number> => {

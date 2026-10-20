@@ -1,7 +1,7 @@
 import { Role, RolePermission } from '../types';
-import { paginate } from '../utils/pagination';
 import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
+import { applyNamePrefix, normalizeSearchName } from '../utils/search-name';
 
 type RoleUpdateData = Partial<
     Pick<
@@ -45,36 +45,16 @@ export const listRoles = async (filters: {
         ? collection().where('isActive', '==', true)
         : collection();
 
-    // Sin búsqueda pagina Firestore (índice `[isActive, name]`); con búsqueda
-    // hay que ver el conjunto completo para no perder coincidencias.
-    if (!filters.search) {
-        return paginateQuery(
-            query.orderBy('name', 'asc'),
-            (doc) => ({ id: doc.id, ...doc.data() } as Role),
-            filters.page ?? 1,
-            filters.limit ?? 100,
-        );
-    }
-
-    const snapshot = await query.get();
-    let roles = snapshot.docs.map(
+    // Pagina Firestore: sin búsqueda por `name` (índice `[isActive, name]`); con
+    // búsqueda, prefijo del nombre sobre `searchName` (`[isActive, searchName]`).
+    const ordered =
+        applyNamePrefix(query, filters.search) ?? query.orderBy('name', 'asc');
+    return paginateQuery(
+        ordered,
         (doc) => ({ id: doc.id, ...doc.data() } as Role),
+        filters.page ?? 1,
+        filters.limit ?? 100,
     );
-
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        roles = roles.filter(
-            (role) =>
-                role.name.toLowerCase().includes(term) ||
-                role.slug.toLowerCase().includes(term),
-        );
-    }
-
-    roles.sort((a, b) => a.name.localeCompare(b.name));
-
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 100;
-    return paginate(roles, page, limit);
 };
 
 export const createRole = async (data: {
@@ -89,6 +69,7 @@ export const createRole = async (data: {
     const timestamp = now();
     const payload = {
         ...data,
+        searchName: normalizeSearchName(data.name),
         createdAt: timestamp,
         updatedAt: timestamp,
     };
@@ -107,6 +88,9 @@ export const updateRole = async (
 
     await collection().doc(id).update({
         ...data,
+        ...(data.name !== undefined
+            ? { searchName: normalizeSearchName(data.name) }
+            : {}),
         updatedAt: now(),
     });
 

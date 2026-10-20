@@ -1,9 +1,9 @@
 import { Timestamp } from 'firebase-admin/firestore';
 import { Patient } from '../types';
 import { conflict, notFound } from '../utils/errors';
-import { paginate } from '../utils/pagination';
 import { paginateQuery } from '../utils/firestore-pagination';
 import { db, now } from '../utils/firestore';
+import { applyNamePrefix, normalizeSearchName } from '../utils/search-name';
 
 const PATIENTS_COUNTER_ID = 'patients';
 
@@ -37,25 +37,6 @@ export const mapPatient = (
     updatedAt: data.updatedAt as Timestamp,
 });
 
-/**
- * El padrón de un consultorio es chico y la búsqueda es por nombre parcial,
- * folio, teléfono o CURP: se filtra en memoria como el catálogo de productos,
- * porque Firestore no hace `contains` sobre texto.
- */
-const matchesSearch = (patient: Patient, term: string): boolean => {
-    const haystack = [
-        patient.fullName,
-        patient.folio,
-        patient.phone,
-        patient.email,
-        patient.curp,
-    ]
-        .filter((value): value is string => Boolean(value))
-        .join(' ')
-        .toLowerCase();
-    return haystack.includes(term);
-};
-
 export const listPatients = async (filters: {
     search?: string;
     includeInactive?: boolean;
@@ -65,33 +46,22 @@ export const listPatients = async (filters: {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
 
-    // El padrón se ordena por nombre completo. Sin búsqueda la página la
-    // resuelve Firestore (índice `[isActive, fullName]` cuando se excluye a los
-    // inactivos, que es el caso por defecto); la búsqueda por nombre/CURP/
-    // teléfono sigue en memoria porque Firestore no hace coincidencia parcial.
-    if (!filters.search) {
-        const query = filters.includeInactive
-            ? collection()
-            : collection().where('isActive', '==', true);
-        return paginateQuery(
-            query.orderBy('fullName', 'asc'),
-            (doc) => mapPatient(doc.id, doc.data()),
-            page,
-            limit,
-        );
-    }
+    const base = filters.includeInactive
+        ? collection()
+        : collection().where('isActive', '==', true);
 
-    const snapshot = await collection().orderBy('fullName', 'asc').get();
-    let patients = snapshot.docs.map((doc) => mapPatient(doc.id, doc.data()));
-
-    if (!filters.includeInactive) {
-        patients = patients.filter((patient) => patient.isActive);
-    }
-
-    const term = filters.search.trim().toLowerCase();
-    patients = patients.filter((patient) => matchesSearch(patient, term));
-
-    return paginate(patients, page, limit);
+    // Con término: prefijo del nombre completo sobre `searchName` (índice
+    // `[isActive, searchName]` cuando se excluye a los inactivos). Sin término:
+    // padrón por nombre (índice `[isActive, fullName]`). Ambos los resuelve
+    // Firestore; la búsqueda ya no cubre folio, teléfono ni CURP.
+    const query =
+        applyNamePrefix(base, filters.search) ?? base.orderBy('fullName', 'asc');
+    return paginateQuery(
+        query,
+        (doc) => mapPatient(doc.id, doc.data()),
+        page,
+        limit,
+    );
 };
 
 export const getPatientById = async (id: string): Promise<Patient | null> => {
@@ -133,6 +103,7 @@ export const createPatient = async (data: PatientWriteData): Promise<Patient> =>
             ...data,
             folio: buildFolio(nextSequence),
             fullName: `${data.firstName} ${data.lastName}`,
+            searchName: normalizeSearchName(`${data.firstName} ${data.lastName}`),
             createdAt: timestamp,
             updatedAt: timestamp,
         };
@@ -140,7 +111,9 @@ export const createPatient = async (data: PatientWriteData): Promise<Patient> =>
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
         transaction.set(patientRef, payload);
 
-        return { id: patientRef.id, ...payload };
+        // `searchName` es interno: no se devuelve al cliente.
+        const { searchName: _searchName, ...visible } = payload;
+        return { id: patientRef.id, ...visible };
     });
 };
 
@@ -175,6 +148,7 @@ export const updatePatient = async (
         transaction.update(patientRef, {
             ...data,
             fullName: `${firstName} ${lastName}`,
+            searchName: normalizeSearchName(`${firstName} ${lastName}`),
             updatedAt: timestamp,
         });
     });
