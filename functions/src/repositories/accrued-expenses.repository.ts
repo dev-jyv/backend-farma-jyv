@@ -16,6 +16,23 @@ const map = (doc: FirebaseFirestore.DocumentSnapshot): AccruedExpense => {
     return accrued.recurringExpenseId ? { ...accrued, amount: accrued.paidTotal } : accrued;
 };
 
+/**
+ * `true` si el gasto devengado tiene saldo por pagar. Mismo umbral que
+ * `toAccruedView` (un centavo de tolerancia) para que marcador y estado coincidan.
+ */
+export const isAccruedOutstanding = (amount: number, paidTotal: number): boolean =>
+    Math.round((amount - paidTotal) * 100) / 100 > 0.01;
+
+/**
+ * Gastos devengados con saldo por pagar (SPEC 13), para el pasivo del balance.
+ * Lee solo los marcados `outstanding`; un documento sin el marcador no aparece
+ * hasta correr `npm run backfill:outstanding`.
+ */
+export const listOutstandingAccrued = async (): Promise<AccruedExpense[]> => {
+    const snapshot = await collection().where('outstanding', '==', true).get();
+    return snapshot.docs.map(map).filter((accrued) => accrued.amount > 0);
+};
+
 export const listAccrued = async (filters: {
     from?: Date;
     to?: Date;
@@ -62,6 +79,7 @@ export const create = async (input: {
         accruedAt: fromDate(input.accruedAt),
         dueDate: input.dueDate ? fromDate(input.dueDate) : null,
         paidTotal: 0,
+        outstanding: isAccruedOutstanding(input.amount, 0),
         lastPaymentAt: null,
         createdBy: input.createdBy,
         createdByLabel: input.createdByLabel ?? null,
@@ -141,6 +159,7 @@ export const registerPayment = async (
     batch.set(movementRef, movement);
     batch.update(accruedRef, {
         paidTotal,
+        outstanding: isAccruedOutstanding(accrued.amount, paidTotal),
         lastPaymentAt: movement.occurredAt,
         updatedAt: movement.createdAt,
         updatedBy: input.createdBy,
@@ -148,7 +167,12 @@ export const registerPayment = async (
     await batch.commit();
 
     return {
-        accrued: { ...accrued, paidTotal, lastPaymentAt: movement.occurredAt },
+        accrued: {
+            ...accrued,
+            paidTotal,
+            outstanding: isAccruedOutstanding(accrued.amount, paidTotal),
+            lastPaymentAt: movement.occurredAt,
+        },
         movement: { id: movementRef.id, ...movement } as CashMovement,
     };
 };
@@ -183,9 +207,12 @@ export const recordRecurringPayment = async (
         const doc = await transaction.get(accruedRef);
         const paidTotal = roundMoney((doc.exists ? Number(doc.data()!.paidTotal ?? 0) : 0) +
             input.amount);
+        // Un gasto fijo devenga lo que se paga: su importe es su `paidTotal`, así que
+        // nunca queda saldo.
         const changes = {
             amount: paidTotal,
             paidTotal,
+            outstanding: false,
             lastPaymentAt: movement.occurredAt,
         };
 

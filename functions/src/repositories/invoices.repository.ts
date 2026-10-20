@@ -73,6 +73,13 @@ export const getInvoiceById = async (id: string): Promise<Invoice | null> => {
     return mapInvoice(doc);
 };
 
+/**
+ * `true` si queda saldo por pagar. Mismo redondeo a centavos que `settlementOf`
+ * (`invoices.service.ts`) para que el marcador y el saldo calculado coincidan.
+ */
+export const isOutstanding = (totalAmount: number, paidTotal: number): boolean =>
+    Math.round((totalAmount - paidTotal) * 100) / 100 > 0;
+
 export const createInvoice = async (
     id: string,
     data: Omit<Invoice, 'id' | 'createdAt' | 'updatedAt' | 'createdBy' | 'updatedBy'>,
@@ -82,6 +89,11 @@ export const createInvoice = async (
     const timestamp = now();
     const payload = {
         ...data,
+        // Solo las facturas con control de saldo llevan el marcador; las `legacy`
+        // (sin `paidTotal`) no deben aparecer como deuda.
+        ...(data.paidTotal !== undefined
+            ? { outstanding: isOutstanding(data.totalAmount, data.paidTotal) }
+            : {}),
         createdAt: timestamp,
         createdBy: userId,
         updatedAt: timestamp,
@@ -107,16 +119,16 @@ export const createInvoice = async (
 export const generateInvoiceId = (): string => collection().doc().id;
 
 /**
- * Facturas que **sí** llevan control de saldo, para cuentas por pagar.
+ * Facturas con saldo por pagar, para cuentas por pagar y los selectores.
  *
- * El `orderBy('paidTotal')` no es cosmético: Firestore excluye de un `orderBy`
- * los documentos que no tienen el campo, y eso es justo lo que se busca —las
- * facturas anteriores a cuentas por pagar (`legacy`) se dan por saldadas y no
- * deben aparecer como deuda—. El saldo se filtra después en memoria porque
- * Firestore no compara dos campos del mismo documento (`paidTotal < totalAmount`).
+ * Lee solo las marcadas `outstanding` (SPEC 13) en vez de todas las facturas con
+ * control de saldo: las pagadas se acumulan sin aportar nada. Las `legacy` (sin
+ * `paidTotal`) no llevan el marcador y quedan fuera, como se espera. Un documento
+ * con `paidTotal` pero sin marcador no aparece hasta correr
+ * `npm run backfill:outstanding`.
  */
-export const listTrackedInvoices = async (): Promise<Invoice[]> => {
-    const snapshot = await collection().orderBy('paidTotal').get();
+export const listOutstandingInvoices = async (): Promise<Invoice[]> => {
+    const snapshot = await collection().where('outstanding', '==', true).get();
     return snapshot.docs.map((doc) => mapInvoice(doc));
 };
 
@@ -213,15 +225,17 @@ export const voidPayment = async (
             voidedBy: input.userId,
             voidReason: input.reason,
         });
+        const outstanding = isOutstanding(invoice.totalAmount, paidTotal);
         transaction.update(invoiceRef, {
             paidTotal,
+            outstanding,
             updatedAt: timestamp,
             updatedBy: input.userId,
         });
 
         return {
             reversal: { id: reversalRef.id, ...reversal },
-            invoice: { ...invoice, paidTotal },
+            invoice: { ...invoice, paidTotal, outstanding },
         };
     });
 };
@@ -334,8 +348,10 @@ export const registerPayment = async (
         const paidTotal = Math.round((invoice.paidTotal + input.amount) * 100) / 100;
 
         transaction.set(paymentRef, payment);
+        const outstanding = isOutstanding(invoice.totalAmount, paidTotal);
         transaction.update(invoiceRef, {
             paidTotal,
+            outstanding,
             lastPaymentAt: paidAt,
             updatedAt: timestamp,
             updatedBy: input.createdBy,
@@ -343,7 +359,7 @@ export const registerPayment = async (
 
         return {
             payment: { id: paymentRef.id, ...payment },
-            invoice: { ...invoice, paidTotal, lastPaymentAt: paidAt },
+            invoice: { ...invoice, paidTotal, outstanding, lastPaymentAt: paidAt },
         };
     });
 };
