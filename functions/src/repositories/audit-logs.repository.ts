@@ -1,5 +1,7 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { AuditLog } from '../types';
-import { db, now, toTimestamp } from '../utils/firestore';
+import { db, now } from '../utils/firestore';
+import { APP_TIME_ZONE, resolveRangeBoundary } from '../utils/timezone';
 
 const collection = () => db().collection('auditLogs');
 
@@ -52,9 +54,13 @@ export const listAuditLogs = async (filters: {
     } else {
         const from = filters.from ??
             new Date(Date.now() - DEFAULT_LIST_DAYS * 24 * 60 * 60 * 1000).toISOString();
-        query = query.where('createdAt', '>=', toTimestamp(from));
+        query = query.where('createdAt', '>=', Timestamp.fromDate(
+            resolveRangeBoundary(from, APP_TIME_ZONE, 'start'),
+        ));
         if (filters.to) {
-            query = query.where('createdAt', '<=', toTimestamp(filters.to));
+            query = query.where('createdAt', '<=', Timestamp.fromDate(
+                resolveRangeBoundary(filters.to, APP_TIME_ZONE, 'end'),
+            ));
         }
     }
 

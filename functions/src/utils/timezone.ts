@@ -6,6 +6,9 @@
  * la zona vuelve a tener horario de verano.
  */
 
+/** Zona de farmacia y consultorio: un solo valor para lo que imprime o agrupa por día. */
+export const APP_TIME_ZONE = 'America/Mexico_City';
+
 export const getZonedYmd = (ms: number, timeZone: string): string =>
     new Intl.DateTimeFormat('en-CA', {
         timeZone,
@@ -13,6 +16,10 @@ export const getZonedYmd = (ms: number, timeZone: string): string =>
         month: '2-digit',
         day: '2-digit',
     }).format(new Date(ms));
+
+/** Fecha y hora legibles en la zona de la farmacia (la Function corre en UTC). */
+export const formatLocalDateTime = (date: Date, timeZone: string = APP_TIME_ZONE): string =>
+    date.toLocaleString('es-MX', { timeZone });
 
 export const addDaysYmd = (ymd: string, days: number): string => {
     const [year, month, day] = ymd.split('-').map(Number);

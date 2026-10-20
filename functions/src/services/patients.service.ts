@@ -4,6 +4,8 @@ import { createPatientSchema, updatePatientSchema } from '../schemas';
 import { Patient } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
+import { getZonedYmd } from '../utils/timezone';
+import { CLINIC_TIME_ZONE } from '../constants/clinic';
 import * as patientsRepo from '../repositories/patients.repository';
 import * as recordsRepo from '../repositories/medical-records.repository';
 import * as appointmentsRepo from '../repositories/appointments.repository';
@@ -14,10 +16,12 @@ type UpdatePatientInput = z.infer<typeof updatePatientSchema>;
 /** Edad en años cumplidos; la calcula el servidor para que no dependa del reloj del cliente. */
 export const calculateAge = (birthDate: Timestamp, nowMs = Date.now()): number => {
     const birth = birthDate.toDate();
-    const today = new Date(nowMs);
-    let age = today.getUTCFullYear() - birth.getUTCFullYear();
-    const monthDiff = today.getUTCMonth() - birth.getUTCMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getUTCDate() < birth.getUTCDate())) {
+    // "Hoy" es el día del consultorio: entre las 18:00 y las 24:00 locales el día UTC ya
+    // es el siguiente y el paciente sumaría un año la víspera de su cumpleaños.
+    const [year, month, day] = getZonedYmd(nowMs, CLINIC_TIME_ZONE).split('-').map(Number);
+    let age = year - birth.getUTCFullYear();
+    const monthDiff = month - 1 - birth.getUTCMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && day < birth.getUTCDate())) {
         age -= 1;
     }
     return age;

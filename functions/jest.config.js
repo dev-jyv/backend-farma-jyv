@@ -1,3 +1,9 @@
+// Las pruebas corren en UTC como Cloud Functions y la CI. En una máquina con la zona de
+// México (CST) los errores de "día UTC vs día local" se esconden: el código que usa
+// `new Date('2026-08-07T00:00:00')` sin zona pasa en el equipo del desarrollador y falla
+// en producción.
+process.env.TZ = 'UTC';
+
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',

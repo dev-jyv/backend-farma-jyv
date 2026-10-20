@@ -8,12 +8,13 @@ import {
 } from '../types';
 import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORY_ORDER } from '../constants/expenses';
 import { fromCents, toCents } from '../utils/taxes';
+import { APP_TIME_ZONE } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 
-export const REPORTS_TIME_ZONE = 'America/Mexico_City';
+export const REPORTS_TIME_ZONE = APP_TIME_ZONE;
 const MX_UTC_OFFSET = '-06:00';
 
 const PAYMENT_METHODS: PaymentMethod[] = ['cash', 'card', 'transfer', 'mixed'];

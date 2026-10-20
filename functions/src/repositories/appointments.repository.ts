@@ -3,6 +3,8 @@ import { Appointment } from '../types';
 import { notFound } from '../utils/errors';
 import { paginate } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
+import { resolveRangeBoundary } from '../utils/timezone';
+import { CLINIC_TIME_ZONE } from '../constants/clinic';
 
 const collection = () => db().collection('appointments');
 
@@ -72,12 +74,12 @@ const buildRangeQuery = (filters: {
     }
     if (filters.from) {
         query = query.where('startAt', '>=', Timestamp.fromDate(
-            new Date(`${filters.from}T00:00:00`),
+            resolveRangeBoundary(filters.from, CLINIC_TIME_ZONE, 'start'),
         ));
     }
     if (filters.to) {
         query = query.where('startAt', '<=', Timestamp.fromDate(
-            new Date(`${filters.to}T23:59:59.999`),
+            resolveRangeBoundary(filters.to, CLINIC_TIME_ZONE, 'end'),
         ));
     }
     return query;

@@ -8,6 +8,7 @@ import {
     isSaleServiceItem,
 } from '../types';
 import { fromCents, toCents } from '../utils/taxes';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
@@ -145,7 +146,7 @@ export const getSalesSummary = async (
         method.cents += toCents(sale.total);
         byMethod.set(sale.paymentMethod, method);
 
-        const date = sale.createdAt.toDate().toISOString().slice(0, 10);
+        const date = getZonedYmd(sale.createdAt.toMillis(), APP_TIME_ZONE);
         const day = byDay.get(date) ?? { salesCount: 0, cents: 0 };
         day.salesCount += 1;
         day.cents += toCents(sale.total);

@@ -1,4 +1,5 @@
 import { Batch } from '../types';
+import { APP_TIME_ZONE, getZonedYmd } from './timezone';
 
 export interface BatchAllocation {
     batchId: string;
@@ -10,13 +11,14 @@ export interface AllocateFefoOptions {
     now?: Date;
 }
 
+/**
+ * La caducidad se guarda como medianoche UTC del día indicado y el lote sigue
+ * vendible todo ese día. "Hoy" es el día de la farmacia: con el reloj del proceso
+ * (UTC) un lote que caduca hoy se rechazaba desde las 18:00 hora de México.
+ */
 const isExpired = (batch: Batch, reference: Date): boolean => {
-    const startOfToday = new Date(
-        reference.getFullYear(),
-        reference.getMonth(),
-        reference.getDate(),
-    );
-    return batch.expiryDate.toDate() < startOfToday;
+    const expiryYmd = batch.expiryDate.toDate().toISOString().slice(0, 10);
+    return expiryYmd < getZonedYmd(reference.getTime(), APP_TIME_ZONE);
 };
 
 export const allocateFefo = (
