@@ -31,6 +31,7 @@ import * as batchesRepo from '../repositories/batches.repository';
 import * as pharmacyServicesRepo from '../repositories/pharmacy-services.repository';
 import * as serviceProvidersRepo from '../repositories/service-providers.repository';
 import * as salesRepo from '../repositories/sales.repository';
+import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as customersRepo from '../repositories/customers.repository';
 import * as promotionsRepo from '../repositories/promotions.repository';
@@ -1110,6 +1111,11 @@ export const createSale = async (input: {
         }
 
         transaction.set(saleRef, saleData);
+        dailyStatsRepo.applySaleDelta(
+            transaction,
+            { createdAt: timestamp.toDate(), totalCents: toCents(saleData.total) },
+            1,
+        );
         return { id: saleRef.id, ...saleData };
     });
 
@@ -1342,6 +1348,12 @@ export const voidSale = async (
         }
 
         transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author });
+        // Resta del día en que se hizo la venta, no del día de la anulación.
+        dailyStatsRepo.applySaleDelta(
+            transaction,
+            { createdAt: existing.createdAt.toDate(), totalCents: toCents(existing.total) },
+            -1,
+        );
 
         return { ...existing, voidedAt: timestamp, voidedBy: author };
     });

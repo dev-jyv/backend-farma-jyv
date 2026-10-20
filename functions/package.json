@@ -13,6 +13,7 @@
     "deploy:dev": "node scripts/check-env-split.mjs && npm run build && firebase deploy --project dev --only functions,firestore:rules,firestore:indexes,storage",
     "migrate:roles": "npm run build && node lib/scripts/migrate-roles.js",
     "backfill:denormalized": "npm run build && node lib/scripts/backfill-denormalized.js",
+    "backfill:daily-stats": "npm run build && node lib/scripts/backfill-daily-stats.js",
     "logs": "firebase functions:log",
     "test": "firebase emulators:exec --only firestore \"jest\"",
     "test:rules": "jest --config jest.rules.config.js",
