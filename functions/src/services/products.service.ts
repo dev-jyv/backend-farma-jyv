@@ -33,6 +33,7 @@ import * as salesRepo from '../repositories/sales.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import { AuditActor, diffFields, recordAudit } from './audit.service';
 import { retirePromotionsBrokenByPrice } from './promotions.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 const loadSuppliersSummary = async (
     supplierIds: string[],
@@ -397,18 +398,17 @@ export const listProducts = async (filters: {
         const exact = await productsRepo.findProductBySkuOrBarcode(search);
         if (exact) {
             items = [exact];
-        } else if (filters.categoryId) {
-            items = await productsRepo.listProducts({
-                categoryId: filters.categoryId,
-                activeOnly: filters.activeOnly,
-            });
-            items = items.filter((product) => matchesProductSearch(product, search));
         } else {
-            items = await productsRepo.listProducts({
-                activeOnly: filters.activeOnly,
-                limit: 500,
-            });
-            items = items.filter((product) => matchesProductSearch(product, search));
+            // La búsqueda de texto corre sobre el catálogo compartido (una lectura
+            // por instancia y minuto) y no sobre los primeros 500 documentos: ese
+            // corte perdía coincidencias más allá del 500 y costaba 500 lecturas
+            // por tecleo. Las altas y ediciones invalidan el snapshot.
+            const catalog = await catalogSnapshot.listProducts({ activeOnly: filters.activeOnly });
+            items = catalog.filter(
+                (product) =>
+                    (!filters.categoryId || product.categoryId === filters.categoryId) &&
+                    matchesProductSearch(product, search),
+            );
         }
     } else {
         items = await productsRepo.listProducts({
@@ -638,6 +638,7 @@ export const createProduct = async (input: {
         roleSlug: input.actor?.roleSlug ?? null,
     });
 
+    catalogSnapshot.clearCatalogSnapshot();
     return created;
 };
 
@@ -701,6 +702,7 @@ export const bulkCreateProducts = async (
         }
     }
 
+    catalogSnapshot.clearCatalogSnapshot();
     return { created, errors };
 };
 
@@ -771,6 +773,7 @@ export const updateProduct = async (
     if (updated.salePrice !== existing.salePrice) {
         await retirePromotionsBrokenByPrice(updated, actor);
     }
+    catalogSnapshot.clearCatalogSnapshot();
     return updated;
 };
 
@@ -825,6 +828,7 @@ export const updateProductPrices = async (
         }
     }
 
+    catalogSnapshot.clearCatalogSnapshot();
     return updated;
 };
 
@@ -843,5 +847,6 @@ export const deleteProduct = async (id: string, actor?: AuditActor): Promise<Pro
         userId: actor?.userId ?? 'system',
         roleSlug: actor?.roleSlug ?? null,
     });
+    catalogSnapshot.clearCatalogSnapshot();
     return updated;
 };
