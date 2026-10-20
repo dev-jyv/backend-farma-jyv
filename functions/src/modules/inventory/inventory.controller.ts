@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Query, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { z } from 'zod';
 import {
@@ -18,6 +18,8 @@ import {
     listMovementsQuerySchema,
 } from '../../schemas';
 import * as inventoryService from '../../services/inventory.service';
+import { runIdempotentEntry } from '../../services/entry-idempotency.service';
+import { idempotencyKeySchema } from '../../schemas/sales';
 import * as alertsService from '../../services/inventory-alerts.service';
 import * as countsService from '../../services/inventory-counts.service';
 import * as controlledService from '../../services/controlled.service';
@@ -44,6 +46,15 @@ type ListInventoryCountsQuery = z.infer<typeof listInventoryCountsQuerySchema>;
 type ListControlledLedgerQuery = z.infer<typeof listControlledLedgerQuerySchema>;
 type ScanCodeInput = z.infer<typeof scanCodeSchema>;
 type ExportControlledLedgerQuery = z.infer<typeof exportControlledLedgerQuerySchema>;
+
+/** La llave puede llegar en el body o en el header estándar `Idempotency-Key`. */
+const resolveIdempotencyKey = (
+    bodyKey: string | undefined,
+    header: string | undefined,
+): string | undefined => {
+    const raw = bodyKey ?? header;
+    return raw ? new ZodValidationPipe(idempotencyKeySchema).transform(raw) : undefined;
+};
 
 @Controller('inventory')
 export class InventoryController {
@@ -178,11 +189,20 @@ export class InventoryController {
     async recordEntry(
         @Body(new ZodValidationPipe(inventoryEntrySchema)) body: InventoryEntryInput,
         @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
-        const entry = await inventoryService.recordEntry({
-            invoiceId: body.invoiceId,
-            items: body.products,
+        const entry = await runIdempotentEntry({
             userId: user.uid,
+            scope: 'invoice-entry',
+            key: resolveIdempotencyKey(body.idempotencyKey, idempotencyHeader),
+            // La entrada se guarda en una sola transacción: si falla, no quedó nada.
+            releaseOnFailure: true,
+            run: () =>
+                inventoryService.recordEntry({
+                    invoiceId: body.invoiceId,
+                    items: body.products,
+                    userId: user.uid,
+                }),
         });
         return { data: entry };
     }
@@ -196,6 +216,7 @@ export class InventoryController {
     async recordDirectEntry(
         @Body(new ZodValidationPipe(directInventoryEntrySchema)) body: DirectInventoryEntryInput,
         @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
         const hasInlineProduct = body.items.some((item) => item.product);
         if (hasInlineProduct) {
@@ -210,11 +231,21 @@ export class InventoryController {
             }
         }
 
-        const entry = await inventoryService.recordDirectEntry({
-            supplierId: body.supplierId,
-            notes: body.notes,
-            items: body.items,
+        const entry = await runIdempotentEntry({
             userId: user.uid,
+            scope: 'direct-entry',
+            key: resolveIdempotencyKey(body.idempotencyKey, idempotencyHeader),
+            // El alta de un producto nuevo ocurre antes y fuera de la transacción de
+            // la entrada: tras un fallo con productos inline la llave se conserva y
+            // el reintento pide revisión en vez de duplicar altas.
+            releaseOnFailure: !hasInlineProduct,
+            run: () =>
+                inventoryService.recordDirectEntry({
+                    supplierId: body.supplierId,
+                    notes: body.notes,
+                    items: body.items,
+                    userId: user.uid,
+                }),
         });
         return { data: entry };
     }
