@@ -18,7 +18,10 @@ import {
     listMovementsQuerySchema,
 } from '../../schemas';
 import * as inventoryService from '../../services/inventory.service';
-import { bulkCreateEntriesIdempotent, runIdempotentEntry } from '../../services/entry-idempotency.service';
+import {
+    bulkCreateEntriesIdempotent,
+    runIdempotentEntry,
+} from '../../services/entry-idempotency.service';
 import { idempotencyKeySchema } from '../../schemas/sales';
 import * as alertsService from '../../services/inventory-alerts.service';
 import * as countsService from '../../services/inventory-counts.service';
