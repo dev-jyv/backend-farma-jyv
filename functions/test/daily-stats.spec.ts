@@ -5,6 +5,7 @@ import * as dailyStatsRepo from '../src/repositories/daily-stats.repository';
 import * as productsRepo from '../src/repositories/products.repository';
 import * as dailyStatsService from '../src/services/daily-stats.service';
 import * as dashboardCharts from '../src/services/dashboard-charts.service';
+import * as salesReports from '../src/services/sales-reports.service';
 import * as salesService from '../src/services/sales.service';
 import { toTimestamp } from '../src/utils/firestore';
 
@@ -87,6 +88,32 @@ describe('dailyStats', () => {
 
         expect(await dailyStatsService.rebuildDailyStats()).toBe(2);
         expect(await dailyStatsService.diffDailyStats()).toEqual([]);
+    });
+
+    it('el job de comparación registra una alerta con el día afectado', async () => {
+        await sellOne(10);
+        expect(await dailyStatsService.diffRecentDailyStats(7)).toEqual([]);
+
+        await dailyStatsRepo.setDay({ ymd: today(), salesTotalCents: 1, salesCount: 99 });
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        try {
+            const diffs = await dailyStatsService.checkDailyStatsIntegrity(7);
+            expect(diffs.map((diff) => diff.ymd)).toEqual([today()]);
+            expect(errorSpy).toHaveBeenCalledTimes(1);
+            expect(String(errorSpy.mock.calls[0][0])).toContain(today());
+        } finally {
+            errorSpy.mockRestore();
+            await dailyStatsService.rebuildDailyStats();
+        }
+    });
+
+    it('el total del mes anterior del reporte mensual sale de dailyStats', async () => {
+        await dailyStatsRepo.setDay({ ymd: '2031-03-10', salesTotalCents: 12345, salesCount: 3 });
+        await dailyStatsRepo.setDay({ ymd: '2031-03-31', salesTotalCents: 1000, salesCount: 1 });
+        await dailyStatsRepo.setDay({ ymd: '2031-04-01', salesTotalCents: 99999, salesCount: 1 });
+        const report = await salesReports.buildMonthlyReport(2031, 4);
+        expect(report.previousMonth.total).toBe(133.45);
+        await dailyStatsService.rebuildDailyStats();
     });
 
     it('la serie del tablero desde dailyStats coincide con la de las ventas', async () => {
