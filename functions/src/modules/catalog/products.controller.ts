@@ -41,6 +41,7 @@ export class ProductsController {
             sku: query.sku,
             activeOnly: query.activeOnly !== 'false',
             updatedSince: query.updatedSince,
+            after: query.after,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,
         });

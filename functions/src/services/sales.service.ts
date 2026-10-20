@@ -1431,6 +1431,8 @@ export const listSales = async (filters: {
     promotionReview?: boolean;
     page?: number;
     limit?: number;
+    /** Cursor opaco de la página anterior (SPEC 08); no aplica con `search`/`promotionReview`. */
+    after?: string;
     /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
     requesterId?: string;
     requesterRoleSlug?: string | null;
@@ -1447,6 +1449,25 @@ export const listSales = async (filters: {
     }
 
     const { page, limit } = parsePagination(filters.page, filters.limit);
+
+    // Sin búsqueda de texto ni filtro de revisión, Firestore resuelve la página
+    // con cursor: ~`limit` lecturas en cualquier profundidad (SPEC 08).
+    if (!filters.search && !filters.promotionReview) {
+        const result = await salesRepo.listSalesPage({
+            from: filters.from,
+            to: filters.to,
+            cashSessionId: filters.cashSessionId,
+            includeVoided: filters.includeVoided,
+            page,
+            limit,
+            after: filters.after,
+        });
+        return {
+            items: result.items,
+            meta: buildListMeta(page, limit, result.total, result.nextCursor),
+        };
+    }
+
     const { items: sales } = await salesRepo.listSales({
         from: filters.from,
         to: filters.to,
@@ -1456,7 +1477,7 @@ export const listSales = async (filters: {
         // memoria y necesita ver toda la ventana; sin ellos basta traer hasta la
         // profundidad de página pedida. Son pocas y la ventana tiene fecha, así
         // que no vale un índice `[promotionReview, createdAt]`.
-        maxDocs: filters.search || filters.promotionReview ? undefined : page * limit,
+        maxDocs: undefined,
     });
 
     let filtered = sales;

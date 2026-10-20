@@ -1,5 +1,6 @@
 import * as categoriesRepo from '../src/repositories/categories.repository';
 import * as productsRepo from '../src/repositories/products.repository';
+import { clearPaginationCountCache } from '../src/utils/firestore-pagination';
 import * as productsService from '../src/services/products.service';
 
 /**
@@ -51,6 +52,9 @@ const namesOf = (items: Array<{ name: string }>, suffix: string) =>
     items.map((item) => item.name.replace(`-${suffix}`, ''));
 
 describe('listProducts (página resuelta en Firestore)', () => {
+    // El count() se cachea 60 s por filtros; cada caso arma su propio catálogo.
+    beforeEach(() => clearPaginationCountCache());
+
     it('pagina en orden de nombre sin repetir ni omitir en los bordes', async () => {
         const { categoryId, suffix } = await seedCatalog();
 
@@ -76,6 +80,8 @@ describe('listProducts (página resuelta en Firestore)', () => {
         const { categoryId, suffix } = await seedCatalog();
         const { items } = await productsService.listProducts({ categoryId, page: 1, limit: 10 });
         await productsRepo.updateProduct(items[0].id, { isActive: false });
+        // El total cacheado (60 s) es el de antes de la edición.
+        clearPaginationCountCache();
 
         const activos = await productsService.listProducts({ categoryId, page: 1, limit: 10 });
         expect(activos.meta.total).toBe(NAMES.length - 1);

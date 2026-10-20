@@ -5,6 +5,8 @@ export interface ListMeta {
     limit: number;
     total: number;
     totalPages: number;
+    /** Cursor opaco de la página siguiente (SPEC 08); ausente en la última página. */
+    nextCursor?: string;
 }
 
 export const MAX_PAGE_LIMIT = 100;
@@ -50,11 +52,17 @@ export const paginate = <T>(
     };
 };
 
-export const buildListMeta = (page: number, limit: number, total: number): ListMeta => ({
+export const buildListMeta = (
+    page: number,
+    limit: number,
+    total: number,
+    nextCursor?: string,
+): ListMeta => ({
     page,
     limit,
     total,
     totalPages: total === 0 ? 0 : Math.ceil(total / limit),
+    ...(nextCursor ? { nextCursor } : {}),
 });
 
 export const buildListResult = <T>(

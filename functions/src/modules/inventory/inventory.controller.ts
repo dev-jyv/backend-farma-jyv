@@ -307,6 +307,7 @@ export class InventoryController {
             from: query.from,
             to: query.to,
             search: query.search,
+            after: query.after,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,
         });

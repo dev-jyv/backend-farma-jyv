@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDate, money, paginationFields, positiveMoney, qty } from './common';
+import { cursorField, isoDate, money, paginationFields, positiveMoney, qty } from './common';
 import { createProductSchema } from './catalog';
 import { idempotencyKeySchema } from './sales';
 
@@ -96,6 +96,7 @@ export const listMovementsQuerySchema = z.object({
     from: z.string().optional(),
     to: z.string().optional(),
     ...paginationFields,
+    ...cursorField,
 });
 
 export const listEntriesQuerySchema = z.object({

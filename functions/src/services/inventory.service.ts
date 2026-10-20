@@ -712,8 +712,28 @@ export const listMovements = async (filters: {
     search?: string;
     page?: number;
     limit?: number;
+    /** Cursor opaco de la página anterior (SPEC 08); no aplica con `search`. */
+    after?: string;
 }): Promise<{ items: StockMovementWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
+
+    if (!filters.search) {
+        const result = await movementsRepo.listStockMovementsPage({
+            productId: filters.productId,
+            type: filters.type,
+            from: filters.from,
+            to: filters.to,
+            page,
+            limit,
+            after: filters.after,
+        });
+        const caches = createEnrichCaches();
+        const items = await Promise.all(
+            result.items.map((movement) => enrichMovement(movement, caches)),
+        );
+        return { items, meta: buildListMeta(page, limit, result.total, result.nextCursor) };
+    }
+
     const movements = await movementsRepo.listStockMovements({
         productId: filters.productId,
         type: filters.type,
@@ -722,17 +742,6 @@ export const listMovements = async (filters: {
     });
 
     const caches = createEnrichCaches();
-
-    if (!filters.search) {
-        const paginated = paginate(movements, page, limit);
-        const items = await Promise.all(
-            paginated.items.map((movement) => enrichMovement(movement, caches)),
-        );
-        return {
-            items,
-            meta: buildListMeta(page, limit, paginated.total),
-        };
-    }
 
     let items = await Promise.all(
         movements.map((movement) => enrichMovement(movement, caches)),
