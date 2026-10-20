@@ -99,6 +99,9 @@ export const paginationFields = {
     search: z.string().optional(),
 };
 
+/** Cursor opaco de paginación (SPEC 08). Solo los listados migrados lo leen. */
+export const cursorField = { after: z.string().max(2048).optional() };
+
 export const idParamSchema = z.object({
     id: z.string().min(1),
 });

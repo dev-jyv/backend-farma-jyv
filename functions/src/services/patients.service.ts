@@ -59,17 +59,17 @@ export const getPatientOverview = async (id: string): Promise<{
     lastVisitAt: Timestamp | null;
 }> => {
     const patient = await getPatient(id);
-    const [recordCount, upcomingAppointments, lastRecords] = await Promise.all([
+    const [recordCount, upcomingAppointments, lastVisitAt] = await Promise.all([
         recordsRepo.countRecordsByPatient(id),
         appointmentsRepo.countUpcomingByPatient(id),
-        recordsRepo.listMedicalRecords({ patientId: id, page: 1, limit: 1 }),
+        recordsRepo.getLastVisitAt(id),
     ]);
 
     return {
         patient,
         recordCount,
         upcomingAppointments,
-        lastVisitAt: lastRecords.items[0]?.visitedAt ?? null,
+        lastVisitAt: lastVisitAt,
     };
 };
 

@@ -88,6 +88,8 @@ export interface RolePermission {
 
 export interface Role {
     id: string;
+    /** Nombre en minúsculas sin acentos, para búsqueda por prefijo (SPEC 10). */
+    searchName?: string;
     name: string;
     slug: string;
     description?: string;
@@ -280,6 +282,8 @@ export interface Product {
 
 export interface Customer {
     id: string;
+    /** Nombre en minúsculas sin acentos, para búsqueda por prefijo (SPEC 10). */
+    searchName?: string;
     name: string;
     rfc?: string;
     phone?: string;
@@ -1498,6 +1502,8 @@ export interface DirectCharge {
 
 export interface UserProfile {
     id: string;
+    /** Nombre en minúsculas sin acentos, para búsqueda por prefijo (SPEC 10). */
+    searchName?: string;
     email: string;
     displayName: string;
     roleId: string;
@@ -1549,6 +1555,8 @@ export interface PatientEmergencyContact {
 
 export interface Patient {
     id: string;
+    /** Nombre en minúsculas sin acentos, para búsqueda por prefijo (SPEC 10). */
+    searchName?: string;
     /** Folio de expediente visible al paciente: `EXP-000001`. */
     folio: string;
     firstName: string;

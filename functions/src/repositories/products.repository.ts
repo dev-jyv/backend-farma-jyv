@@ -1,6 +1,6 @@
 import { Product } from '../types';
 import { conflict } from '../utils/errors';
-import { paginateQuery } from '../utils/firestore-pagination';
+import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('products');
@@ -100,7 +100,9 @@ export const listProductsPage = async (filters: {
     activeOnly?: boolean;
     page: number;
     limit: number;
-}): Promise<{ items: Product[]; total: number }> => {
+    /** Cursor de la página anterior (SPEC 08). */
+    after?: string;
+}): Promise<PaginatedResult<Product>> => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.activeOnly !== false) {
@@ -115,6 +117,11 @@ export const listProductsPage = async (filters: {
         (doc) => ({ id: doc.id, ...doc.data() } as Product),
         filters.page,
         filters.limit,
+        {
+            after: filters.after,
+            order: [{ field: 'name', direction: 'asc' }],
+            countCacheKey: `products:${filters.activeOnly !== false}:${filters.categoryId ?? ''}`,
+        },
     );
 };
 
@@ -159,6 +166,25 @@ export const getProductById = async (id: string): Promise<Product | null> => {
         return null;
     }
     return { id: doc.id, ...doc.data() } as Product;
+};
+
+/**
+ * Varios productos con una sola lectura en bloque (`getAll`). Devuelve un mapa
+ * id -> producto; los ids que no existen no aparecen.
+ */
+export const getProductsByIds = async (ids: string[]): Promise<Map<string, Product>> => {
+    const unique = [...new Set(ids)];
+    const result = new Map<string, Product>();
+    if (unique.length === 0) {
+        return result;
+    }
+    const docs = await db().getAll(...unique.map((id) => collection().doc(id)));
+    for (const doc of docs) {
+        if (doc.exists) {
+            result.set(doc.id, { id: doc.id, ...doc.data() } as Product);
+        }
+    }
+    return result;
 };
 
 export const createProduct = async (

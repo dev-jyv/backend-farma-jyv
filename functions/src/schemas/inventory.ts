@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDate, money, paginationFields, positiveMoney, qty } from './common';
+import { cursorField, isoDate, money, paginationFields, positiveMoney, qty } from './common';
 import { createProductSchema } from './catalog';
 import { idempotencyKeySchema } from './sales';
 
@@ -30,6 +30,8 @@ export const bulkEntryGroupSchema = z.object({
 
 export const bulkCreateEntriesSchema = z.object({
     entries: z.array(bulkEntryGroupSchema).min(1).max(100),
+    /** Una llave por sesión de carga; cada grupo deriva la suya del contenido. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 });
 
 export const inventoryEntrySchema = z.object({
@@ -96,6 +98,7 @@ export const listMovementsQuerySchema = z.object({
     from: z.string().optional(),
     to: z.string().optional(),
     ...paginationFields,
+    ...cursorField,
 });
 
 export const listEntriesQuerySchema = z.object({
@@ -215,4 +218,6 @@ export const createSupplierPaymentSchema = z.object({
     notes: z.string().trim().max(300).optional(),
     /** Cuenta de la que sale el pago; solo aplica si no fue en efectivo. */
     bankAccountId: z.string().min(1).optional(),
+    /** Llave por captura; el header `Idempotency-Key` es la alternativa. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 });

@@ -1,4 +1,6 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
+import {
+    Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Query,
+} from '@nestjs/common';
 import { z } from 'zod';
 import {
     createInvoiceSchema,
@@ -9,6 +11,10 @@ import {
     voidSupplierPaymentSchema,
 } from '../../schemas';
 import * as invoicesService from '../../services/invoices.service';
+import {
+    runIdempotentSupplierPayment,
+} from '../../services/supplier-payment-idempotency.service';
+import { idempotencyKeySchema } from '../../schemas/sales';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
@@ -49,6 +55,14 @@ export class InvoicesController {
         return { data: result.items, meta: result.meta };
     }
 
+    /** Lista ligera de facturas con saldo para los selectores (declarada antes de `:id`). */
+    @Get('options')
+    @RequirePermission('invoices', 'read')
+    async options() {
+        const result = await invoicesService.listInvoiceOptions();
+        return { data: result.items, meta: { total: result.total, truncated: result.truncated } };
+    }
+
     /** Abonos de una factura, del más reciente al más viejo. */
     @Get(':id/payments')
     @RequirePermission('invoices', 'read')
@@ -64,14 +78,25 @@ export class InvoicesController {
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(createSupplierPaymentSchema)) body: CreateSupplierPaymentInput,
         @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
-        const result = await invoicesService.registerPayment(params.id, {
-            ...body,
+        const { idempotencyKey, ...payment } = body;
+        const rawKey = idempotencyKey ?? idempotencyHeader;
+        const key = rawKey
+            ? new ZodValidationPipe(idempotencyKeySchema).transform(rawKey)
+            : undefined;
+        const result = await runIdempotentSupplierPayment({
             userId: user.uid,
-            roleSlug: user.role.slug,
-            // La etiqueta la pone el servidor: es quién firma la salida de
-            // dinero, así que aceptarla del cuerpo permitiría atribuirla a otro.
-            userLabel: user.displayName || user.email,
+            invoiceId: params.id,
+            key,
+            run: () => invoicesService.registerPayment(params.id, {
+                ...payment,
+                userId: user.uid,
+                roleSlug: user.role.slug,
+                // La etiqueta la pone el servidor: es quién firma la salida de
+                // dinero, así que aceptarla del cuerpo permitiría atribuirla a otro.
+                userLabel: user.displayName || user.email,
+            }),
         });
         return { data: result.payment, invoice: result.invoice };
     }

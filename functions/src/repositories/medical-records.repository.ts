@@ -74,6 +74,16 @@ export const listMedicalRecords = async (filters: {
     return paginate(records, page, limit);
 };
 
+/** Última visita con una lectura (índice `[patientId, visitedAt DESC]`). */
+export const getLastVisitAt = async (patientId: string): Promise<Timestamp | null> => {
+    const snapshot = await collection()
+        .where('patientId', '==', patientId)
+        .orderBy('visitedAt', 'desc')
+        .limit(1)
+        .get();
+    return snapshot.empty ? null : (snapshot.docs[0].data().visitedAt as Timestamp);
+};
+
 export const getMedicalRecordById = async (id: string): Promise<MedicalRecord | null> => {
     const doc = await collection().doc(id).get();
     if (!doc.exists) {

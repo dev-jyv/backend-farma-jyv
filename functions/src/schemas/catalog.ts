@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { money, optionalNonEmpty, paginationFields, parseableDate, phoneMx } from './common';
+import {
+    cursorField,
+    money,
+    optionalNonEmpty,
+    paginationFields,
+    parseableDate,
+    phoneMx,
+} from './common';
 import { MAX_IEPS_RATE } from '../constants/taxes';
 import { CONTROLLED_GROUPS } from '../constants/controlled';
 
@@ -159,6 +166,7 @@ export const listProductsQuerySchema = z.object({
      */
     sku: z.string().trim().min(1).max(64).optional(),
     ...paginationFields,
+    ...cursorField,
 });
 
 /** Sin `page`/`limit`: el pull local-first del POS trae todo en una sola llamada. */

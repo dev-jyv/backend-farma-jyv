@@ -1,6 +1,7 @@
 import { Customer } from '../types';
 import { notFound } from '../utils/errors';
-import { paginate } from '../utils/pagination';
+import { paginateQuery } from '../utils/firestore-pagination';
+import { applyNamePrefix, normalizeSearchName } from '../utils/search-name';
 import { db, now } from '../utils/firestore';
 
 const collection = () => db().collection('customers');
@@ -12,23 +13,17 @@ export const listCustomers = async (filters: {
 }): Promise<{ items: Customer[]; total: number }> => {
     const page = filters.page ?? 1;
     const limit = filters.limit ?? 50;
-    const snapshot = await collection().orderBy('name', 'asc').get();
-    let customers = snapshot.docs.map(
+    // Con término: rango por prefijo sobre `searchName` (índice simple). Sin
+    // término: listado por nombre, resuelto en Firestore.
+    const query =
+        applyNamePrefix(collection(), filters.search) ??
+        collection().orderBy('name', 'asc');
+    return paginateQuery(
+        query,
         (doc) => ({ id: doc.id, ...doc.data() } as Customer),
+        page,
+        limit,
     );
-
-    if (filters.search) {
-        const term = filters.search.toLowerCase();
-        customers = customers.filter(
-            (customer) =>
-                customer.name.toLowerCase().includes(term) ||
-                (customer.rfc?.toLowerCase().includes(term) ?? false) ||
-                (customer.phone?.toLowerCase().includes(term) ?? false) ||
-                (customer.email?.toLowerCase().includes(term) ?? false),
-        );
-    }
-
-    return paginate(customers, page, limit);
 };
 
 export const getCustomerById = async (id: string): Promise<Customer | null> => {
@@ -45,6 +40,7 @@ export const createCustomer = async (
     const timestamp = now();
     const payload = {
         ...data,
+        searchName: normalizeSearchName(data.name),
         createdAt: timestamp,
         updatedAt: timestamp,
     };
@@ -57,7 +53,15 @@ export const updateCustomer = async (
     data: Partial<Pick<Customer, 'name' | 'rfc' | 'phone' | 'email'>>,
 ): Promise<Customer> => {
     const timestamp = now();
-    await collection().doc(id).update({ ...data, updatedAt: timestamp });
+    await collection()
+        .doc(id)
+        .update({
+            ...data,
+            ...(data.name !== undefined
+                ? { searchName: normalizeSearchName(data.name) }
+                : {}),
+            updatedAt: timestamp,
+        });
     const updated = await getCustomerById(id);
     if (!updated) {
         throw notFound('Cliente');

@@ -458,6 +458,12 @@ export const createSale = async (input: {
     let closedPromotionName: string | null = null;
     const outOfWindowPromotions: string[] = [];
 
+    // Lecturas previas en bloque: solo sirven para validar y armar el plan. La
+    // transacción vuelve a leer lotes y productos y es la que decide.
+    const preloadedProducts = await productsRepo.getProductsByIds(
+        input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
+    );
+
     for (const item of input.items) {
         if (item.quantity <= 0) {
             throw badRequest('Cantidad inválida en un ítem de venta');
@@ -533,7 +539,7 @@ export const createSale = async (input: {
 
         let product = productCache.get(item.productId);
         if (!product) {
-            product = await productsRepo.getProductById(item.productId);
+            product = preloadedProducts.get(item.productId) ?? null;
             productCache.set(item.productId, product);
         }
 
@@ -551,7 +557,9 @@ export const createSale = async (input: {
 
         let batches = batchCache.get(item.productId);
         if (!batches) {
-            batches = await batchesRepo.listBatchesByProduct(item.productId);
+            batches = await batchesRepo.listBatchesByProduct(item.productId, {
+                onlyAvailable: true,
+            });
             batchCache.set(item.productId, batches);
             batchStockBefore.set(
                 item.productId,
@@ -1431,6 +1439,8 @@ export const listSales = async (filters: {
     promotionReview?: boolean;
     page?: number;
     limit?: number;
+    /** Cursor opaco de la página anterior (SPEC 08); no aplica con `search`/`promotionReview`. */
+    after?: string;
     /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
     requesterId?: string;
     requesterRoleSlug?: string | null;
@@ -1447,6 +1457,25 @@ export const listSales = async (filters: {
     }
 
     const { page, limit } = parsePagination(filters.page, filters.limit);
+
+    // Sin búsqueda de texto ni filtro de revisión, Firestore resuelve la página
+    // con cursor: ~`limit` lecturas en cualquier profundidad (SPEC 08).
+    if (!filters.search && !filters.promotionReview) {
+        const result = await salesRepo.listSalesPage({
+            from: filters.from,
+            to: filters.to,
+            cashSessionId: filters.cashSessionId,
+            includeVoided: filters.includeVoided,
+            page,
+            limit,
+            after: filters.after,
+        });
+        return {
+            items: result.items,
+            meta: buildListMeta(page, limit, result.total, result.nextCursor),
+        };
+    }
+
     const { items: sales } = await salesRepo.listSales({
         from: filters.from,
         to: filters.to,
@@ -1456,7 +1485,7 @@ export const listSales = async (filters: {
         // memoria y necesita ver toda la ventana; sin ellos basta traer hasta la
         // profundidad de página pedida. Son pocas y la ventana tiene fecha, así
         // que no vale un índice `[promotionReview, createdAt]`.
-        maxDocs: filters.search || filters.promotionReview ? undefined : page * limit,
+        maxDocs: undefined,
     });
 
     let filtered = sales;

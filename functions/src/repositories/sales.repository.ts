@@ -1,5 +1,6 @@
 import { Sale, isSaleProductItem } from '../types';
 import { db, now, toTimestamp } from '../utils/firestore';
+import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 
 const collection = () => db().collection('sales');
 
@@ -231,21 +232,13 @@ export const listSaleTotalsBetween = async (
         .map((data) => ({ createdAt: data.createdAt.toDate(), total: Number(data.total ?? 0) }));
 };
 
-export const listSales = async (filters: {
+/** Filtros comunes a `listSales` y `listSalesPage`. */
+const buildSalesQuery = (filters: {
     productId?: string;
     from?: string;
     to?: string;
     cashSessionId?: string;
-    includeVoided?: boolean;
-    /**
-     * Acota la lectura de Firestore a los `maxDocs` documentos más recientes
-     * (ordenados por `createdAt desc`) en vez de traer toda la ventana de
-     * fechas. Solo es seguro pasarlo cuando ningún filtro posterior en
-     * memoria (búsqueda de texto) necesita ver el rango completo para no
-     * perder coincidencias fuera del recorte.
-     */
-    maxDocs?: number;
-}): Promise<{ items: Sale[]; total: number }> => {
+}): FirebaseFirestore.Query => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.cashSessionId) {
@@ -266,7 +259,72 @@ export const listSales = async (filters: {
         query = query.where('productIds', 'array-contains', filters.productId);
     }
 
-    query = query.orderBy('createdAt', 'desc');
+    return query.orderBy('createdAt', 'desc');
+};
+
+/**
+ * Página de ventas por cursor (SPEC 08): lee ~`limit` documentos sin importar la
+ * profundidad. Las anuladas se descartan en memoria (`voidedAt` en la consulta
+ * obligaría a un índice por combinación), así que `total` cuenta la ventana
+ * completa, anuladas incluidas, cuando `includeVoided` es falso.
+ * Ventana por defecto: `DEFAULT_LIST_DAYS`, igual que `listSales`.
+ */
+export const listSalesPage = async (filters: {
+    productId?: string;
+    from?: string;
+    to?: string;
+    cashSessionId?: string;
+    includeVoided?: boolean;
+    page: number;
+    limit: number;
+    after?: string;
+}): Promise<PaginatedResult<Sale>> => {
+    const query = buildSalesQuery(filters);
+    const countCacheKey = [
+        'sales',
+        filters.cashSessionId ?? '',
+        // Sin `from` la ventana por defecto se mueve con el reloj: no es parte de la clave.
+        filters.from ?? 'default',
+        filters.to ?? '',
+        filters.productId ?? '',
+    ].join(':');
+
+    return paginateQuery(
+        query,
+        (doc) => mapSale(doc.id, doc.data()),
+        filters.page,
+        filters.limit,
+        {
+            after: filters.after,
+            order: [{ field: 'createdAt', direction: 'desc' }],
+            countCacheKey,
+            keep: (sale) =>
+                (filters.includeVoided || sale.voidedAt === null) &&
+                (!filters.productId ||
+                    !!sale.productIds?.includes(filters.productId) ||
+                    sale.items.some(
+                        (item) => isSaleProductItem(item) && item.productId === filters.productId,
+                    )),
+        },
+    );
+};
+
+export const listSales = async (filters: {
+    productId?: string;
+    from?: string;
+    to?: string;
+    cashSessionId?: string;
+    includeVoided?: boolean;
+    /**
+     * Acota la lectura de Firestore a los `maxDocs` documentos más recientes
+     * (ordenados por `createdAt desc`) en vez de traer toda la ventana de
+     * fechas. Solo es seguro pasarlo cuando ningún filtro posterior en
+     * memoria (búsqueda de texto) necesita ver el rango completo para no
+     * perder coincidencias fuera del recorte.
+     */
+    maxDocs?: number;
+}): Promise<{ items: Sale[]; total: number }> => {
+    let query = buildSalesQuery(filters);
 
     if (filters.maxDocs !== undefined) {
         query = query.limit(filters.maxDocs);
