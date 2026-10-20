@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 import { Timestamp } from 'firebase-admin/firestore';
 import * as categoriesRepo from '../src/repositories/categories.repository';
 import * as invoicesRepo from '../src/repositories/invoices.repository';
