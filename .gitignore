@@ -85,3 +85,5 @@ security-reports/
 .emulator-data/
 
 node_modules
+
+.worktrees/
