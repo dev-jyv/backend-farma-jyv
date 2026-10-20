@@ -217,7 +217,7 @@ describe('paginación por cursor (SPEC 08)', () => {
         expect(ids.every((id) => !other.docs.some((d) => d.id === id))).toBe(true);
     });
 
-    it('si el documento del cursor se elimina, continúa con el siguiente valor de orden', async () => {
+    it('si el documento del cursor se elimina, sigue con el siguiente valor', async () => {
         const session = await seedSales(6, 1);
         const first = await salesRepo.listSalesPage({ cashSessionId: session, page: 1, limit: 2 });
         const cursorId = JSON.parse(
