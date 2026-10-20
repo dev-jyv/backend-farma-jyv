@@ -1,6 +1,7 @@
 import { CashSession, CashSessionSummary } from '../types';
 import { formatCurrency } from '../utils/currency';
 import { escapeHtml } from '../utils/html';
+import { formatLocalDateTime } from '../utils/timezone';
 import { getReceiptStore } from '../config/env';
 import { ReceiptWidth } from './receipts.service';
 
@@ -150,7 +151,7 @@ export const renderCashReportHtml = (input: {
     <div class="muted">Turno: ${escapeHtml(input.session.id)}</div>
     <div class="muted">Abierto por: ${escapeHtml(input.session.openedBy)}</div>
     <div class="muted">Emitido por: ${escapeHtml(input.issuedBy)}</div>
-    <div class="muted">${escapeHtml(input.issuedAt.toLocaleString('es-MX'))}</div>
+    <div class="muted">${escapeHtml(formatLocalDateTime(input.issuedAt))}</div>
     <hr>
     <table>${buildRows(rows)}</table>
     ${servicesRows.length

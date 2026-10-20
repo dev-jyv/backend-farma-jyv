@@ -11,6 +11,7 @@ import { getReceiptStore } from '../config/env';
 import { formatCurrency } from '../utils/currency';
 import { escapeHtml } from '../utils/html';
 import { fromCents, toCents } from '../utils/taxes';
+import { formatLocalDateTime } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import { notFound } from '../utils/errors';
@@ -273,7 +274,7 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
     ${storeLines.map((line) => `<div class="center muted">${escapeHtml(line)}</div>`).join('')}
     <hr>
     <div>${receipt.kind === 'sale' ? 'Ticket' : 'Devolución'}: ${escapeHtml(receipt.folio)}</div>
-    <div class="muted">${escapeHtml(receipt.issuedAt.toDate().toLocaleString('es-MX'))}</div>
+    <div class="muted">${escapeHtml(formatLocalDateTime(receipt.issuedAt.toDate()))}</div>
     <div class="muted">Cajero: ${escapeHtml(receipt.cashierId)}</div>
     ${receipt.customerName
         ? `<div class="muted">Cliente: ${escapeHtml(receipt.customerName)}</div>`

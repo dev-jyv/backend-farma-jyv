@@ -224,4 +224,37 @@ describe('appointments.service - agenda', () => {
         expect(occupied).toHaveLength(0);
         expect(availability.slots.length).toBeGreaterThan(0);
     });
+    it('el calendario incluye las citas de la tarde (18:00-20:00 hora de México)', async () => {
+        const [patient, doctorId] = await Promise.all([
+            createPatientFixture(),
+            createDoctorFixture(),
+        ]);
+        // 18:30 locales son las 00:30 UTC del día siguiente: con el día UTC la cita
+        // caía fuera del calendario de su propio día y el hueco salía "libre".
+        const startAt = nextMondayAt(18, 30);
+        const date = startAt.slice(0, 10);
+
+        await appointmentsService.createAppointment({
+            patientId: patient.id,
+            doctorId,
+            startAt,
+            durationMinutes: 30,
+        }, actor);
+
+        const calendar = await appointmentsService.getCalendar({
+            from: date,
+            to: date,
+            doctorId,
+        });
+        expect(calendar.map((item) => item.startAt.toMillis()))
+            .toContain(new Date(startAt).getTime());
+
+        const availability = await appointmentsService.getAvailability({
+            date,
+            doctorId,
+            durationMinutes: 30,
+        });
+        expect(availability.slots.map((slot) => new Date(slot.startAt).getTime()))
+            .not.toContain(new Date(startAt).getTime());
+    });
 });

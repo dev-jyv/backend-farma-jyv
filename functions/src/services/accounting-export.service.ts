@@ -1,6 +1,7 @@
 import { EXPENSE_CATEGORY_LABELS } from '../constants/expenses';
 import { CashMovement } from '../types';
 import { formatCurrency } from '../utils/currency';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 import { FixedAssetView } from './accounting-core.service';
 import { BalanceSheet, IncomeStatement, PayablesReport } from './accounting.service';
 import { renderHtmlToPdf } from './report-pdf.service';
@@ -51,8 +52,18 @@ const isoDay = (value: Date | string | null | undefined): string => {
     return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 };
 
+/**
+ * Los extremos del periodo son instantes (inicio y fin del día en México, este
+ * último ~05:59Z del día siguiente), no fechas de calendario: se rotulan con el día
+ * local, no el UTC, o "al 31 de octubre" se imprimiría "al 1 de noviembre".
+ */
+const localDay = (value: string): string => {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? '' : getZonedYmd(ms, APP_TIME_ZONE);
+};
+
 const periodLabel = (from: string, to: string): string =>
-    `Del ${isoDay(from)} al ${isoDay(to)}`;
+    `Del ${localDay(from)} al ${localDay(to)}`;
 
 const EXTERNAL_SPENDING_LABEL = 'Retiros de segunda caja y gastos externos';
 

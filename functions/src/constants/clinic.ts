@@ -4,7 +4,9 @@
  * doctor, mover a una colección `clinicSettings` y leerlos desde el servicio.
  */
 
-export const CLINIC_TIME_ZONE = 'America/Mexico_City';
+import { APP_TIME_ZONE } from '../utils/timezone';
+
+export const CLINIC_TIME_ZONE = APP_TIME_ZONE;
 
 /** Bloque de atención en minutos desde la medianoche local. */
 export interface WorkingBlock {
