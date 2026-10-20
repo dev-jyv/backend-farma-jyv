@@ -18,7 +18,10 @@ import {
     listMovementsQuerySchema,
 } from '../../schemas';
 import * as inventoryService from '../../services/inventory.service';
-import { runIdempotentEntry } from '../../services/entry-idempotency.service';
+import {
+    bulkCreateEntriesIdempotent,
+    runIdempotentEntry,
+} from '../../services/entry-idempotency.service';
 import { idempotencyKeySchema } from '../../schemas/sales';
 import * as alertsService from '../../services/inventory-alerts.service';
 import * as countsService from '../../services/inventory-counts.service';
@@ -256,8 +259,13 @@ export class InventoryController {
     async bulkCreateEntries(
         @Body(new ZodValidationPipe(bulkCreateEntriesSchema)) body: BulkCreateEntriesInput,
         @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
-        const result = await inventoryService.bulkCreateEntries(body.entries, user.uid);
+        const result = await bulkCreateEntriesIdempotent({
+            userId: user.uid,
+            key: resolveIdempotencyKey(body.idempotencyKey, idempotencyHeader),
+            entries: body.entries,
+        });
         return { data: result };
     }
 

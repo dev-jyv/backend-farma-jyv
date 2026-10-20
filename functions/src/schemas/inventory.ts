@@ -30,6 +30,8 @@ export const bulkEntryGroupSchema = z.object({
 
 export const bulkCreateEntriesSchema = z.object({
     entries: z.array(bulkEntryGroupSchema).min(1).max(100),
+    /** Una llave por sesión de carga; cada grupo deriva la suya del contenido. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 });
 
 export const inventoryEntrySchema = z.object({

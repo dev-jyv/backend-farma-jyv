@@ -1,4 +1,5 @@
-import { InventoryEntryWithDetails } from '../types';
+import { createHash } from 'crypto';
+import { BulkCreateEntriesResult, InventoryEntryWithDetails } from '../types';
 import { conflict } from '../utils/errors';
 import { db } from '../utils/firestore';
 import * as inventoryService from './inventory.service';
@@ -82,4 +83,99 @@ export const runIdempotentEntry = async (input: {
         }
         throw error;
     }
+};
+
+export type BulkEntryGroupInput = Parameters<typeof inventoryService.bulkCreateEntries>[0][number];
+
+/** JSON canónico: llaves ordenadas, sin `undefined`, para que el hash no dependa del orden. */
+const canonical = (value: unknown): string => {
+    if (Array.isArray(value)) {
+        return `[${value.map(canonical).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .filter(([, v]) => v !== undefined)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+        return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+    }
+    return JSON.stringify(value) ?? 'null';
+};
+
+/** Huella del contenido del grupo; reordenar sus ítems no la cambia. */
+export const hashEntryGroup = (group: BulkEntryGroupInput): string => {
+    const items = group.items.map(canonical).sort();
+    return createHash('sha256')
+        .update(
+            canonical({
+                invoiceId: group.invoiceId,
+                supplierId: group.supplierId,
+                notes: group.notes,
+                items,
+            }),
+        )
+        .digest('hex');
+};
+
+/**
+ * Carga masiva con llave: cada grupo usa `sha256(<llave>:<hash del grupo>)` como
+ * llave propia, así un reintento (o el archivo corregido y re-subido completo)
+ * no vuelve a aplicar los grupos ya registrados. Sin llave, igual que antes.
+ */
+export const bulkCreateEntriesIdempotent = async (input: {
+    userId: string;
+    key?: string;
+    entries: BulkEntryGroupInput[];
+}): Promise<BulkCreateEntriesResult> => {
+    if (!input.key) {
+        return inventoryService.bulkCreateEntries(input.entries, input.userId);
+    }
+
+    const created: InventoryEntryWithDetails[] = [];
+    const errors: BulkCreateEntriesResult['errors'] = [];
+    // Dos grupos idénticos en la misma carga son dos entradas distintas: se
+    // distinguen por su número de ocurrencia (la primera conserva el hash base).
+    const seen = new Map<string, number>();
+
+    for (let index = 0; index < input.entries.length; index++) {
+        const group = input.entries[index];
+        const base = hashEntryGroup(group);
+        const occurrence = seen.get(base) ?? 0;
+        seen.set(base, occurrence + 1);
+        const groupHash = occurrence === 0 ? base : `${base}#${occurrence}`;
+        const key = createHash('sha256').update(`${input.key}:${groupHash}`).digest('hex');
+
+        try {
+            const entry = await runIdempotentEntry({
+                userId: input.userId,
+                scope: group.invoiceId ? 'invoice-entry' : 'direct-entry',
+                key,
+                // Los grupos masivos solo traen productId (sin alta inline): un
+                // fallo no deja nada escrito, se libera la llave para reintentar.
+                releaseOnFailure: !group.items.some(
+                    (item) => (item as { product?: unknown }).product,
+                ),
+                run: () =>
+                    group.invoiceId
+                        ? inventoryService.recordEntry({
+                            invoiceId: group.invoiceId,
+                            items: group.items,
+                            userId: input.userId,
+                        })
+                        : inventoryService.recordDirectEntry({
+                            supplierId: group.supplierId!,
+                            notes: group.notes,
+                            items: group.items,
+                            userId: input.userId,
+                        }),
+            });
+            created.push(entry);
+        } catch (error) {
+            errors.push({
+                index,
+                message: error instanceof Error ? error.message : 'No se pudo registrar la entrada',
+            });
+        }
+    }
+
+    return { created, errors };
 };
