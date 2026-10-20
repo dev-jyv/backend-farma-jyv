@@ -11,6 +11,7 @@ import { fromCents, toCents } from '../utils/taxes';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
+import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 
 export const REPORTS_TIME_ZONE = 'America/Mexico_City';
 const MX_UTC_OFFSET = '-06:00';
@@ -475,6 +476,15 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
     };
 };
 
+/** Total vendido (sin anuladas) de un mes calendario local, desde `dailyStats`. */
+const previousMonthTotal = async (year: number, month: number): Promise<number> => {
+    const first = `${year}-${String(month).padStart(2, '0')}-01`;
+    const next = month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
+    const nextFirst = `${next.year}-${String(next.month).padStart(2, '0')}-01`;
+    const days = await dailyStatsRepo.listDailyStats(first, nextFirst);
+    return fromCents(days.reduce((cents, day) => cents + day.salesTotalCents, 0));
+};
+
 export const buildMonthlyReport = async (
     year: number,
     month: number,
@@ -487,17 +497,14 @@ export const buildMonthlyReport = async (
     // Mes anterior: solo se necesita el total para la comparación, no el detalle.
     const previous = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
     const previousPadded = String(previous.month).padStart(2, '0');
-    const previousDays = new Date(Date.UTC(previous.year, previous.month, 0)).getUTCDate();
 
-    const [sales, expenseMovements, refundTotal, previousSales] = await Promise.all([
+    // El total del mes anterior sale del agregado diario (~31 lecturas) en vez
+    // de leer todas las ventas del mes.
+    const [sales, expenseMovements, refundTotal, previousTotal] = await Promise.all([
         listSalesBetween(from, to),
         listExpensesBetween(from, to),
         sumRefunds(from, to),
-        listSalesBetween(
-            `${previous.year}-${previousPadded}-01T00:00:00.000${MX_UTC_OFFSET}`,
-            `${previous.year}-${previousPadded}-${previousDays}` +
-                `T23:59:59.999${MX_UTC_OFFSET}`,
-        ),
+        previousMonthTotal(previous.year, previous.month),
     ]);
 
     const byDayMap = new Map<string, ReportDayRow>();
@@ -522,7 +529,6 @@ export const buildMonthlyReport = async (
 
     const totals = buildTotals(sales);
     const expenses = buildExpenses(expenseMovements);
-    const previousTotal = buildTotals(previousSales).totalAmount;
     const daysWithSales = byDay.length;
 
     return {
