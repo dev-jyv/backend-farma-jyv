@@ -25,7 +25,10 @@ describe('búsqueda de productos sobre el snapshot del catálogo', () => {
     afterEach(() => jest.restoreAllMocks());
 
     it('ya no lee un corte de 500 documentos: pide el catálogo completo', async () => {
-        const category = await categoriesRepo.createCategory({ name: unique('Cat'), isActive: true });
+        const category = await categoriesRepo.createCategory({
+            name: unique('Cat'),
+            isActive: true,
+        });
         const token = unique('zzfind');
         await create(`Paracetamol ${token}`, category.id);
         const spy = jest.spyOn(productsRepo, 'listProducts');
