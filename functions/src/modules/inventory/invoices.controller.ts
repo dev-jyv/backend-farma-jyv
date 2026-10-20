@@ -49,6 +49,14 @@ export class InvoicesController {
         return { data: result.items, meta: result.meta };
     }
 
+    /** Lista ligera de facturas con saldo para los selectores (declarada antes de `:id`). */
+    @Get('options')
+    @RequirePermission('invoices', 'read')
+    async options() {
+        const result = await invoicesService.listInvoiceOptions();
+        return { data: result.items, meta: { total: result.total, truncated: result.truncated } };
+    }
+
     /** Abonos de una factura, del más reciente al más viejo. */
     @Get(':id/payments')
     @RequirePermission('invoices', 'read')

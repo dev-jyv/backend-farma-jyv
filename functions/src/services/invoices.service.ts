@@ -10,6 +10,7 @@ import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { getFileMetadata, getFileUrl } from '../utils/storage';
 import { toTimestamp } from '../utils/firestore';
+import type { Timestamp } from 'firebase-admin/firestore';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import { assertPeriodOpen } from './accounting-core.service';
@@ -183,6 +184,42 @@ export const listInvoicesUpTo = async (
     );
     const items = await enrichInvoicesPage(invoices.slice(0, cap), false);
     return { items, total: invoices.length };
+};
+
+/** Máximo de facturas del selector; más allá se avisa con `truncated`. */
+export const INVOICE_OPTIONS_MAX = 2000;
+
+export type InvoiceOption = {
+    id: string;
+    invoiceNumber: string;
+    supplierId: string;
+    invoiceDate: Timestamp;
+    balance: number;
+};
+
+/**
+ * Facturas con saldo pendiente en forma ligera, para los selectores. El saldo
+ * sale de `settlementOf`, el mismo cálculo que la pantalla de facturas. Las
+ * facturas `legacy` se dan por saldadas y no aparecen. Una sola lectura de
+ * `listTrackedInvoices`, ordenadas de la más reciente a la más vieja.
+ */
+export const listInvoiceOptions = async (
+    max: number = INVOICE_OPTIONS_MAX,
+): Promise<{ items: InvoiceOption[]; total: number; truncated: boolean }> => {
+    const asOf = new Date();
+    const pending = (await invoicesRepo.listTrackedInvoices())
+        .map((invoice) => ({ invoice, balance: settlementOf(invoice, asOf).balance }))
+        .filter(({ balance }) => balance > CENT)
+        .sort((a, b) => b.invoice.invoiceDate.toMillis() - a.invoice.invoiceDate.toMillis());
+
+    const items = pending.slice(0, max).map(({ invoice, balance }) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        supplierId: invoice.supplierId,
+        invoiceDate: invoice.invoiceDate,
+        balance,
+    }));
+    return { items, total: pending.length, truncated: pending.length > max };
 };
 
 export const getInvoice = async (id: string): Promise<InvoiceWithDetails> => {
