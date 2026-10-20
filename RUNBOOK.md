@@ -124,6 +124,25 @@ del código.
 
 ---
 
+## 2b. Backfill de `searchName` (SPEC 10) — **antes de desplegar la lectura**
+
+Clientes, pacientes, usuarios y roles buscan por prefijo sobre `searchName`
+(nombre en minúsculas sin acentos). Un documento sin ese campo **no aparece** en
+las búsquedas, así que el orden es obligatorio:
+
+1. Desplegar índices (`firestore:indexes`): `users`, `roles` y `patients` ganan
+   compuestos con `searchName`. Esperar a que estén `READY`.
+2. Lectura y escritura van en el mismo deploy, así que el backfill se corre justo
+   antes del deploy y se repite (idempotente) justo después para cubrir las altas
+   hechas en la ventana.
+3. Respaldo de pacientes (antes del backfill): `gcloud firestore export gs://<bucket>/pre-search-name --collection-ids=patients`.
+4. `npm run backfill:search-name -- --dry-run` (reporta cuántos faltan por colección).
+5. `npm run backfill:search-name -- --confirm-backup` (o `--collection=customers`
+   etc. para ir por partes; `patients` exige `--confirm-backup`).
+6. Desplegar funciones. Repetir el paso 5 y verificar con `--dry-run` que reporta 0.
+
+La búsqueda ya no cubre RFC, teléfono, correo, folio ni CURP: solo prefijo del nombre.
+
 ## 3. Llave de idempotencia obligatoria en ventas
 
 Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock. El
