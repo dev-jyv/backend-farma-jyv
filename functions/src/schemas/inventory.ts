@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { isoDate, money, paginationFields, positiveMoney, qty } from './common';
 import { createProductSchema } from './catalog';
+import { idempotencyKeySchema } from './sales';
 
 const expiryDateSchema = isoDate.refine(
     (value) => value >= new Date().toISOString().slice(0, 10),
@@ -35,12 +36,15 @@ export const inventoryEntrySchema = z.object({
     invoiceId: z.string().min(1),
     products: z.array(inventoryEntryProductSchema).min(1).optional(),
     items: z.array(inventoryEntryProductSchema).min(1).optional(),
+    /** Una llave por captura, reenviada sin cambios en cada reintento. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 }).refine(
     (data) => Boolean(data.products?.length || data.items?.length),
     { message: 'Debe incluir al menos un producto' },
 ).transform((data) => ({
     invoiceId: data.invoiceId,
     products: data.products ?? data.items ?? [],
+    idempotencyKey: data.idempotencyKey,
 }));
 
 export const directInventoryEntryItemSchema = z
@@ -61,6 +65,7 @@ export const directInventoryEntrySchema = z.object({
     supplierId: z.string().min(1),
     notes: z.string().optional(),
     items: z.array(directInventoryEntryItemSchema).min(1),
+    idempotencyKey: idempotencyKeySchema.optional(),
 });
 
 export const inventoryExitSchema = z.object({
