@@ -1,10 +1,9 @@
 import { Product, Sale, isSaleProductItem } from '../types';
 import { fromCents, resolveIepsRate, resolveIvaRate, toCents } from '../utils/taxes';
-import * as batchesRepo from '../repositories/batches.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
-import * as productsRepo from '../repositories/products.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import { ExpiryBucket, expiryBucketOf } from './insights.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * Foto del inventario para quien decide compras: cuánto dinero hay en anaquel
@@ -271,8 +270,8 @@ export const getInventorySummary = async (
     const windowDays = options.windowDays ?? DEFAULT_WINDOW_DAYS;
     const asOf = new Date();
     const [products, batches, categories, { items: sales }] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: false }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: false }),
+        catalogSnapshot.listBatchesWithStock(),
         categoriesRepo.listCategories({}),
         salesRepo.listSales({
             from: new Date(asOf.getTime() - windowDays * MS_PER_DAY).toISOString(),

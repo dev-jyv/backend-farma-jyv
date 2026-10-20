@@ -1,9 +1,8 @@
 import { Batch, Product, Sale, isSaleProductItem } from '../types';
 import { fromCents, toCents } from '../utils/taxes';
 import * as salesRepo from '../repositories/sales.repository';
-import * as productsRepo from '../repositories/products.repository';
-import * as batchesRepo from '../repositories/batches.repository';
 import { REPORTS_TIME_ZONE } from './sales-reports.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * Indicadores de gestión que no caben en los reportes de venta: ABC, horas
@@ -222,8 +221,8 @@ const productNameMap = (products: Product[]): Map<string, string> =>
 
 export const getExpiryReport = async (options: { limit?: number } = {}): Promise<ExpiryReport> => {
     const [batches, products] = await Promise.all([
-        batchesRepo.listBatchesWithStock(),
-        productsRepo.listProducts({ activeOnly: false }),
+        catalogSnapshot.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: false }),
     ]);
     return bucketExpiry(
         batches.map((batch) => ({ ...batch, expiryDate: batch.expiryDate.toDate() })),
@@ -294,8 +293,8 @@ export const getReorderSuggestions = async (options: {
     const windowDays = options.windowDays ?? 30;
     const coverDays = options.coverDays ?? 7;
     const [products, batches, { items: sales }] = await Promise.all([
-        productsRepo.listProducts({ activeOnly: true }),
-        batchesRepo.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
         salesRepo.listSales({ from: new Date(Date.now() - windowDays * MS_PER_DAY).toISOString() }),
     ]);
 

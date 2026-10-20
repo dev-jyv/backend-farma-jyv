@@ -43,6 +43,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 Consultorio (`modules/clinic`, áreas de permiso `patients` / `medicalRecords` / `appointments`):
 - `GET|POST /v1/patients`, `GET|PATCH /v1/patients/:id`, `GET /v1/patients/:id/overview` (conteos para la ficha), `GET /v1/patients/:id/records` (línea de tiempo, exige `medicalRecords:read`).
 - `GET|POST /v1/medical-records`, `GET|PATCH /v1/medical-records/:id`, `POST /v1/medical-records/:id/attachments` (multipart campo `file`, guarda en `clinical/<patientId>/<recordId>/`), `GET /v1/medical-records/:id/attachments/:attachmentId/url` (URL firmada bajo demanda, no persistida), `DELETE` del adjunto.
+- `GET /v1/doctor/inventory?updatedSince=` (`medicalRecords:read`, admin/doctor): `{ data: Item[], meta: { serverTime, full, total } }`; Item sin precios/costos/proveedores/lotes. Sin `updatedSince` = activos completos (caché 60 s); con él = delta incluyendo inactivos (`full:false`).
 - `GET|POST /v1/appointments`, `GET /v1/appointments/calendar?from&to&doctorId` (rango completo, tope 92 días), `GET /v1/appointments/availability?date&doctorId&durationMinutes` (huecos libres), `GET /v1/appointments/doctors` (existe porque `GET /users` exige `users:read`, que el doctor no tiene), `GET /v1/appointments/:id`, `PATCH /v1/appointments/:id`, `POST :id/reschedule`, `POST :id/status`.
 
 Caja: `GET|POST /v1/cash-sessions/:id/x-report` (vista previa / lectura registrada), `GET /v1/cash-sessions/:id/x-readings`; `POST :id/close` (Z) devuelve también `html`.

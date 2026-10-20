@@ -2,6 +2,7 @@ import * as accruedRepo from '../repositories/accrued-expenses.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as recurringRepo from '../repositories/recurring-expenses.repository';
+import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 import * as salesRepo from '../repositories/sales.repository';
 import { CashMovement, ExpenseCategory, RecurringExpense } from '../types';
 import { fromCents, toCents } from '../utils/taxes';
@@ -112,6 +113,41 @@ export const buildSeries = (
 const isPosExpense = (movement: CashMovement): boolean =>
     movement.type === 'expense' && movement.cashSessionId !== null;
 
+/**
+ * Serie de ventas a partir de `dailyStats`: ~365 lecturas para un año en vez de
+ * una por venta. Mismos periodos y relleno con ceros que `buildSeries`.
+ */
+export const buildSeriesFromStats = (
+    days: dailyStatsRepo.DailyStats[],
+    granularity: ChartGranularity,
+    periods: string[],
+): ChartSeries => {
+    const buckets = new Map(periods.map((period) => [period, { cents: 0, count: 0 }]));
+    for (const day of days) {
+        const bucket = buckets.get(day.ymd.slice(0, KEY_LENGTH[granularity]));
+        if (bucket) {
+            bucket.cents += day.salesTotalCents;
+            bucket.count += day.salesCount;
+        }
+    }
+    const points = periods.map((period) => {
+        const bucket = buckets.get(period)!;
+        return { period, total: fromCents(bucket.cents), count: bucket.count };
+    });
+    return {
+        points,
+        total: fromCents(points.reduce((sum, point) => sum + toCents(point.total), 0)),
+        count: points.reduce((sum, point) => sum + point.count, 0),
+    };
+};
+
+/**
+ * Hasta verificar en producción que el agregado coincide con las ventas
+ * (`npm run backfill:daily-stats -- --dry-run`), la serie sigue saliendo de las
+ * ventas. Se activa con `DASHBOARD_SALES_FROM_STATS=true`.
+ */
+const salesFromStatsEnabled = (): boolean => process.env.DASHBOARD_SALES_FROM_STATS === 'true';
+
 export const getDashboardCharts = async (query: {
     granularity: ChartGranularity;
     period?: string;
@@ -122,8 +158,10 @@ export const getDashboardCharts = async (query: {
     const start = new Date(zonedStartOfDayMs(from, REPORTS_TIME_ZONE));
     const end = new Date(zonedStartOfDayMs(to, REPORTS_TIME_ZONE));
 
-    const [sales, invoices, movements] = await Promise.all([
-        salesRepo.listSaleTotalsBetween(start, end),
+    const fromStats = salesFromStatsEnabled();
+    const [sales, statsDays, invoices, movements] = await Promise.all([
+        fromStats ? Promise.resolve([]) : salesRepo.listSaleTotalsBetween(start, end),
+        fromStats ? dailyStatsRepo.listDailyStats(from, to) : Promise.resolve([]),
         invoicesRepo.listInvoices({
             from: start.toISOString(),
             to: new Date(end.getTime() - 1).toISOString(),
@@ -138,11 +176,13 @@ export const getDashboardCharts = async (query: {
         granularity: query.granularity,
         from,
         to: addDaysYmd(to, -1),
-        sales: buildSeries(
-            sales.map((sale) => ({ date: sale.createdAt, amount: sale.total })),
-            query.granularity,
-            periods,
-        ),
+        sales: fromStats
+            ? buildSeriesFromStats(statsDays, query.granularity, periods)
+            : buildSeries(
+                sales.map((sale) => ({ date: sale.createdAt, amount: sale.total })),
+                query.granularity,
+                periods,
+            ),
         purchases: buildSeries(
             invoices.map((invoice) => ({
                 date: invoice.invoiceDate.toDate(),

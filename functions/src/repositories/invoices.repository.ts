@@ -15,12 +15,14 @@ const mapInvoice = (doc: FirebaseFirestore.DocumentSnapshot): Invoice => {
     } as Invoice;
 };
 
-export const listInvoices = async (filters: {
+type InvoiceFilters = {
     supplierId?: string;
     from?: string;
     to?: string;
     hasInvoice?: boolean;
-}): Promise<Invoice[]> => {
+};
+
+const buildInvoicesQuery = (filters: InvoiceFilters): FirebaseFirestore.Query => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.supplierId) {
@@ -39,10 +41,28 @@ export const listInvoices = async (filters: {
         query = query.where('invoiceDate', '<=', toTimestamp(filters.to));
     }
 
-    query = query.orderBy('invoiceDate', 'desc');
+    return query;
+};
+
+/** `maxDocs` acota la lectura a las facturas más recientes (por `invoiceDate`). */
+export const listInvoices = async (
+    filters: InvoiceFilters,
+    maxDocs?: number,
+): Promise<Invoice[]> => {
+    let query = buildInvoicesQuery(filters).orderBy('invoiceDate', 'desc');
+
+    if (maxDocs !== undefined) {
+        query = query.limit(maxDocs);
+    }
 
     const snapshot = await query.get();
     return snapshot.docs.map((doc) => mapInvoice(doc));
+};
+
+/** Total que coincide con los filtros: `count()` cobra ~1 lectura por cada 1,000 docs. */
+export const countInvoices = async (filters: InvoiceFilters): Promise<number> => {
+    const snapshot = await buildInvoicesQuery(filters).count().get();
+    return snapshot.data().count;
 };
 
 export const getInvoiceById = async (id: string): Promise<Invoice | null> => {

@@ -9,7 +9,6 @@ import * as batchesRepo from '../repositories/batches.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as categoriesRepo from '../repositories/categories.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
-import * as productsRepo from '../repositories/products.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as salesRepo from '../repositories/sales.repository';
@@ -37,6 +36,7 @@ import {
 } from './accounting-core.service';
 import { getBankTotal } from './bank.service';
 import { settlementOf } from './invoices.service';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /**
  * Contabilidad (solo admin).
@@ -419,11 +419,13 @@ const buildWarnings = (
 const buildStatement = async (
     from: string,
     to: string,
+    /** Lecturas de la misma ventana que el llamador ya hizo; evita repetirlas. */
+    loaded?: { sales: Sale[]; returns: SaleReturn[]; movements: CashMovement[] },
 ): Promise<Omit<IncomeStatement, 'previous'>> => {
-    const [{ items: sales }, returns, movements, invoices, assets, accrued] = await Promise.all([
-        salesRepo.listSales({ from, to }),
-        returnsRepo.listSaleReturns({ from, to }),
-        cashMovementsRepo.listForPeriod({ from, to }),
+    const [sales, returns, movements, invoices, assets, accrued] = await Promise.all([
+        loaded ? loaded.sales : salesRepo.listSales({ from, to }).then((result) => result.items),
+        loaded ? loaded.returns : returnsRepo.listSaleReturns({ from, to }),
+        loaded ? loaded.movements : cashMovementsRepo.listForPeriod({ from, to }),
         // Por fecha de factura, no de pago: el IVA se acredita cuando se compra.
         // La compra en sí no es gasto del periodo —entra al inventario y sale
         // como costo al venderse—, así que de aquí solo se usa el impuesto.
@@ -655,8 +657,8 @@ const MISSING_FOR_BALANCE_SHEET: FinancialPosition['missing'] = [
  */
 export const getFinancialPosition = async (): Promise<FinancialPosition> => {
     const [batches, products, categories, payables] = await Promise.all([
-        batchesRepo.listBatchesWithStock(),
-        productsRepo.listProducts({}),
+        catalogSnapshot.listBatchesWithStock(),
+        catalogSnapshot.listProducts({}),
         categoriesRepo.listCategories({}),
         getPayables(),
     ]);
@@ -805,18 +807,32 @@ export const getBalanceSheet = async (filters: { asOf?: string } = {}): Promise<
     const fromIso = from.toISOString();
     const asOfIso = asOf.toISOString();
 
+    // Ventas, devoluciones y movimientos se leen una vez y alimentan tanto el flujo
+    // de efectivo de abajo como el estado de resultados: son la misma ventana.
+    const salesPromise = salesRepo.listSales({ from: fromIso, to: asOfIso });
+    const returnsPromise = returnsRepo.listSaleReturns({ from: fromIso, to: asOfIso });
+    const movementsPromise = cashMovementsRepo.listForPeriod({ from: fromIso, to: asOfIso });
+    const statementPromise = Promise.all([salesPromise, returnsPromise, movementsPromise]).then(
+        ([salesResult, loadedReturns, loadedMovements]) =>
+            buildStatement(fromIso, asOfIso, {
+                sales: salesResult.items,
+                returns: loadedReturns,
+                movements: loadedMovements,
+            }),
+    );
+
     const [
         sales, returns, movements, payments, equity, assets, position, statement, bank,
         accruedTotal,
     ] = await Promise.all([
-        salesRepo.listSales({ from: fromIso, to: asOfIso }),
-        returnsRepo.listSaleReturns({ from: fromIso, to: asOfIso }),
-        cashMovementsRepo.listForPeriod({ from: fromIso, to: asOfIso }),
+        salesPromise,
+        returnsPromise,
+        movementsPromise,
         invoicesRepo.listPaymentsForPeriod({ from, to: asOf }),
         listEquityMovements({ from: fromIso, to: asOfIso }),
         listFixedAssets({ includeDisposed: false, asOf: asOfIso }),
         getFinancialPosition(),
-        buildStatement(fromIso, asOfIso),
+        statementPromise,
         getBankTotal(asOf),
         getAccruedTotal(asOf),
     ]);

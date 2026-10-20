@@ -6,8 +6,7 @@ import {
     StockAlert,
 } from '../types';
 import { now } from '../utils/firestore';
-import * as batchesRepo from '../repositories/batches.repository';
-import * as productsRepo from '../repositories/products.repository';
+import * as catalogSnapshot from './catalog-snapshot.service';
 
 /** Ventanas de caducidad por omisión; son las que usa cualquier POS de farmacia. */
 export const DEFAULT_EXPIRY_WINDOWS = [30, 60, 90];
@@ -39,8 +38,8 @@ export interface ExpiringLot {
  */
 export const listExpiringLots = async (withinDays: number): Promise<ExpiringLot[]> => {
     const [batches, products] = await Promise.all([
-        batchesRepo.listBatchesWithStock(),
-        productsRepo.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
     ]);
     const productById = new Map(products.map((product) => [product.id, product]));
     const reference = now().toMillis();
@@ -67,8 +66,8 @@ export const getInventoryAlerts = async (options: {
         .sort((a, b) => a - b);
 
     const [batches, products] = await Promise.all([
-        batchesRepo.listBatchesWithStock(),
-        productsRepo.listProducts({ activeOnly: true }),
+        catalogSnapshot.listBatchesWithStock(),
+        catalogSnapshot.listProducts({ activeOnly: true }),
     ]);
 
     const productById = new Map(products.map((product) => [product.id, product]));

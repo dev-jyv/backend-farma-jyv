@@ -201,3 +201,8 @@ export const availabilityQuerySchema = z.object({
     doctorId: nullable(z.string().min(1)),
     durationMinutes: nullable(z.string()),
 });
+
+/** Consulta de inventario del médico: carga completa o delta desde `updatedSince`. */
+export const doctorInventoryQuerySchema = z.object({
+    updatedSince: parseableDate.optional(),
+});

@@ -260,6 +260,12 @@ export const listSales = async (filters: {
         }
     }
 
+    // Índice `[productIds CONTAINS, createdAt]`: lee solo las ventas del producto
+    // en la ventana, no todas las de los últimos días.
+    if (filters.productId && !filters.cashSessionId) {
+        query = query.where('productIds', 'array-contains', filters.productId);
+    }
+
     query = query.orderBy('createdAt', 'desc');
 
     if (filters.maxDocs !== undefined) {

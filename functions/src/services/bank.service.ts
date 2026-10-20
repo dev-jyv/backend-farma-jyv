@@ -1,8 +1,9 @@
 import * as bankRepo from '../repositories/bank.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
+import { effectiveDate } from '../repositories/cash-movements.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as salesRepo from '../repositories/sales.repository';
-import { BankAccount, BankMovement, Sale } from '../types';
+import { BankAccount, BankMovement, CashMovement, Sale, SupplierPayment } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { fromCents, toCents } from '../utils/taxes';
 import { assertPeriodOpen } from './accounting-core.service';
@@ -32,33 +33,50 @@ export interface BankAccountBalance extends BankAccount {
     };
 }
 
-/** Suma en centavos lo que salió de una cuenta por gastos y abonos. */
-const outflowsFromOtherCollections = async (
-    accountId: string,
-    from: Date,
-    to: Date,
-): Promise<{ expensesCents: number; paymentsCents: number }> => {
+/** Movimientos de caja y abonos a proveedor leídos una sola vez para todas las cuentas. */
+interface SharedOutflows {
+    movements: CashMovement[];
+    payments: SupplierPayment[];
+}
+
+const loadSharedOutflows = async (from: Date, to: Date): Promise<SharedOutflows> => {
     const [movements, payments] = await Promise.all([
         cashMovementsRepo.listForPeriod({ from: from.toISOString(), to: to.toISOString() }),
         invoicesRepo.listPaymentsForPeriod({ from, to }),
     ]);
+    return { movements, payments };
+};
 
+/**
+ * Suma en centavos lo que salió de una cuenta por gastos y abonos, desde su
+ * fecha de apertura. Filtra la lectura compartida: leerla por cuenta repetía la
+ * misma ventana de movimientos y abonos N veces.
+ */
+const outflowsFromOtherCollections = (
+    accountId: string,
+    from: Date,
+    shared: SharedOutflows,
+): { expensesCents: number; paymentsCents: number } => {
     // `expense` y `withdrawal`: el pago de un gasto devengado sale como retiro
     // —el gasto ya pegó en resultados al devengarse— y aun así saca dinero de la
     // cuenta. Dejarlo fuera inflaría el saldo bancario.
-    const expensesCents = movements
+    const expensesCents = shared.movements
         .filter(
             (movement) =>
                 (movement.type === 'expense' || movement.type === 'withdrawal') &&
                 movement.bankAccountId === accountId &&
-                (movement.paymentMethod ?? 'cash') !== 'cash',
+                (movement.paymentMethod ?? 'cash') !== 'cash' &&
+                effectiveDate(movement) >= from,
         )
         .reduce((total, movement) => total + toCents(movement.amount), 0);
 
     // Las contrapartidas de un abono cancelado vienen en negativo y devuelven el
     // dinero a la cuenta por sí solas.
-    const paymentsCents = payments
-        .filter((payment) => payment.bankAccountId === accountId)
+    const paymentsCents = shared.payments
+        .filter(
+            (payment) =>
+                payment.bankAccountId === accountId && payment.paidAt.toDate() >= from,
+        )
         .reduce((total, payment) => total + toCents(payment.amount), 0);
 
     return { expensesCents, paymentsCents };
@@ -73,13 +91,24 @@ export const getAccountsWithBalance = async (options: {
         ...(options.includeInactive ? { includeInactive: true } : {}),
     });
 
+    if (accounts.length === 0) {
+        return [];
+    }
+
+    const earliestOpening = new Date(
+        Math.min(...accounts.map((account) => account.openingDate.toMillis())),
+    );
+    const shared = await loadSharedOutflows(earliestOpening, asOf);
+
     return Promise.all(
         accounts.map(async (account) => {
             const openingDate = account.openingDate.toDate();
-            const [movements, outflows] = await Promise.all([
-                bankRepo.listMovements({ accountId: account.id, from: openingDate, to: asOf }),
-                outflowsFromOtherCollections(account.id, openingDate, asOf),
-            ]);
+            const movements = await bankRepo.listMovements({
+                accountId: account.id,
+                from: openingDate,
+                to: asOf,
+            });
+            const outflows = outflowsFromOtherCollections(account.id, openingDate, shared);
 
             const sum = (
                 predicate: (movement: BankMovement) => boolean,

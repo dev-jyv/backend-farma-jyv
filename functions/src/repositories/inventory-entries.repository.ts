@@ -12,6 +12,19 @@ export const listInventoryEntries = async (filters: {
 }): Promise<InventoryEntry[]> => {
     let query: FirebaseFirestore.Query = collection();
 
+    // Solo el producto: se lee lo que lo contiene (índice
+    // `[productIds CONTAINS, createdAt DESC]`) en vez de toda la colección. Con
+    // otros filtros no hay índice compuesto, así que se filtra en memoria.
+    const onlyProduct =
+        filters.productId &&
+        !filters.supplierId &&
+        !filters.invoiceId &&
+        !filters.from &&
+        !filters.to;
+    if (onlyProduct) {
+        query = query.where('productIds', 'array-contains', filters.productId);
+    }
+
     if (filters.supplierId) {
         query = query.where('supplierId', '==', filters.supplierId);
     }

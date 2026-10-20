@@ -1,6 +1,5 @@
 import * as batchesRepo from '../../../repositories/batches.repository';
 import * as countsRepo from '../../../repositories/inventory-counts.repository';
-import * as productsRepo from '../../../repositories/products.repository';
 import * as movementsRepo from '../../../repositories/stock-movements.repository';
 import { StockMovementType } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -19,6 +18,7 @@ import {
 import { ReportDefinition } from '../report-definition';
 import { resolveReportPeriod } from '../period';
 import { MAX_ROWS, stampDate, stampTime, ymdToDisplay } from './shared';
+import * as catalogSnapshot from '../../catalog-snapshot.service';
 
 const today = (now: Date): string => ymdToDisplay(todayYmd(now));
 
@@ -36,8 +36,8 @@ export const inventario: ReportDefinition = {
     ],
     load: async ({ now }) => {
         const [products, batches] = await Promise.all([
-            productsRepo.listProducts({ activeOnly: true }),
-            batchesRepo.listBatchesWithStock(),
+            catalogSnapshot.listProducts({ activeOnly: true }),
+            catalogSnapshot.listBatchesWithStock(),
         ]);
         return {
             subtitle: `Existencias al ${today(now)}`,
@@ -99,8 +99,8 @@ export const stockBajo: ReportDefinition = {
     ],
     load: async ({ now }) => {
         const [products, batches] = await Promise.all([
-            productsRepo.listProducts({ activeOnly: true }),
-            batchesRepo.listBatchesWithStock(),
+            catalogSnapshot.listProducts({ activeOnly: true }),
+            catalogSnapshot.listBatchesWithStock(),
         ]);
         return {
             subtitle: `Productos en o bajo su mínimo al ${today(now)}`,
@@ -173,8 +173,8 @@ export const sinCosto: ReportDefinition = {
     ],
     load: async ({ now }) => {
         const [products, batches] = await Promise.all([
-            productsRepo.listProducts({ activeOnly: true }),
-            batchesRepo.listBatchesWithStock(),
+            catalogSnapshot.listProducts({ activeOnly: true }),
+            catalogSnapshot.listBatchesWithStock(),
         ]);
         return {
             subtitle: 'Productos con existencia cuyo lote no tiene costo capturado',
@@ -244,7 +244,7 @@ export const mermas: ReportDefinition = {
         const [waste, expiry, products] = await Promise.all([
             movementsRepo.listStockMovements({ type: 'exit_waste', ...bounds }),
             movementsRepo.listStockMovements({ type: 'exit_expiry', ...bounds }),
-            productsRepo.listProducts({ activeOnly: false }),
+            catalogSnapshot.listProducts({ activeOnly: false }),
         ]);
         const movements = [...waste, ...expiry]
             .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
