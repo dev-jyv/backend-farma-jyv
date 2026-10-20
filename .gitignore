@@ -83,3 +83,5 @@ security-reports/
 
 # Datos persistidos de los emuladores locales (npm run emulators)
 .emulator-data/
+
+node_modules
