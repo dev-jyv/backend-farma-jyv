@@ -240,6 +240,11 @@ export const listPaymentsForPeriod = async (filters: {
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as SupplierPayment);
 };
 
+export const getPaymentById = async (id: string): Promise<SupplierPayment | null> => {
+    const doc = await paymentsCollection().doc(id).get();
+    return doc.exists ? ({ id: doc.id, ...doc.data() } as SupplierPayment) : null;
+};
+
 export const listPaymentsForInvoice = async (
     invoiceId: string,
 ): Promise<SupplierPayment[]> => {
