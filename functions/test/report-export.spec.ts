@@ -158,8 +158,11 @@ describe('resolveReportPeriod', () => {
             'posterior',
         );
         expect(() => resolveReportPeriod({ from: '2024-01-01', to: '2026-01-01' }, now)).toThrow(
-            '366 días',
+            'El rango máximo es de 93 días',
         );
+        expect(
+            () => resolveReportPeriod({ from: '2024-01-01', to: '2026-01-01' }, now, 366),
+        ).toThrow('El rango máximo es de 366 días');
     });
 });
 

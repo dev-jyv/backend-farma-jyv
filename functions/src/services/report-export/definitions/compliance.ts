@@ -5,6 +5,7 @@ import { ControlledLedgerType } from '../../../types';
 import { assertCanExportControlledLedger } from '../../controlled.service';
 import { NO_CASHIER, resolveUserNames } from '../../module-reports.service';
 import { ReportDefinition } from '../report-definition';
+import { getMaxReportSpanDays } from '../../../utils/report-range';
 import { resolveReportPeriod } from '../period';
 import { MAX_ROWS, stampDate, stampTime } from './shared';
 
@@ -38,7 +39,7 @@ export const libroControlados: ReportDefinition = {
     // que lleva la misma restricción que el CSV del libro: administrador o gerente.
     authorize: ({ roleSlug }) => assertCanExportControlledLedger(roleSlug),
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const entries = await ledgerRepo.listLedgerEntries({ from: range.from, to: range.to });
         const names = await resolveUserNames(entries.map((entry) => entry.userId));
         const rows = [...entries]
@@ -86,7 +87,7 @@ export const bitacora: ReportDefinition = {
         { key: 'role', header: 'Rol', type: 'text' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const logs = await auditRepo.listAuditLogs({ from: range.from, to: range.to });
         const ordered = [...logs].sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
         const shown = ordered.slice(0, MAX_ROWS);

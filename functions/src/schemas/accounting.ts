@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { EXPENSE_CATEGORIES_REQUIRING_DESCRIPTION } from '../constants/expenses';
 import { MAX_BACKDATE_DAYS } from '../repositories/cash-movements.repository';
 import { isoDate, money, paginationFields, positiveMoney, signedMoney } from './common';
+import { withMaxSpan } from '../utils/report-range';
 import { expenseCategorySchema } from './sales';
 
 /**
@@ -11,7 +12,7 @@ import { expenseCategorySchema } from './sales';
  * por defecto" no es un estado de resultados de nada, y el encabezado del
  * informe tiene que poder decir a qué periodo corresponde la cifra.
  */
-export const incomeStatementQuerySchema = z.object({
+export const incomeStatementQuerySchema = withMaxSpan(z.object({
     from: z.string().datetime(),
     to: z.string().datetime(),
     /**
@@ -20,7 +21,7 @@ export const incomeStatementQuerySchema = z.object({
      * que se pide explícitamente en vez de venir siempre.
      */
     compare: z.enum(['true', 'false']).optional(),
-}).refine(
+}), 'financial').refine(
     (data) => new Date(data.from) < new Date(data.to),
     { message: 'El inicio del periodo debe ser anterior al fin', path: ['from'] },
 );
