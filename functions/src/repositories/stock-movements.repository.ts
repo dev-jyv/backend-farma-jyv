@@ -1,14 +1,17 @@
 import { StockMovement, StockMovementType } from '../types';
 import { db, toTimestamp } from '../utils/firestore';
+import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 
 const collection = () => db().collection('stockMovements');
 
-export const listStockMovements = async (filters: {
+type MovementFilters = {
     productId?: string;
     type?: StockMovementType;
     from?: string;
     to?: string;
-}): Promise<StockMovement[]> => {
+};
+
+const buildMovementsQuery = (filters: MovementFilters): FirebaseFirestore.Query => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.productId) {
@@ -27,13 +30,36 @@ export const listStockMovements = async (filters: {
         query = query.where('createdAt', '<=', toTimestamp(filters.to));
     }
 
-    query = query.orderBy('createdAt', 'desc');
-
-    const snapshot = await query.get();
-    return snapshot.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() } as StockMovement),
-    );
+    return query.orderBy('createdAt', 'desc');
 };
+
+const mapMovement = (doc: FirebaseFirestore.QueryDocumentSnapshot) =>
+    ({ id: doc.id, ...doc.data() } as StockMovement);
+
+/** Lectura completa: solo para la búsqueda de texto, que filtra en memoria. */
+export const listStockMovements = async (filters: MovementFilters): Promise<StockMovement[]> => {
+    const snapshot = await buildMovementsQuery(filters).get();
+    return snapshot.docs.map(mapMovement);
+};
+
+/**
+ * Página por cursor (SPEC 08). Usa los mismos índices que `listStockMovements`
+ * (los filtros y el `orderBy createdAt desc` no cambian).
+ */
+export const listStockMovementsPage = async (
+    filters: MovementFilters & { page: number; limit: number; after?: string },
+): Promise<PaginatedResult<StockMovement>> =>
+    paginateQuery(buildMovementsQuery(filters), mapMovement, filters.page, filters.limit, {
+        after: filters.after,
+        order: [{ field: 'createdAt', direction: 'desc' }],
+        countCacheKey: [
+            'movements',
+            filters.productId ?? '',
+            filters.type ?? '',
+            filters.from ?? '',
+            filters.to ?? '',
+        ].join(':'),
+    });
 
 export const findEntryReferenceByBatchId = async (
     batchId: string,

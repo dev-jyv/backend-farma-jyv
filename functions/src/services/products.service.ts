@@ -352,6 +352,8 @@ export const listProducts = async (filters: {
     activeOnly?: boolean;
     page?: number;
     limit?: number;
+    /** Cursor opaco de la página anterior (SPEC 08); solo aplica sin búsqueda. */
+    after?: string;
     /** Solo productos con `updatedAt` posterior (sync incremental del catálogo local del POS). */
     updatedSince?: string;
 }): Promise<{
@@ -379,16 +381,17 @@ export const listProducts = async (filters: {
      * todo lo cambiado, no una página, y su propio filtro ya acota la lectura.
      */
     if (!search && !filters.updatedSince) {
-        const { items: pageItems, total } = await productsRepo.listProductsPage({
+        const { items: pageItems, total, nextCursor } = await productsRepo.listProductsPage({
             categoryId: filters.categoryId,
             activeOnly: filters.activeOnly,
             page,
             limit,
+            after: filters.after,
         });
 
         return {
             items: await attachStockAndCategory(pageItems),
-            meta: buildListMeta(page, limit, total),
+            meta: buildListMeta(page, limit, total, nextCursor),
         };
     }
 

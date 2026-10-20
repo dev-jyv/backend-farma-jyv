@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+    cursorField,
     money,
     paginationFields,
     parseableDate,
@@ -385,6 +386,7 @@ export const listSalesQuerySchema = z.object({
     promotionReview: z.enum(['true', 'false']).optional()
         .transform((value) => (value === undefined ? undefined : value === 'true')),
     ...paginationFields,
+    ...cursorField,
 });
 
 export const openCashSessionSchema = z.object({

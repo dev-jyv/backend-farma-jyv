@@ -1,6 +1,6 @@
 import { Product } from '../types';
 import { conflict } from '../utils/errors';
-import { paginateQuery } from '../utils/firestore-pagination';
+import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
 
 const collection = () => db().collection('products');
@@ -100,7 +100,9 @@ export const listProductsPage = async (filters: {
     activeOnly?: boolean;
     page: number;
     limit: number;
-}): Promise<{ items: Product[]; total: number }> => {
+    /** Cursor de la página anterior (SPEC 08). */
+    after?: string;
+}): Promise<PaginatedResult<Product>> => {
     let query: FirebaseFirestore.Query = collection();
 
     if (filters.activeOnly !== false) {
@@ -115,6 +117,11 @@ export const listProductsPage = async (filters: {
         (doc) => ({ id: doc.id, ...doc.data() } as Product),
         filters.page,
         filters.limit,
+        {
+            after: filters.after,
+            order: [{ field: 'name', direction: 'asc' }],
+            countCacheKey: `products:${filters.activeOnly !== false}:${filters.categoryId ?? ''}`,
+        },
     );
 };
 
