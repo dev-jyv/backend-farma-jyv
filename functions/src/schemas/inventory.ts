@@ -217,4 +217,6 @@ export const createSupplierPaymentSchema = z.object({
     notes: z.string().trim().max(300).optional(),
     /** Cuenta de la que sale el pago; solo aplica si no fue en efectivo. */
     bankAccountId: z.string().min(1).optional(),
+    /** Llave por captura; el header `Idempotency-Key` es la alternativa. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 });
