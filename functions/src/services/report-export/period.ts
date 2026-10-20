@@ -8,17 +8,19 @@ import {
     periodBounds,
     todayYmd,
 } from '../module-reports.service';
+import { assertReportSpan, getMaxReportSpanDays } from '../../utils/report-range';
 import { ExportQuery } from './report-definition';
 
-/** Los reportes agregan en memoria: un rango sin tope es una función sin memoria. */
-export const MAX_RANGE_DAYS = 366;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Periodo de un reporte. Prioridad: rango libre (`from`/`to`), un día (`date`) y
  * un mes (`month`); sin nada, el mes en curso.
  */
-export const resolveReportPeriod = (query: ExportQuery, now: Date): ReportRange => {
+export const resolveReportPeriod = (
+    query: ExportQuery,
+    now: Date,
+    maxDays: number = getMaxReportSpanDays('detail'),
+): ReportRange => {
     if (query.from || query.to) {
         let bounds: { from: string; to: string };
         try {
@@ -26,9 +28,7 @@ export const resolveReportPeriod = (query: ExportQuery, now: Date): ReportRange 
         } catch (error) {
             throw badRequest((error as Error).message);
         }
-        if ((Date.parse(bounds.to) - Date.parse(bounds.from)) / DAY_MS > MAX_RANGE_DAYS) {
-            throw badRequest(`El rango no puede exceder ${MAX_RANGE_DAYS} días.`);
-        }
+        assertReportSpan(bounds.from, bounds.to, maxDays, now);
         const fromDate = new Date(bounds.from);
         const toDate = new Date(bounds.to);
         return {

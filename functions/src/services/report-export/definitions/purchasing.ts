@@ -5,6 +5,7 @@ import { fromCents, toCents } from '../../../utils/taxes';
 import { getPayables } from '../../accounting.service';
 import { buildInvoiceRows, resolveUserNames } from '../../module-reports.service';
 import { ReportDefinition } from '../report-definition';
+import { getMaxReportSpanDays } from '../../../utils/report-range';
 import { resolveReportPeriod } from '../period';
 import { ymdToDisplay } from './shared';
 
@@ -20,7 +21,7 @@ export const facturas: ReportDefinition = {
         { key: 'registeredAt', header: 'Registrada', type: 'text' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const invoices = (await invoicesRepo.listInvoices({ from: range.from, to: range.to }))
             .sort((a, b) => a.invoiceDate.toMillis() - b.invoiceDate.toMillis());
         const [suppliers, names] = await Promise.all([
@@ -51,7 +52,7 @@ export const comprasProveedor: ReportDefinition = {
         { key: 'unitsWithoutCost', header: 'Unidades sin costo', type: 'int', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const entries = await entriesRepo.listInventoryEntries({ from: range.from, to: range.to });
         const suppliers = await suppliersRepo.getSuppliersByIds(
             entries.map((entry) => entry.supplierId),

@@ -16,6 +16,7 @@ import {
 } from '../../module-reports.service';
 import { PAYMENT_METHOD_LABELS, REPORTS_TIME_ZONE } from '../../sales-reports.service';
 import { ReportDefinition } from '../report-definition';
+import { getMaxReportSpanDays } from '../../../utils/report-range';
 import { resolveReportPeriod } from '../period';
 import { MAX_ROWS, percentOf, stampDate, stampTime, ymdToDisplay } from './shared';
 
@@ -44,7 +45,7 @@ export const ventas: ReportDefinition = {
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const scope = query.scope ?? 'financial';
         const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
         const names = await resolveUserNames(sales.map((sale) => sale.cashierId));
@@ -71,7 +72,7 @@ export const utilidad: ReportDefinition = {
         { key: 'margin', header: 'Margen', type: 'percent' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const report = await getProfitReport({ from: range.from, to: range.to, limit: MAX_ROWS });
         const notes = [
             `Periodo: venta sin impuestos ${formatCurrency(report.revenueBase)}, costo `
@@ -116,7 +117,7 @@ export const corteCaja: ReportDefinition = {
         { key: 'status', header: 'Estado', type: 'text' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const { items } = await cashSessionsRepo.listCashSessions({
             from: range.from,
             to: range.to,
@@ -183,7 +184,7 @@ export const gastos: ReportDefinition = {
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const rows = await loadExpenses(range);
         return {
             subtitle: range.label,
@@ -205,7 +206,7 @@ export const gastosCategoria: ReportDefinition = {
         { key: 'share', header: 'Participación', type: 'percent' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const expenses = await loadExpenses(range);
         const byCategory = new Map<string, { count: number; cents: number }>();
         for (const row of expenses) {
@@ -244,7 +245,7 @@ export const impuestos: ReportDefinition = {
         { key: 'total', header: 'Total cobrado', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const [{ items: sales }, returns] = await Promise.all([
             salesRepo.listSales({ from: range.from, to: range.to }),
             returnsRepo.listSaleReturns({ from: range.from, to: range.to }),
@@ -322,7 +323,7 @@ export const devoluciones: ReportDefinition = {
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const returns = await returnsRepo.listSaleReturns({ from: range.from, to: range.to });
         const names = await resolveUserNames(returns.map((item) => item.createdBy));
         const rows = [...returns]
@@ -359,7 +360,7 @@ export const cancelaciones: ReportDefinition = {
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const { items } = await listVoidedSales(range);
         const names = await resolveUserNames(
             items.flatMap((sale) => [sale.cashierId, sale.voidedBy ?? '']),
@@ -407,7 +408,7 @@ export const metodosPago: ReportDefinition = {
         { key: 'share', header: 'Participación', type: 'percent' },
     ],
     load: async ({ query, now }) => {
-        const range = resolveReportPeriod(query, now);
+        const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const summary = await getSalesSummary({ from: range.from, to: range.to });
         const totalCents = summary.byPaymentMethod
             .reduce((total, item) => total + toCents(item.total), 0);

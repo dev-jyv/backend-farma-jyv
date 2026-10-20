@@ -10,6 +10,7 @@ import {
     signedMoney,
     usoCfdiSchema,
 } from './common';
+import { withMaxSpan } from '../utils/report-range';
 
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
     schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
@@ -321,11 +322,11 @@ export const dashboardChartsQuerySchema = z
         },
     );
 
-export const reportPeriodQuerySchema = z.object({
+export const reportPeriodQuerySchema = withMaxSpan(z.object({
     from: parseableDate.optional(),
     to: parseableDate.optional(),
     limit: z.coerce.number().int().positive().max(200).optional(),
-});
+}));
 
 /** Resumen semanal o mensual; `anchor` es cualquier día del periodo (por defecto hoy). */
 export const businessSummaryQuerySchema = z.object({
@@ -340,11 +341,11 @@ export const businessSummaryQuerySchema = z.object({
  * del catálogo, que no es usuario del sistema—, no un uid. Cuando viene, el
  * servicio resuelve el periodo con la consulta indexada por `providerIds`.
  */
-export const commissionsQuerySchema = z.object({
+export const commissionsQuerySchema = withMaxSpan(z.object({
     from: parseableDate.optional(),
     to: parseableDate.optional(),
     providerId: z.string().min(1).optional(),
-});
+}));
 
 export const deadStockQuerySchema = z.object({
     days: z.coerce.number().int().positive().max(3650).optional(),
