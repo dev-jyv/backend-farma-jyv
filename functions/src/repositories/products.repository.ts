@@ -161,6 +161,25 @@ export const getProductById = async (id: string): Promise<Product | null> => {
     return { id: doc.id, ...doc.data() } as Product;
 };
 
+/**
+ * Varios productos con una sola lectura en bloque (`getAll`). Devuelve un mapa
+ * id -> producto; los ids que no existen no aparecen.
+ */
+export const getProductsByIds = async (ids: string[]): Promise<Map<string, Product>> => {
+    const unique = [...new Set(ids)];
+    const result = new Map<string, Product>();
+    if (unique.length === 0) {
+        return result;
+    }
+    const docs = await db().getAll(...unique.map((id) => collection().doc(id)));
+    for (const doc of docs) {
+        if (doc.exists) {
+            result.set(doc.id, { id: doc.id, ...doc.data() } as Product);
+        }
+    }
+    return result;
+};
+
 export const createProduct = async (
     data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Product> => db().runTransaction(async (transaction) => {

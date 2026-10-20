@@ -458,6 +458,12 @@ export const createSale = async (input: {
     let closedPromotionName: string | null = null;
     const outOfWindowPromotions: string[] = [];
 
+    // Lecturas previas en bloque: solo sirven para validar y armar el plan. La
+    // transacción vuelve a leer lotes y productos y es la que decide.
+    const preloadedProducts = await productsRepo.getProductsByIds(
+        input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
+    );
+
     for (const item of input.items) {
         if (item.quantity <= 0) {
             throw badRequest('Cantidad inválida en un ítem de venta');
@@ -533,7 +539,7 @@ export const createSale = async (input: {
 
         let product = productCache.get(item.productId);
         if (!product) {
-            product = await productsRepo.getProductById(item.productId);
+            product = preloadedProducts.get(item.productId) ?? null;
             productCache.set(item.productId, product);
         }
 
@@ -551,7 +557,9 @@ export const createSale = async (input: {
 
         let batches = batchCache.get(item.productId);
         if (!batches) {
-            batches = await batchesRepo.listBatchesByProduct(item.productId);
+            batches = await batchesRepo.listBatchesByProduct(item.productId, {
+                onlyAvailable: true,
+            });
             batchCache.set(item.productId, batches);
             batchStockBefore.set(
                 item.productId,
