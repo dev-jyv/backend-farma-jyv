@@ -159,6 +159,24 @@ aparece** hasta rellenarlo.
 Altas, abonos y anulaciones nuevos mantienen el marcador en su misma transacción;
 los abonos y altas hechos entre el backfill y el deploy los cubre el paso 4.
 
+
+## 2d. Fechas de calendario a mediodía UTC (SPEC 18) — **código primero, backfill después**
+
+`invoiceDate`, `dueDate`, `batches.expiryDate` e `inventoryEntries.items[].expiryDate`
+se guardaban a medianoche UTC y en México se leían un día antes. Ahora se guardan a
+mediodía UTC; los documentos anteriores siguen a medianoche hasta correr el backfill.
+
+Orden (ningún paso intermedio duplica lotes, porque la búsqueda de lotes ya acepta
+ambas representaciones):
+
+1. Desplegar el código (escritura a mediodía, búsqueda de lotes y filtros de rango
+   que entienden las dos formas).
+2. Respaldo previo:
+   `gcloud firestore export gs://farma-jyv-respaldos-firestore/pre-calendar-dates --collection-ids=invoices,batches,inventoryEntries`
+3. `cd functions && npm run backfill:calendar-dates -- --dry-run`, luego sin `--dry-run`
+   (idempotente: solo toca valores a las 00:00:00.000Z exactas).
+4. Repetir el dry-run: debe reportar 0 documentos a corregir.
+
 ## 3. Llave de idempotencia obligatoria en ventas
 
 Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock. El
