@@ -373,8 +373,84 @@ describe('sale-returns.service - createSaleReturn', () => {
             orderId: order.id,
             paymentId: 'PAY-1',
             amount: 116,
-            idempotencyKey: expect.stringMatching(/^refund:[a-f0-9]{64}$/),
+            idempotencyKey: expect.stringMatching(/^refund:[a-f0-9]{64}:0$/),
         }));
+    });
+
+    it('dos devoluciones iguales de una venta no comparten llave con MP', async () => {
+        const product = await createProductFixture({ salePrice: 116 });
+        const session = await openSession();
+        await stockProduct(product.id, 3);
+        const order = {
+            id: unique('ORD'),
+            status: 'processed' as const,
+            statusDetail: null,
+            terminalId: 'TERM-1',
+            amount: '348.00',
+            externalReference: 'ref-1',
+            paymentId: 'PAY-1',
+        };
+        getOrderMock.mockResolvedValue(order);
+        refundOrderMock.mockResolvedValue({ ...order, status: 'refunded' as const });
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 3 }],
+            paymentMethod: 'card',
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+        const returnOne = () => returnsService.createSaleReturn({
+            saleId: sale.id,
+            items: [{ productId: product.id, quantity: 1 }],
+            reason: 'Cliente cambió de opinión',
+            cashSessionId: session.id,
+            userId: 'admin-user',
+            roleSlug: 'admin',
+        });
+
+        await returnOne();
+        await returnOne();
+
+        const keys = refundOrderMock.mock.calls.map(([call]) => call.idempotencyKey);
+        expect(keys).toHaveLength(2);
+        // Con la misma llave MP responde con el primer reembolso y no mueve dinero.
+        expect(keys[0]).not.toBe(keys[1]);
+    });
+
+    it('sin id de pago nunca manda un reembolso parcial sin monto', async () => {
+        const product = await createProductFixture({ salePrice: 116 });
+        const session = await openSession();
+        await stockProduct(product.id, 2);
+        const order = {
+            id: unique('ORD'),
+            status: 'processed' as const,
+            statusDetail: null,
+            terminalId: 'TERM-1',
+            amount: '232.00',
+            externalReference: 'ref-1',
+            paymentId: null,
+        };
+        getOrderMock.mockResolvedValue(order);
+        refundOrderMock.mockResolvedValue({ ...order, status: 'refunded' as const });
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 2 }],
+            paymentMethod: 'card',
+            cardPaymentReference: order.id,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+
+        await expect(returnsService.createSaleReturn({
+            saleId: sale.id,
+            items: [{ productId: product.id, quantity: 1 }],
+            reason: 'Cliente cambió de opinión',
+            cashSessionId: session.id,
+            userId: 'admin-user',
+            roleSlug: 'admin',
+        })).rejects.toMatchObject({ statusCode: 400 });
+        expect(refundOrderMock).not.toHaveBeenCalled();
     });
 
     it('exige método de reembolso explícito en ventas mixtas', async () => {
@@ -497,7 +573,7 @@ describe('sale-returns.service - createSaleReturn', () => {
             roleSlug: 'admin',
         });
 
-        await expect(salesService.voidSale(sale.id, 'admin-user')).rejects.toMatchObject({
+        await expect(salesService.voidSale(sale.id, 'admin-user', 'admin')).rejects.toMatchObject({
             code: 'CONFLICT',
             message: expect.stringContaining('devoluciones registradas'),
         });
@@ -569,7 +645,7 @@ describe('receipts.service', () => {
             cashSessionId: session.id,
             cashierId: 'test-cashier',
         });
-        await salesService.voidSale(sale.id, 'admin-user');
+        await salesService.voidSale(sale.id, 'admin-user', 'admin');
 
         const { receipt, html } = await receiptsService.getSaleReceipt(sale.id, 80);
         expect(receipt.voided).toBe(true);

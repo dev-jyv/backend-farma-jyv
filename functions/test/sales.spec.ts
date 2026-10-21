@@ -849,7 +849,7 @@ describe('sales.service - voidSale', () => {
         const afterSale = await batchesRepo.getBatchById(batch.id);
         expect(afterSale!.quantity).toBe(2);
 
-        const voided = await salesService.voidSale(sale.id, 'admin-user');
+        const voided = await salesService.voidSale(sale.id, 'admin-user', 'admin');
         expect(voided.voidedBy).toBe('admin-user');
         expect(voided.voidedAt).toBeTruthy();
 
@@ -885,12 +885,82 @@ describe('sales.service - voidSale', () => {
         const productAfterSale = await productsRepo.getProductById(product.id);
         expect(productAfterSale!.totalStock).toBe(5);
 
-        await salesService.voidSale(sale.id, 'admin-user');
+        await salesService.voidSale(sale.id, 'admin-user', 'admin');
 
         const restored = await batchesRepo.getBatchById(batch.id);
         expect(restored!.quantity).toBe(10);
         const productAfterVoid = await productsRepo.getProductById(product.id);
         expect(productAfterVoid!.totalStock).toBe(10);
+    });
+
+    it('guarda subtotal y total a centavos (3 x 10.10 = 30.30)', async () => {
+        const product = await createProductFixture({ salePrice: 10.1, totalStock: 5 });
+        const session = await openSession();
+        await stockProduct(product.id, 5);
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 3 }],
+            paymentMethod: 'cash',
+            amountReceived: 31,
+            cashSessionId: session.id,
+            cashierId: 'test-cashier',
+        });
+
+        expect(sale.subtotal).toBe(30.3);
+        expect(sale.total).toBe(30.3);
+        expect(sale.items[0].subtotal).toBe(30.3);
+    });
+
+    it('un cajero no puede anular la venta del turno abierto de un compañero', async () => {
+        const product = await createProductFixture({ salePrice: 10, totalStock: 5 });
+        const session = await openSession('cajero-a');
+        await stockProduct(product.id, 5);
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 10,
+            cashSessionId: session.id,
+            cashierId: 'cajero-a',
+        });
+
+        await expect(salesService.voidSale(sale.id, 'cajero-b', 'cashier'))
+            .rejects.toMatchObject({ statusCode: 403 });
+
+        // El dueño del turno sí puede.
+        const voided = await salesService.voidSale(sale.id, 'cajero-a', 'cashier');
+        expect(voided.voidedBy).toBe('cajero-a');
+    });
+
+    it('el cajero reportado por el POS solo vale si llama él o un admin', async () => {
+        const product = await createProductFixture({ salePrice: 10, totalStock: 5 });
+        const session = await openSession('cajero-a');
+        await stockProduct(product.id, 5);
+        const forged = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 10,
+            cashSessionId: session.id,
+            cashierId: 'cajero-a',
+        });
+        const synced = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1 }],
+            paymentMethod: 'cash',
+            amountReceived: 10,
+            cashSessionId: session.id,
+            cashierId: 'cajero-a',
+        });
+
+        // Firmar la anulación a nombre de otro usuario no funciona.
+        const first = await salesService.voidSale(forged.id, 'cajero-a', 'cashier', {
+            voidedBy: 'cajero-b',
+        });
+        expect(first.voidedBy).toBe('cajero-a');
+
+        // Un admin que sincroniza sí puede reportar al cajero de entonces.
+        const second = await salesService.voidSale(synced.id, 'admin-user', 'admin', {
+            voidedBy: 'cajero-a',
+        });
+        expect(second.voidedBy).toBe('cajero-a');
     });
 
     it('rechaza anular una venta ya anulada', async () => {
@@ -905,10 +975,10 @@ describe('sales.service - voidSale', () => {
             cashSessionId: session.id,
             cashierId: 'test-cashier',
         });
-        await salesService.voidSale(sale.id, 'admin-user');
+        await salesService.voidSale(sale.id, 'admin-user', 'admin');
 
         await expect(
-            salesService.voidSale(sale.id, 'admin-user'),
+            salesService.voidSale(sale.id, 'admin-user', 'admin'),
         ).rejects.toMatchObject({
             code: 'BAD_REQUEST',
             message: 'La venta ya está anulada',

@@ -13,6 +13,7 @@ import {
     SaleReturn,
 } from '../types';
 import { badRequest, forbidden, notFound } from '../utils/errors';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
@@ -214,11 +215,7 @@ export const getCurrentSession = async (userId: string): Promise<CashSession | n
     cashSessionsRepo.getOpenSessionForUser(userId);
 
 export const openSession = async (userId: string, openingAmount: number): Promise<CashSession> => {
-    const existing = await cashSessionsRepo.getOpenSessionForUser(userId);
-    if (existing) {
-        throw badRequest('Ya tienes un turno de caja abierto');
-    }
-    return cashSessionsRepo.createCashSession({
+    return cashSessionsRepo.createCashSessionIfNoneOpen({
         openedBy: userId,
         openingAmount,
         expectedCashAmount: null,
@@ -370,6 +367,10 @@ export const listXReadings = async (
     return readingsRepo.listReadingsForSession(id);
 };
 
+/** Un turno vence a las 24:00 locales del día en que se abrió. */
+export const isSessionExpired = (session: CashSession, nowMs: number = Date.now()): boolean =>
+    getZonedYmd(session.openedAt.toMillis(), APP_TIME_ZONE) < getZonedYmd(nowMs, APP_TIME_ZONE);
+
 export const closeSession = async (
     id: string,
     userId: string,
@@ -409,7 +410,10 @@ export const closeSession = async (
      */
     const expectedDrawerAmount = expectedCashAmount + expectedServicesCashAmount;
     const cashDifference = Math.round((countedCashAmount - expectedDrawerAmount) * 100) / 100;
-    const autoClosedByExpiry = options.autoClosedByExpiry ?? false;
+    // La marca la manda el cliente, pero solo se respeta si el turno de verdad venció:
+    // con `true` en cualquier cierre un faltante nunca llegaba a la cola de revisión.
+    const autoClosedByExpiry = (options.autoClosedByExpiry ?? false) &&
+        isSessionExpired(session);
     // Un cierre automático a las 24:00 nunca genera ajuste pendiente: no hay
     // cajero presente para explicar la diferencia, y forzar una aprobación de
     // admin sobre un cierre que nadie autorizó en el momento no tiene sentido —

@@ -137,6 +137,8 @@ export type AuditAction =
     /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
     | 'sale.promotion_out_of_window'
     | 'sale.returned'
+    /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
+    | 'pointOrder.refunded'
     | 'cash_session.closed_with_difference'
     | 'cash_session.adjustment_reviewed'
     /** Entrada o salida de efectivo hecha por un admin desde la caja de la farmacia. */
@@ -195,6 +197,7 @@ export type AuditAction =
     | 'promotion.reactivated';
 
 export type AuditEntity =
+    | 'pointOrder'
     | 'product'
     | 'sale'
     | 'saleReturn'

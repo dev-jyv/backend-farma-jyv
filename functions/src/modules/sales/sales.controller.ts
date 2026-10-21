@@ -108,11 +108,15 @@ export class SalesController {
     ) {
         const results: Array<
             | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
-            | { ok: false; error: string }
+            | { ok: false; error: string; code?: string }
         > = [];
 
         for (const item of body.items) {
             try {
+                // Con la bandera encendida cada venta del lote exige su llave: un
+                // reintento del lote completo (corte de red, timeout de 60 s) ya no
+                // duplica cobro, stock y efectivo de las que sí se habían guardado.
+                assertIdempotencyKey(item.idempotencyKey ?? undefined, user.uid);
                 const sale = await salesService.createSale({
                     ...item,
                     cashierId: user.uid,
@@ -124,7 +128,11 @@ export class SalesController {
                 const message = error instanceof AppError || error instanceof Error
                     ? error.message
                     : 'Error desconocido';
-                results.push({ ok: false, error: message });
+                results.push({
+                    ok: false,
+                    error: message,
+                    ...(error instanceof AppError ? { code: error.code } : {}),
+                });
             }
         }
 

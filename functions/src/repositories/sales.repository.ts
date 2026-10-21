@@ -101,25 +101,40 @@ export const updateSalePointPayment = async (
     await collection().doc(saleId).update({ pointPayment });
 };
 
+/**
+ * Venta ligada a una order de Mercado Pago. Con `limit(1)` bastaba que la primera
+ * coincidencia fuera una venta anulada para ocultar otra venta viva sobre la misma
+ * order: se leen unas cuantas y se prefiere la que no está anulada.
+ */
+const MAX_SALES_PER_ORDER = 10;
+
+const pickLiveSale = (docs: FirebaseFirestore.QueryDocumentSnapshot[]): Sale | null => {
+    if (docs.length === 0) {
+        return null;
+    }
+    const live = docs.find((doc) => !doc.data().voidedAt) ?? docs[0];
+    return mapSale(live.id, live.data());
+};
+
 export const findSaleByPointOrderId = async (orderId: string): Promise<Sale | null> => {
     const byNested = await collection()
         .where('pointPayment.orderId', '==', orderId)
-        .limit(1)
+        .limit(MAX_SALES_PER_ORDER)
         .get();
-    if (!byNested.empty) {
-        const doc = byNested.docs[0];
-        return mapSale(doc.id, doc.data());
+    const nested = pickLiveSale(byNested.docs);
+    if (nested && !nested.voidedAt) {
+        return nested;
     }
 
     const byReference = await collection()
         .where('cardPaymentReference', '==', orderId)
-        .limit(1)
+        .limit(MAX_SALES_PER_ORDER)
         .get();
-    if (byReference.empty) {
-        return null;
+    const reference = pickLiveSale(byReference.docs);
+    if (reference && !reference.voidedAt) {
+        return reference;
     }
-    const doc = byReference.docs[0];
-    return mapSale(doc.id, doc.data());
+    return nested ?? reference;
 };
 
 /**

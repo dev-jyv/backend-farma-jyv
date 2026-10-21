@@ -72,7 +72,7 @@ describe('dailyStats', () => {
             salesCount: 2,
         });
 
-        await salesService.voidSale(first.id, 'admin-user');
+        await salesService.voidSale(first.id, 'admin-user', 'admin');
 
         expect(await todayStats()).toMatchObject({ salesTotalCents: 2500, salesCount: 1 });
         expect(await dailyStatsService.diffDailyStats()).toEqual([]);
@@ -120,7 +120,7 @@ describe('dailyStats', () => {
         await sellOne(10);
         const voided = await sellOne(40);
         await sellOne(15);
-        await salesService.voidSale(voided.id, 'admin-user');
+        await salesService.voidSale(voided.id, 'admin-user', 'admin');
 
         for (const granularity of ['day', 'month', 'year'] as const) {
             delete process.env.DASHBOARD_SALES_FROM_STATS;
