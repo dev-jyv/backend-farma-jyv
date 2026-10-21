@@ -512,7 +512,7 @@ export const createSale = async (input: {
             // esta consulta horas antes y el precio pudo cambiar en el medio.
             // Mismo criterio que las partidas de mercancía.
             const unitPrice = item.unitPrice ?? service.price;
-            const itemSubtotal = unitPrice * item.quantity;
+            const itemSubtotal = fromCents(toCents(unitPrice * item.quantity));
             const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
             subtotal += itemSubtotal;
             lineDiscountTotal += discountAmount;
@@ -590,7 +590,7 @@ export const createSale = async (input: {
         // venta que el cliente ya había pagado. El catálogo solo manda cuando el
         // POS no informa precio (ventas anteriores a este campo).
         const unitPrice = item.unitPrice ?? product.salePrice;
-        const itemSubtotal = unitPrice * item.quantity;
+        const itemSubtotal = fromCents(toCents(unitPrice * item.quantity));
         const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
         subtotal += itemSubtotal;
         lineDiscountTotal += discountAmount;
@@ -681,8 +681,10 @@ export const createSale = async (input: {
         Math.max(0, input.saleDiscountAmount ?? 0),
         subtotal - lineDiscountTotal,
     );
-    const discountTotal = lineDiscountTotal + saleDiscountAmount;
-    const total = subtotal - discountTotal;
+    // A centavos: `3 x 10.10` en flotante es 30.299999999999997 y eso se guardaba tal
+    // cual en la venta, en los reportes y en el desglose fiscal.
+    const discountTotal = fromCents(toCents(lineDiscountTotal) + toCents(saleDiscountAmount));
+    const total = fromCents(toCents(subtotal) - toCents(discountTotal));
 
     // El descuento a nivel venta se prorratea antes de desglosar impuestos: si no,
     // se declararía IVA sobre un importe que nunca se cobró.
@@ -695,7 +697,9 @@ export const createSale = async (input: {
     );
 
     saleItems.forEach((item, index) => {
-        const netAmount = lineNetsBeforeSaleDiscount[index] - saleDiscountShares[index];
+        const netAmount = fromCents(
+            toCents(lineNetsBeforeSaleDiscount[index]) - toCents(saleDiscountShares[index]),
+        );
         item.saleDiscountShare = saleDiscountShares[index];
         item.netAmount = netAmount;
 
@@ -1194,9 +1198,14 @@ export const voidSale = async (
     const sesionId = saleSnapshot.exists
         ? ((saleSnapshot.data()?.cashSessionId as string | null) ?? null)
         : null;
-    const sesionCerrada = sesionId
-        ? Boolean((await cashSessionsRepo.getCashSessionById(sesionId))?.closedAt)
-        : false;
+    const sesion = sesionId ? await cashSessionsRepo.getCashSessionById(sesionId) : null;
+    const sesionCerrada = Boolean(sesion?.closedAt);
+    // Mismo criterio que vender, devolver y operar el turno: un turno abierto es de
+    // quien lo abrió (o de un admin). Sin esto un cajero anulaba las ventas del turno
+    // de un compañero y le bajaba el efectivo esperado de su corte.
+    if (sesion && !sesion.closedAt) {
+        assertCanAccessSession(sesion, voidedBy, roleSlug ?? '');
+    }
 
     const sale = await firestore.runTransaction(async (transaction) => {
         const saleDoc = await transaction.get(saleRef);
@@ -1285,7 +1294,13 @@ export const voidSale = async (
             reportedAt.toMillis() <= serverNow.toMillis() &&
             reportedAt.toMillis() >= existing.createdAt.toMillis();
         const timestamp = reportedIsSane ? reportedAt : serverNow;
-        const author = reported?.voidedBy ?? voidedBy;
+        // El cajero reportado solo se respeta cuando es quien está llamando o lo manda un
+        // admin: antes cualquiera firmaba la anulación (y sus movimientos y el libro de
+        // controlados) a nombre de otro usuario.
+        const author = reported?.voidedBy &&
+            (reported.voidedBy === voidedBy || roleSlug === 'admin')
+            ? reported.voidedBy
+            : voidedBy;
 
         uniqueRestores.forEach(([, entry], index) => {
             const batchDoc = batchDocs[index];

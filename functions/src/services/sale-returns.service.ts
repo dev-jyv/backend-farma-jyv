@@ -121,6 +121,10 @@ const resolveRefundMethod = (
             'La venta se pagó de forma mixta: indica el método de reembolso',
         );
     }
+    // Venta con tarjeta registrada a mano (sin terminal): no hay order que reembolsar.
+    if (sale.paymentMethod === 'card' && !sale.pointPayment && !sale.cardPaymentReference) {
+        return 'transfer';
+    }
     return sale.paymentMethod;
 };
 
@@ -372,11 +376,25 @@ export const createSaleReturn = async (input: {
         if (!orderId) {
             throw badRequest('La venta no tiene una order de Mercado Pago que reembolsar');
         }
+        // Sin el id del pago MP interpreta el reembolso como total: se resuelve desde la
+        // order o se rechaza, nunca se manda sin monto.
+        const paymentId = sale.pointPayment?.paymentId ??
+            (await mercadoPagoService.getOrder(orderId)).paymentId;
+        if (!paymentId) {
+            throw badRequest(
+                'No se encontró el pago de la order de Mercado Pago: no se puede hacer un ' +
+                'reembolso parcial. Reembolsa desde Mercado Pago y registra la devolución.',
+            );
+        }
         const order = await mercadoPagoService.refundOrder({
             orderId,
-            paymentId: sale.pointPayment?.paymentId ?? undefined,
+            paymentId,
             amount: refundTotal,
-            idempotencyKey: `refund:${fingerprint}`,
+            // La huella sola repite entre dos devoluciones iguales de la misma venta
+            // (1 pieza hoy, 1 pieza mañana) y MP devolvería la respuesta guardada del
+            // primer reembolso sin mover dinero. Lo ya reembolsado distingue ambos
+            // eventos y, si la transacción falla y se reintenta, sigue siendo el mismo.
+            idempotencyKey: `refund:${fingerprint}:${toCents(sale.refundedTotal ?? 0)}`,
         });
         pointRefund = {
             orderId: order.id,

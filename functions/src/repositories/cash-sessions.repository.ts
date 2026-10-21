@@ -1,4 +1,5 @@
 import { CashSession, CashSessionSummary } from '../types';
+import { badRequest } from '../utils/errors';
 import { db, now } from '../utils/firestore';
 import { paginate } from '../utils/pagination';
 
@@ -11,6 +12,29 @@ export const createCashSession = async (
     const ref = await collection().add(payload);
     return { id: ref.id, ...payload };
 };
+
+/**
+ * Alta de turno **solo si el cajero no tiene otro abierto**, verificado dentro de la
+ * misma transacción: con la lectura aparte, un doble toque o el reintento del POS
+ * creaba dos turnos abiertos y las ventas se repartían entre dos cortes.
+ */
+export const createCashSessionIfNoneOpen = async (
+    data: Omit<CashSession, 'id' | 'openedAt'>,
+): Promise<CashSession> => db().runTransaction(async (transaction) => {
+    const open = await transaction.get(
+        collection()
+            .where('openedBy', '==', data.openedBy)
+            .where('closedAt', '==', null)
+            .limit(1),
+    );
+    if (!open.empty) {
+        throw badRequest('Ya tienes un turno de caja abierto');
+    }
+    const payload = { ...data, openedAt: now() };
+    const ref = collection().doc();
+    transaction.create(ref, payload);
+    return { id: ref.id, ...payload };
+});
 
 export const getCashSessionById = async (id: string): Promise<CashSession | null> => {
     const doc = await collection().doc(id).get();
@@ -53,17 +77,29 @@ export const closeCashSession = async (
 ): Promise<CashSession> => {
     const ref = collection().doc(id);
     const timestamp = now();
-    await ref.update({
-        closedAt: timestamp,
-        closedBy: data.closedBy,
-        countedCashAmount: data.countedCashAmount,
-        expectedCashAmount: data.expectedCashAmount,
-        expectedServicesCashAmount: data.expectedServicesCashAmount ?? 0,
-        cashDifference: data.cashDifference,
-        summary: data.summary,
-        hasPendingAdjustment: data.hasPendingAdjustment ?? false,
-        adjustmentStatus: data.adjustmentStatus ?? null,
-        autoClosedByExpiry: data.autoClosedByExpiry ?? false,
+    // El cierre se escribe con la precondición `closedAt == null` leída en la misma
+    // transacción: dos cierres simultáneos (doble toque) ya no se pisan ni borran la
+    // revisión de ajuste que dejó el primero.
+    await db().runTransaction(async (transaction) => {
+        const current = await transaction.get(ref);
+        if (!current.exists) {
+            throw badRequest('El turno de caja no existe');
+        }
+        if (current.data()?.closedAt) {
+            throw badRequest('El turno de caja ya está cerrado');
+        }
+        transaction.update(ref, {
+            closedAt: timestamp,
+            closedBy: data.closedBy,
+            countedCashAmount: data.countedCashAmount,
+            expectedCashAmount: data.expectedCashAmount,
+            expectedServicesCashAmount: data.expectedServicesCashAmount ?? 0,
+            cashDifference: data.cashDifference,
+            summary: data.summary,
+            hasPendingAdjustment: data.hasPendingAdjustment ?? false,
+            adjustmentStatus: data.adjustmentStatus ?? null,
+            autoClosedByExpiry: data.autoClosedByExpiry ?? false,
+        });
     });
     const updated = await ref.get();
     return { id: updated.id, ...updated.data() } as CashSession;

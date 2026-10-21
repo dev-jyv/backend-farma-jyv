@@ -624,6 +624,11 @@ export const refundOrder = async (input: {
   amount?: number;
   idempotencyKey?: string;
 }): Promise<PointOrder> => {
+    // Sin `paymentId` el cuerpo sale vacío y MP lo trata como reembolso TOTAL de la
+    // order: con un monto parcial se prefiere fallar a devolver de más.
+    if (input.amount !== undefined && !input.paymentId) {
+        throw badRequest('Falta el pago de la order para reembolsar un monto parcial');
+    }
     const body =
     input.paymentId && input.amount !== undefined
         ? {

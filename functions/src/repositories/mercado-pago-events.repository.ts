@@ -38,8 +38,15 @@ export const registerWebhookEvent = async (input: WebhookEventInput): Promise<bo
                 expiresAt: new Date(timestamp.toMillis() + EVENT_TTL_HOURS * 60 * 60 * 1000),
             });
         return true;
-    } catch {
-        return false;
+    } catch (error) {
+        // Solo "ya existe" es un duplicado. Cualquier otro fallo (Firestore caído, permisos)
+        // antes se contestaba como duplicado y el aviso se perdía sin dejar rastro: ahora
+        // se propaga para responder 500 y que Mercado Pago lo reenvíe.
+        const code = (error as { code?: number | string }).code;
+        if (code === 6 || code === 'already-exists' || code === 'ALREADY_EXISTS') {
+            return false;
+        }
+        throw error;
     }
 };
 

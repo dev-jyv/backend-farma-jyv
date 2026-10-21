@@ -18,6 +18,7 @@ import * as directChargesService from '../../services/direct-charges.service';
 import * as pointOrdersService from '../../services/point-orders.service';
 import * as salesService from '../../services/sales.service';
 import * as eventsRepo from '../../repositories/mercado-pago-events.repository';
+import { recordAudit } from '../../services/audit.service';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { Public } from '../identity/decorators/public.decorator';
@@ -135,11 +136,36 @@ export class PaymentsController {
     async refundOrder(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
         @Body(new ZodValidationPipe(refundPointOrderSchema)) body: RefundPointOrderInput,
+        @CurrentUser() user: AuthUser,
+        @Headers('idempotency-key') idempotencyHeader?: string,
     ) {
+        // Sin llave cada llamada generaba un uuid nuevo: un doble clic reembolsaba dos
+        // veces. Con la llave (header estándar `Idempotency-Key`) MP descarta el repetido.
+        const idempotencyKey = idempotencyHeader
+            ? new ZodValidationPipe(idempotencyKeySchema).transform(idempotencyHeader)
+            : undefined;
         const order = await mercadoPagoService.refundOrder({
             orderId: params.id,
             paymentId: body.paymentId,
             amount: body.amount,
+            idempotencyKey,
+        });
+        // Mueve dinero fuera de la farmacia y no deja devolución, stock ni corte: la
+        // bitácora es el único rastro de quién lo hizo.
+        await recordAudit({
+            action: 'pointOrder.refunded',
+            entity: 'pointOrder',
+            entityId: params.id,
+            summary: body.amount
+                ? `Reembolso de ${body.amount.toFixed(2)} sobre la order ${params.id}`
+                : `Reembolso total de la order ${params.id}`,
+            userId: user.uid,
+            roleSlug: user.role.slug,
+            metadata: {
+                paymentId: body.paymentId ?? null,
+                amount: body.amount ?? null,
+                idempotencyKey: idempotencyKey ?? null,
+            },
         });
         return { data: order };
     }

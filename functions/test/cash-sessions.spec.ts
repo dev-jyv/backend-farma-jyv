@@ -2,7 +2,9 @@ import * as cashSessionsRepo from '../src/repositories/cash-sessions.repository'
 import * as cashMovementsRepo from '../src/repositories/cash-movements.repository';
 import * as auditRepo from '../src/repositories/audit-logs.repository';
 import * as cashSessionsService from '../src/services/cash-sessions.service';
+import { Timestamp } from 'firebase-admin/firestore';
 import { AppError } from '../src/utils/errors';
+import { db } from '../src/utils/firestore';
 
 /**
  * Corte de caja y su auditoría. El eje de estas pruebas es el ajuste pendiente:
@@ -43,6 +45,13 @@ const cerrarTurno = async (
         options,
     );
     return cashSessionsRepo.getCashSessionById(sessionId);
+};
+
+/** Hace que el turno haya vencido: se abrió antes de las 24:00 de un día anterior. */
+const vencerTurno = async (sessionId: string) => {
+    await db().collection('cashSessions').doc(sessionId).update({
+        openedAt: Timestamp.fromMillis(Date.now() - 2 * 24 * 3600 * 1000),
+    });
 };
 
 /** Turno cerrado con faltante, listo para que un admin revise el ajuste. */
@@ -120,6 +129,7 @@ describe('cash-sessions.service - closeSession y el ajuste pendiente', () => {
 
     it('el cierre automático por expiración NUNCA deja ajuste pendiente', async () => {
         const session = await abrirTurno(1000);
+        await vencerTurno(session.id);
         const closed = await cerrarTurno(session.id, session.openedBy, 700, {
             autoClosedByExpiry: true,
         });
@@ -140,9 +150,49 @@ describe('cash-sessions.service - closeSession y el ajuste pendiente', () => {
         expect(closed!.hasPendingAdjustment).toBe(true);
     });
 
+    it('la marca de expiración se ignora si el turno todavía no venció', async () => {
+        const session = await abrirTurno(1000);
+        const closed = await cerrarTurno(session.id, session.openedBy, 700, {
+            autoClosedByExpiry: true,
+        });
+
+        // Un cajero con faltante no puede saltarse la revisión mandando la marca.
+        expect(closed!.autoClosedByExpiry).toBe(false);
+        expect(closed!.hasPendingAdjustment).toBe(true);
+        expect(closed!.adjustmentStatus).toBe('pending');
+    });
+
+    it('dos cierres simultáneos: gana uno y el otro no pisa el ajuste pendiente', async () => {
+        const session = await abrirTurno(1000);
+
+        const results = await Promise.allSettled([
+            cerrarTurno(session.id, session.openedBy, 700),
+            cerrarTurno(session.id, session.openedBy, 1000),
+        ]);
+
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        const stored = await cashSessionsRepo.getCashSessionById(session.id);
+        // Si el segundo cierre (que cuadra) hubiera pisado al primero, el faltante
+        // dejaría de estar pendiente de revisión.
+        expect(stored!.hasPendingAdjustment).toBe(stored!.cashDifference !== 0);
+    });
+
+    it('no abre dos turnos a la vez para el mismo cajero', async () => {
+        const cajero = `cajero-${Math.random().toString(36).slice(2, 8)}`;
+
+        const results = await Promise.allSettled([
+            cashSessionsService.openSession(cajero, 500),
+            cashSessionsService.openSession(cajero, 500),
+        ]);
+
+        expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+        expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    });
+
     it('deja la diferencia en la bitácora aunque el cierre haya sido automático', async () => {
         const crearAuditLog = jest.spyOn(auditRepo, 'createAuditLog');
         const session = await abrirTurno(1000);
+        await vencerTurno(session.id);
         await cerrarTurno(session.id, session.openedBy, 700, { autoClosedByExpiry: true });
 
         const registro = crearAuditLog.mock.calls
@@ -294,6 +344,7 @@ describe('cash-sessions.service - reviewAdjustment', () => {
 
     it('un cierre automático con diferencia queda fuera de la revisión', async () => {
         const session = await abrirTurno(1000);
+        await vencerTurno(session.id);
         await cerrarTurno(session.id, session.openedBy, 500, { autoClosedByExpiry: true });
 
         await expect(
