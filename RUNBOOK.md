@@ -177,6 +177,27 @@ ambas representaciones):
    (idempotente: solo toca valores a las 00:00:00.000Z exactas).
 4. Repetir el dry-run: debe reportar 0 documentos a corregir.
 
+
+## 2e. Regla general: índices primero, funciones después
+
+Un índice compuesto nuevo tarda en construirse y `firebase deploy` no lo espera. Una
+función que ya consulta con ese índice, desplegada antes de que esté `READY`, responde
+**500** (`FAILED_PRECONDITION`). Pasó el 2026-10-20: el historial de ventas de un
+producto falló entre las 15:21 y las 17:09 (hora de México) porque el código salió
+sin su índice `sales [productIds, createdAt DESC]`.
+
+Cada vez que un cambio toque `firestore.indexes.json`:
+
+1. Desplegar solo los índices: `firebase deploy --project prod --only firestore:indexes`.
+2. Esperar a que estén listos:
+   `gcloud firestore indexes composite list --project=farma-jyv --format="value(state)" | sort | uniq -c`
+   — no debe quedar ninguno en `CREATING`.
+3. Recién entonces desplegar las funciones (`npm run deploy:prod`).
+
+Con el logger de Nest activo (`error` y `warn`) el stack de cualquier 500 queda en los
+logs del servicio, con ruta, método y usuario: `gcloud logging read
+'resource.labels.service_name="api" AND severity>=ERROR' --freshness=1h`.
+
 ## 3. Llave de idempotencia obligatoria en ventas
 
 Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock. El
