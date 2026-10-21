@@ -76,6 +76,8 @@ export const inventoryExitSchema = z.object({
     quantity: qty,
     reason: z.enum(['waste', 'expiry']),
     notes: z.string().optional(),
+    /** Una llave por captura, reenviada sin cambios en cada reintento. */
+    idempotencyKey: idempotencyKeySchema.optional(),
 });
 
 export const listBatchesQuerySchema = z.object({

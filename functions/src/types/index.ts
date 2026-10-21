@@ -464,6 +464,8 @@ export interface BankMovement {
  * gasto no se cuente dos veces.
  */
 export interface AccruedExpense {
+    /** `true` mientras el gasto devengado tiene saldo por pagar (SPEC 13). */
+    outstanding?: boolean;
     id: string;
     category: ExpenseCategory;
     concept: string;
@@ -803,6 +805,13 @@ export interface SupplierPayment {
 
 export interface Invoice {
     id: string;
+    /**
+     * `true` mientras la factura tiene saldo por pagar. Marcador **denormalizado**
+     * (SPEC 13) que se actualiza en la misma transacción que mueve `paidTotal`:
+     * Firestore no compara dos campos del mismo documento, así que sin él cuentas
+     * por pagar tenía que leer todas las facturas. Ausente en facturas `legacy`.
+     */
+    outstanding?: boolean;
     supplierId: string;
     invoiceNumber: string;
     invoiceDate: Timestamp;

@@ -37,6 +37,11 @@ const mapMovement = (doc: FirebaseFirestore.QueryDocumentSnapshot) =>
     ({ id: doc.id, ...doc.data() } as StockMovement);
 
 /** Lectura completa: solo para la búsqueda de texto, que filtra en memoria. */
+export const getStockMovementById = async (id: string): Promise<StockMovement | null> => {
+    const doc = await db().collection('stockMovements').doc(id).get();
+    return doc.exists ? ({ id: doc.id, ...doc.data() } as StockMovement) : null;
+};
+
 export const listStockMovements = async (filters: MovementFilters): Promise<StockMovement[]> => {
     const snapshot = await buildMovementsQuery(filters).get();
     return snapshot.docs.map(mapMovement);

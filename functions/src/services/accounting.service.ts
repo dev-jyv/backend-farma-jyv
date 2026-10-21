@@ -1073,7 +1073,7 @@ const bucketOf = (daysOverdue: number | null): PayableBucket => {
  */
 export const getPayables = async (): Promise<PayablesReport> => {
     const asOf = new Date();
-    const tracked = await invoicesRepo.listTrackedInvoices();
+    const tracked = await invoicesRepo.listOutstandingInvoices();
 
     const pending = tracked
         .map((invoice) => ({ invoice, settlement: settlementOf(invoice, asOf) }))

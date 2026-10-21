@@ -497,7 +497,7 @@ export const listAccruedExpenses = async (filters: {
 
 /** Saldo total por pagar de gastos devengados; es un renglón del pasivo. */
 export const getAccruedTotal = async (asOf: Date = new Date()): Promise<number> => {
-    const accrued = await accruedRepo.listAccrued();
+    const accrued = await accruedRepo.listOutstandingAccrued();
     return fromCents(
         accrued
             .map((item) => toAccruedView(item, asOf))

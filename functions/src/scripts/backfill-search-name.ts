@@ -69,7 +69,7 @@ const hasApplicationDefaultCredentials = (): boolean => {
     return rutas.some((ruta) => fs.existsSync(ruta));
 };
 
-const initAdmin = (): void => {
+export const initAdmin = (): void => {
     if (admin.apps.length) {
         return;
     }

@@ -23,3 +23,6 @@ export const badRequest = (message: string): AppError =>
 
 export const conflict = (message: string): AppError =>
     new AppError(409, 'CONFLICT', message);
+
+export const unprocessable = (message: string): AppError =>
+    new AppError(422, 'UNPROCESSABLE', message);
