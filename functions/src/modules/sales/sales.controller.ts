@@ -199,6 +199,7 @@ export class SalesController {
             includeVoided: query.includeVoided,
             search: query.search,
             promotionReview: query.promotionReview,
+            paymentMethod: query.paymentMethod,
             after: query.after,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,

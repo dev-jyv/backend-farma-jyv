@@ -385,6 +385,8 @@ export const listSalesQuerySchema = z.object({
     /** Solo ventas offline aceptadas con una promoción fuera de vigencia. */
     promotionReview: z.enum(['true', 'false']).optional()
         .transform((value) => (value === undefined ? undefined : value === 'true')),
+    /** Forma de pago (SPEC 19): se filtra en la consulta, no en memoria. */
+    paymentMethod: z.enum(['cash', 'card', 'transfer', 'mixed']).optional(),
     ...paginationFields,
     ...cursorField,
 });

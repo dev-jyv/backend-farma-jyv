@@ -1,4 +1,4 @@
-import { Sale, isSaleProductItem } from '../types';
+import { PaymentMethod, Sale, isSaleProductItem } from '../types';
 import { db, now, toTimestamp } from '../utils/firestore';
 import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 
@@ -253,8 +253,30 @@ const buildSalesQuery = (filters: {
     from?: string;
     to?: string;
     cashSessionId?: string;
+    /**
+     * Filtros que se resuelven en la consulta (SPEC 19). Solo los aplica quien
+     * llama sin `cashSessionId` ni `productId`, que son los que tienen índice
+     * con `voidedAt`; ver `serverSideFilters`.
+     */
+    excludeVoided?: boolean;
+    paymentMethod?: PaymentMethod;
+    promotionReview?: boolean;
 }): FirebaseFirestore.Query => {
     let query: FirebaseFirestore.Query = collection();
+
+    // Igualdades primero, luego el rango de `createdAt` y el orden: es el orden de
+    // campos de los índices `[voidedAt, paymentMethod, promotionReview, createdAt]`.
+    if (filters.excludeVoided) {
+        // Todas las ventas llevan `voidedAt` (`null` mientras están vigentes).
+        query = query.where('voidedAt', '==', null);
+    }
+    if (filters.paymentMethod) {
+        query = query.where('paymentMethod', '==', filters.paymentMethod);
+    }
+    if (filters.promotionReview) {
+        // Solo se guarda cuando es `true`: ausente significa "no requiere revisión".
+        query = query.where('promotionReview', '==', true);
+    }
 
     if (filters.cashSessionId) {
         query = query.where('cashSessionId', '==', filters.cashSessionId);
@@ -278,10 +300,42 @@ const buildSalesQuery = (filters: {
 };
 
 /**
+ * ¿Los filtros de la lista corren en la consulta o en memoria? (SPEC 19)
+ *
+ * En la consulta cuando no hay `cashSessionId` ni `productId` (sus consultas ya
+ * tienen su propio índice y agregar `voidedAt` pediría otro por combinación) y
+ * mientras no se pidan anuladas: los índices de `sales` con `paymentMethod` o
+ * `promotionReview` llevan `voidedAt` por delante. Con `includeVoided` o con
+ * turno/producto, `paymentMethod` y `promotionReview` se aplican en memoria.
+ */
+export const serverSideFilters = (filters: {
+    productId?: string;
+    cashSessionId?: string;
+    includeVoided?: boolean;
+    paymentMethod?: PaymentMethod;
+    promotionReview?: boolean;
+}): { excludeVoided?: boolean; paymentMethod?: PaymentMethod; promotionReview?: boolean } => {
+    const independent = !filters.cashSessionId && !filters.productId;
+    if (!independent) {
+        return {};
+    }
+    if (filters.includeVoided) {
+        // Sin `voidedAt` en la consulta no hay índice para los otros dos filtros.
+        return {};
+    }
+    return {
+        excludeVoided: true,
+        ...(filters.paymentMethod ? { paymentMethod: filters.paymentMethod } : {}),
+        ...(filters.promotionReview ? { promotionReview: true } : {}),
+    };
+};
+
+/**
  * Página de ventas por cursor (SPEC 08): lee ~`limit` documentos sin importar la
- * profundidad. Las anuladas se descartan en memoria (`voidedAt` en la consulta
- * obligaría a un índice por combinación), así que `total` cuenta la ventana
- * completa, anuladas incluidas, cuando `includeVoided` es falso.
+ * profundidad. Sin turno ni producto y sin `includeVoided`, las anuladas y los
+ * filtros de forma de pago y revisión corren en la consulta (SPEC 19, ver
+ * `serverSideFilters`), así que `total` es exacto. En los demás casos las
+ * anuladas se descartan en memoria y `total` cuenta la ventana completa.
  * Ventana por defecto: `DEFAULT_LIST_DAYS`, igual que `listSales`.
  */
 export const listSalesPage = async (filters: {
@@ -290,11 +344,14 @@ export const listSalesPage = async (filters: {
     to?: string;
     cashSessionId?: string;
     includeVoided?: boolean;
+    paymentMethod?: PaymentMethod;
+    promotionReview?: boolean;
     page: number;
     limit: number;
     after?: string;
 }): Promise<PaginatedResult<Sale>> => {
-    const query = buildSalesQuery(filters);
+    const serverSide = serverSideFilters(filters);
+    const query = buildSalesQuery({ ...filters, ...serverSide });
     const countCacheKey = [
         'sales',
         filters.cashSessionId ?? '',
@@ -302,6 +359,9 @@ export const listSalesPage = async (filters: {
         filters.from ?? 'default',
         filters.to ?? '',
         filters.productId ?? '',
+        serverSide.excludeVoided ? 'vigentes' : 'todas',
+        serverSide.paymentMethod ?? '',
+        serverSide.promotionReview ? 'revision' : '',
     ].join(':');
 
     return paginateQuery(

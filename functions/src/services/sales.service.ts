@@ -1452,9 +1452,11 @@ export const listSales = async (filters: {
     search?: string;
     /** Solo las marcadas con `promotionReview` (promo aceptada fuera de vigencia). */
     promotionReview?: boolean;
+    /** Solo las de esta forma de pago (SPEC 19). */
+    paymentMethod?: PaymentMethod;
     page?: number;
     limit?: number;
-    /** Cursor opaco de la página anterior (SPEC 08); no aplica con `search`/`promotionReview`. */
+    /** Cursor opaco de la página anterior (SPEC 08); no aplica con `search` ni en memoria. */
     after?: string;
     /** Quién pregunta. Obligatorio para poder filtrar por turno (ver abajo). */
     requesterId?: string;
@@ -1473,14 +1475,29 @@ export const listSales = async (filters: {
 
     const { page, limit } = parsePagination(filters.page, filters.limit);
 
-    // Sin búsqueda de texto ni filtro de revisión, Firestore resuelve la página
-    // con cursor: ~`limit` lecturas en cualquier profundidad (SPEC 08).
-    if (!filters.search && !filters.promotionReview) {
+    // Firestore resuelve la página con cursor (~`limit` lecturas en cualquier
+    // profundidad, SPEC 08) salvo con búsqueda de texto, o si piden forma de pago o
+    // revisión en una combinación sin índice (turno o anuladas incluidas): ahí el
+    // filtro corre en memoria sobre la ventana. Con ellos en la consulta (SPEC 19)
+    // el `total` es exacto y hay `nextCursor`.
+    const wantsFieldFilter = Boolean(filters.paymentMethod || filters.promotionReview);
+    const inQuery = Object.keys(
+        salesRepo.serverSideFilters({
+            cashSessionId: filters.cashSessionId,
+            includeVoided: filters.includeVoided,
+            paymentMethod: filters.paymentMethod,
+            promotionReview: filters.promotionReview,
+        }),
+    ).length > 0;
+
+    if (!filters.search && (!wantsFieldFilter || inQuery)) {
         const result = await salesRepo.listSalesPage({
             from: filters.from,
             to: filters.to,
             cashSessionId: filters.cashSessionId,
             includeVoided: filters.includeVoided,
+            paymentMethod: filters.paymentMethod,
+            promotionReview: filters.promotionReview,
             page,
             limit,
             after: filters.after,
@@ -1507,6 +1524,10 @@ export const listSales = async (filters: {
 
     if (filters.promotionReview) {
         filtered = filtered.filter((sale) => sale.promotionReview === true);
+    }
+
+    if (filters.paymentMethod) {
+        filtered = filtered.filter((sale) => sale.paymentMethod === filters.paymentMethod);
     }
 
     if (filters.search) {
