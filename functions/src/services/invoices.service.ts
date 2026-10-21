@@ -9,7 +9,7 @@ import {
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { getFileMetadata, getFileUrl } from '../utils/storage';
-import { toTimestamp } from '../utils/firestore';
+import { calendarDayOf, toCalendarTimestamp } from '../utils/calendar-date';
 import type { Timestamp } from 'firebase-admin/firestore';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as suppliersRepo from '../repositories/suppliers.repository';
@@ -291,8 +291,9 @@ export const createInvoice = async (input: {
         {
             supplierId: input.supplierId,
             invoiceNumber,
-            invoiceDate: toTimestamp(input.invoiceDate),
-            ...(input.dueDate ? { dueDate: toTimestamp(input.dueDate) } : {}),
+            // Fechas de calendario: mediodía UTC, no medianoche (SPEC 18).
+            invoiceDate: toCalendarTimestamp(input.invoiceDate),
+            ...(input.dueDate ? { dueDate: toCalendarTimestamp(input.dueDate) } : {}),
             totalAmount: input.totalAmount,
             ...(input.taxes ? { taxes: input.taxes } : {}),
             /**
@@ -399,7 +400,9 @@ export const updateAccounting = async (
             throw badRequest('El desglose de impuestos no suma el total de la factura');
         }
     }
-    if (input.dueDate && new Date(input.dueDate) < invoice.invoiceDate.toDate()) {
+    // Se comparan los días de calendario: la factura puede estar guardada a
+    // medianoche (anterior) o a mediodía, y un vencimiento el mismo día es válido.
+    if (input.dueDate && input.dueDate.slice(0, 10) < calendarDayOf(invoice.invoiceDate)) {
         throw badRequest('El vencimiento no puede ser anterior a la factura');
     }
 
@@ -407,7 +410,7 @@ export const updateAccounting = async (
         invoiceId,
         {
             ...(input.dueDate !== undefined
-                ? { dueDate: input.dueDate ? new Date(input.dueDate) : null }
+                ? { dueDate: input.dueDate ? toCalendarTimestamp(input.dueDate).toDate() : null }
                 : {}),
             ...(input.taxes !== undefined ? { taxes: input.taxes } : {}),
         },

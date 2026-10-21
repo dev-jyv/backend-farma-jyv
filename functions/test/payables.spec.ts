@@ -236,7 +236,9 @@ describe('cuentas por pagar', () => {
             (row) => row.supplierId === supplier.id && row.isOverdue,
         );
         expect(vencida!.bucket).toBe('d31_60');
-        expect(vencida!.daysOverdue).toBeGreaterThanOrEqual(45);
+        // El vencimiento se guarda al mediodía UTC (SPEC 18): una factura vencida hace
+        // 45 días cuenta 44 días completos hasta las 12:00 UTC y 45 después.
+        expect(vencida!.daysOverdue).toBeGreaterThanOrEqual(44);
 
         const porVencer = report.invoices.find(
             (row) => row.supplierId === supplier.id && !row.isOverdue,

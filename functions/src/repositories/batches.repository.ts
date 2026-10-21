@@ -1,5 +1,6 @@
 import { Batch } from '../types';
-import { db, now, toTimestamp } from '../utils/firestore';
+import { db, now } from '../utils/firestore';
+import { calendarTimestampVariants } from '../utils/calendar-date';
 
 const collection = () => db().collection('batches');
 
@@ -114,7 +115,9 @@ export const findBatchByProductLotAndExpiry = async (
     const snapshot = await collection()
         .where('productId', '==', productId)
         .where('lotNumber', '==', lotNumber)
-        .where('expiryDate', '==', toTimestamp(expiryDate))
+        // La caducidad puede estar guardada a medianoche (anterior) o a mediodía UTC
+        // (SPEC 18): buscar solo una no reconocería el lote existente y lo duplicaría.
+        .where('expiryDate', 'in', calendarTimestampVariants(expiryDate))
         .limit(1)
         .get();
     if (snapshot.empty) {

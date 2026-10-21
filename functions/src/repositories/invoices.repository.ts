@@ -1,5 +1,6 @@
 import { Invoice, SupplierPayment } from '../types';
-import { db, fromDate, now, toTimestamp } from '../utils/firestore';
+import { db, fromDate, now } from '../utils/firestore';
+import { toRangeEnd, toRangeStart } from '../utils/calendar-date';
 import { badRequest, conflict, notFound } from '../utils/errors';
 
 const collection = () => db().collection('invoices');
@@ -34,11 +35,11 @@ const buildInvoicesQuery = (filters: InvoiceFilters): FirebaseFirestore.Query =>
     }
 
     if (filters.from) {
-        query = query.where('invoiceDate', '>=', toTimestamp(filters.from));
+        query = query.where('invoiceDate', '>=', toRangeStart(filters.from));
     }
 
     if (filters.to) {
-        query = query.where('invoiceDate', '<=', toTimestamp(filters.to));
+        query = query.where('invoiceDate', '<=', toRangeEnd(filters.to));
     }
 
     return query;

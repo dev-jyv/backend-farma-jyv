@@ -24,7 +24,8 @@ import {
     paginate,
     parsePagination,
 } from '../utils/pagination';
-import { db, now, toTimestamp } from '../utils/firestore';
+import { db, now } from '../utils/firestore';
+import { toCalendarTimestamp } from '../utils/calendar-date';
 import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
@@ -461,7 +462,7 @@ const persistEntryItems = async (input: {
                 const batchData = {
                     productId: item.productId,
                     lotNumber: item.lotNumber,
-                    expiryDate: toTimestamp(item.expiryDate),
+                    expiryDate: toCalendarTimestamp(item.expiryDate),
                     quantity: item.quantity,
                     costPrice: item.costPrice,
                     supplierId: input.supplierId,
@@ -488,7 +489,7 @@ const persistEntryItems = async (input: {
             entryItems.push({
                 productId: item.productId,
                 lotNumber: item.lotNumber,
-                expiryDate: toTimestamp(item.expiryDate),
+                expiryDate: toCalendarTimestamp(item.expiryDate),
                 quantity: item.quantity,
                 costPrice: item.costPrice,
                 batchId: batch.id,
