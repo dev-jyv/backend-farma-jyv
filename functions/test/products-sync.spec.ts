@@ -3,6 +3,7 @@ import * as categoriesRepo from '../src/repositories/categories.repository';
 import * as productsRepo from '../src/repositories/products.repository';
 import * as batchesRepo from '../src/repositories/batches.repository';
 import * as productsService from '../src/services/products.service';
+import { db, now } from '../src/utils/firestore';
 
 /**
  * Contrato de `GET /products/sync`: el pull del catálogo local del POS (SQLite).
@@ -89,6 +90,10 @@ const createProductWithBatches = async () => {
 };
 
 describe('listProductsForSync', () => {
+    beforeEach(() => {
+        productsService.clearProductsSyncCache();
+    });
+
     it('devuelve solo los campos que persiste el SQLite local', async () => {
         const { product } = await createProductWithBatches();
 
@@ -144,5 +149,57 @@ describe('listProductsForSync', () => {
         const { items } = await productsService.listProductsForSync({ updatedSince: cursor });
 
         expect(items.some((item) => item.id === product.id)).toBe(false);
+    });
+
+    describe('carga completa compartida', () => {
+        it('la segunda carga completa solo lee el delta, pero ve los cambios', async () => {
+            const { product } = await createProductWithBatches();
+            await productsService.listProductsForSync({});
+
+            const nuevo = await createProductWithBatches();
+            await db()
+                .collection('products')
+                .doc(product.id)
+                .update({ minStock: 9, updatedAt: now() });
+
+            const spy = jest.spyOn(productsRepo, 'listProducts');
+            try {
+                const { items } = await productsService.listProductsForSync({});
+
+                expect(spy).toHaveBeenCalledTimes(1);
+                expect(spy.mock.calls[0][0].updatedSince).toBeDefined();
+                expect(items.some((item) => item.id === nuevo.product.id)).toBe(true);
+                expect(items.find((item) => item.id === product.id)!.minStock).toBe(9);
+            } finally {
+                spy.mockRestore();
+            }
+        });
+
+        it('las cargas completas concurrentes comparten una sola lectura', async () => {
+            await createProductWithBatches();
+            const spy = jest.spyOn(productsRepo, 'listProducts');
+            try {
+                await Promise.all(
+                    Array.from({ length: 10 }, () => productsService.listProductsForSync({})),
+                );
+                expect(spy).toHaveBeenCalledTimes(1);
+            } finally {
+                spy.mockRestore();
+            }
+        });
+
+        it('el pull incremental no pasa por la caché', async () => {
+            await productsService.listProductsForSync({});
+            const spy = jest.spyOn(productsRepo, 'listProducts');
+            try {
+                await productsService.listProductsForSync({
+                    updatedSince: new Date().toISOString(),
+                });
+                expect(spy).toHaveBeenCalledTimes(1);
+                expect(spy.mock.calls[0][0].updatedSince).toBeDefined();
+            } finally {
+                spy.mockRestore();
+            }
+        });
     });
 });
