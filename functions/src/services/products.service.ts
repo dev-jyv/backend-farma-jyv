@@ -324,12 +324,10 @@ const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
  * solo guarda `categoryId`) ni cae a `getTotalStock` por producto, que eran
  * lecturas por producto en cada sync.
  */
-export const listProductsForSync = async (filters: {
-    updatedSince?: string;
-}): Promise<{ items: SyncProduct[] }> => {
+const readProductsForSync = async (updatedSince?: string): Promise<{ items: SyncProduct[] }> => {
     const products = await productsRepo.listProducts({
         activeOnly: false,
-        updatedSince: filters.updatedSince,
+        updatedSince,
     });
     // El SQLite local necesita los lotes (caducidad, FEFO) para no pegarle a
     // `GET /inventory/batches` al agregar al carrito: sin red eso no existe.
@@ -342,6 +340,77 @@ export const listProductsForSync = async (filters: {
             toSyncProduct(product, batchesByProduct.get(product.id) ?? []),
         ),
     };
+};
+
+/**
+ * La carga completa se lee una vez por instancia y después solo se le aplica el
+ * delta. Un cliente que abre pantallas en ráfaga (o varias pestañas a la vez)
+ * pedía el catálogo entero en cada una: 17–43 cargas completas al día, y los dos
+ * días que pasaron de la cuota gratis de lecturas fueron los de más cargas.
+ *
+ * No es una caché con TTL de datos: cada request lee lo cambiado desde el último
+ * corte y lo mezcla, así que ve sus propios cambios al instante. Cualquier cambio
+ * de producto o stock sube `products.updatedAt`, que es lo que el delta consulta.
+ * La recarga completa periódica acota cualquier desfase que el delta no vea.
+ */
+const SYNC_FULL_REFRESH_MS = 5 * 60_000;
+/** Traslape del corte: absorbe el desfase de relojes entre instancias. Mezclar es idempotente. */
+const SYNC_DELTA_OVERLAP_MS = 10_000;
+
+interface SyncCatalogCache {
+    byId: Map<string, SyncProduct>;
+    cursorMs: number;
+    fullAt: number;
+}
+
+let syncCache: SyncCatalogCache | null = null;
+let syncInflight: Promise<{ items: SyncProduct[] }> | null = null;
+
+export const clearProductsSyncCache = (): void => {
+    syncCache = null;
+    syncInflight = null;
+};
+
+const loadFullCatalogForSync = async (): Promise<{ items: SyncProduct[] }> => {
+    // El corte se toma ANTES de leer: un cambio durante la lectura se vuelve a
+    // traer en el siguiente delta en lugar de perderse.
+    const startedAt = Date.now();
+    const cache = syncCache;
+
+    if (cache && startedAt - cache.fullAt < SYNC_FULL_REFRESH_MS) {
+        const { items } = await readProductsForSync(
+            new Date(cache.cursorMs - SYNC_DELTA_OVERLAP_MS).toISOString(),
+        );
+        for (const item of items) {
+            cache.byId.set(item.id, item);
+        }
+        cache.cursorMs = startedAt;
+    } else {
+        const { items } = await readProductsForSync();
+        syncCache = {
+            byId: new Map(items.map((item) => [item.id, item])),
+            cursorMs: startedAt,
+            fullAt: startedAt,
+        };
+    }
+
+    const items = [...syncCache!.byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return { items };
+};
+
+export const listProductsForSync = async (filters: {
+    updatedSince?: string;
+}): Promise<{ items: SyncProduct[] }> => {
+    if (filters.updatedSince) {
+        return readProductsForSync(filters.updatedSince);
+    }
+    // Las cargas completas concurrentes comparten una sola lectura.
+    if (!syncInflight) {
+        syncInflight = loadFullCatalogForSync().finally(() => {
+            syncInflight = null;
+        });
+    }
+    return syncInflight;
 };
 
 export const listProducts = async (filters: {
