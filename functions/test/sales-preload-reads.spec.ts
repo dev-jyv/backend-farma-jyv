@@ -100,13 +100,18 @@ describe('sales.service - lecturas previas de createSale', () => {
     it('una venta de 20 partidas lee los productos en una sola operación', async () => {
         const category = await makeCategory();
         const session = await openSession();
-        const products = await Promise.all(
-            Array.from({ length: 20 }, () => createProduct(category.id)),
-        );
-        await Promise.all(products.map((p) => addBatch(p.id, 5, '2027-06-01')));
-        await Promise.all(
-            products.map((p) => productsRepo.updateProduct(p.id, { totalStock: 5 })),
-        );
+        // Preparación en serie: son 20 transacciones de alta (unicidad de
+        // sku/nombre) y el emulador bloquea de forma pesimista, así que en
+        // paralelo se estorbaban hasta agotar los reintentos (`ABORTED:
+        // Transaction lock timeout`) según cuánto tardara en cargar el módulo.
+        // Lo que se mide son las lecturas de `createSale`, no esta preparación.
+        const products: Awaited<ReturnType<typeof createProduct>>[] = [];
+        for (let i = 0; i < 20; i++) {
+            const product = await createProduct(category.id);
+            await addBatch(product.id, 5, '2027-06-01');
+            await productsRepo.updateProduct(product.id, { totalStock: 5 });
+            products.push(product);
+        }
 
         const bulk = jest.spyOn(productsRepo, 'getProductsByIds');
         const single = jest.spyOn(productsRepo, 'getProductById');
