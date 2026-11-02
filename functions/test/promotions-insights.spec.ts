@@ -189,9 +189,14 @@ describe('promociones: desempeño y operación', () => {
         });
 
         it('más de 30 productos: la base se consulta por bloques y no duplica', async () => {
-            const products = await Promise.all(
-                Array.from({ length: 31 }, () => createProduct({ batches: [] })),
-            );
+            // En serie, como en sales-preload-reads: 31 altas en paralelo son 31
+            // transacciones de unicidad que el emulador (bloqueo pesimista) deja
+            // chocar hasta agotar los reintentos (`ABORTED: Transaction lock
+            // timeout`). Lo que se prueba es la consulta por bloques, no esto.
+            const products: Awaited<ReturnType<typeof createProduct>>[] = [];
+            for (let i = 0; i < 31; i++) {
+                products.push(await createProduct({ batches: [] }));
+            }
             const [first, last] = [products[0], products[30]];
             await Promise.all([first, last].map((product) => batchesRepo.createBatch({
                 productId: product.id,
