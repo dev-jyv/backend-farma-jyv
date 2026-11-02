@@ -1894,6 +1894,11 @@ export interface PosDiagnosticsInput {
         message: string;
         ref: string | null;
     }>;
+    /**
+     * Turno abierto en la caja; `null` sin turno. Ausente en cajas con un POS
+     * anterior a SPEC 44: esas no reciben aviso de silencio.
+     */
+    openCashSessionId?: string | null;
 }
 
 export type PosCommandType =
@@ -1920,5 +1925,10 @@ export interface PosCommand {
 export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
     receivedAt: string;
     reportedBy: string;
+    /**
+     * Cuándo se avisó por correo que la caja dejó de reportar (ISO), o `null`.
+     * Cada reporte nuevo lo limpia, así que una caída posterior vuelve a avisar.
+     */
+    silenceAlertedAt: string | null;
     pendingCommands: number;
 }

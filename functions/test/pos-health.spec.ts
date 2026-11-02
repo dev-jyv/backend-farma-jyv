@@ -14,6 +14,12 @@ import { PosDiagnosticsInput } from '../src/types';
 import { AppError } from '../src/utils/errors';
 import { db } from '../src/utils/firestore';
 
+// Con ventas bloqueadas, `reportDiagnostics` avisa por correo (SPEC 44); aquí no
+// sale nada a Resend. Las alertas se prueban en `pos-health-alerts.spec.ts`.
+jest.mock('../src/services/email.service', () => ({
+    sendReportEmail: jest.fn().mockResolvedValue(undefined),
+}));
+
 /**
  * Salud de cajas contra el emulador: el diagnóstico se sobrescribe por caja, los
  * comandos se entregan en la respuesta del reporte y el resultado es idempotente.

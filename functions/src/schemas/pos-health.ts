@@ -126,6 +126,13 @@ export const posDiagnosticsSchema = z.object({
         }),
         POS_DIAGNOSTICS_LIMITS.syncLog,
     ),
+    /**
+     * Turno abierto en la caja (id remoto, o local si aún no sube) o `null` sin
+     * turno. Opcional para no rechazar cajas sin actualizar; sin el campo, esa
+     * caja no recibe aviso de silencio (SPEC 44). `cashSessions` no guarda el
+     * equipo, así que es la única forma de saber qué caja tiene turno en curso.
+     */
+    openCashSessionId: z.string().max(128).nullable().optional(),
 });
 
 export const posCommandTypeSchema = z.enum([

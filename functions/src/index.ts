@@ -14,6 +14,7 @@ export {
 export { dailyFirestoreBackup } from './schedules/backup.schedule';
 export { dailyStatsIntegrityCheck } from './schedules/daily-stats.schedule';
 export { dailyPromotionsMaintenance } from './schedules/promotions.schedule';
+export { hourlyPosSilenceCheck } from './schedules/pos-health.schedule';
 
 let appPromise: ReturnType<typeof createApp> | undefined;
 

@@ -390,3 +390,25 @@ En orden:
 4. Las cajas aparecen en el panel cuando cada POS se actualiza a la versión que reporta
    el diagnóstico (cada sync y, con red, cada 15 min). Una caja reinstalada deja su
    fila vieja; a los 7 días sin reporte el panel la atenúa al final.
+
+## 9. Alertas de cajas por correo (SPEC 44) — despliegue
+
+Sin índices ni roles nuevos: la revisión horaria usa el índice automático de un campo
+sobre `posDiagnostics.receivedAt`.
+
+1. Verificar que el proyecto tenga `RESEND_API_KEY`, `REPORTS_EMAIL_FROM` y
+   `REPORTS_EMAIL_TO` (los mismos de los reportes de ventas). Sin ellos la alerta de
+   ventas bloqueadas solo deja un `console.error` y la caja sigue recibiendo 200; la
+   revisión horaria deshace la marca y reintenta a la hora siguiente.
+2. Funciones: `npm run deploy:dev` primero. El deploy crea la función programada
+   `hourlyPosSilenceCheck` (minuto 0 de cada hora, `America/Mexico_City`) y su job de
+   Cloud Scheduler; comprobar en la consola que aparece con 256 MiB.
+3. Actualizar el POS a la versión que manda `openCashSessionId`. Hasta entonces esa caja
+   solo genera alertas de ventas bloqueadas, no de silencio.
+4. Prueba de aceptación en dev: abrir turno en una caja de prueba, cortarle la red y
+   esperar > 2 h → un correo `Caja <nombre> sin sincronizar desde <hh:mm>`; las corridas
+   siguientes no repiten. Reconectar (el reporte limpia `silenceAlertedAt`) y volver a
+   desconectar → segundo correo. Repetir sin turno abierto → ningún correo.
+5. Logs: `firebase functions:log --only hourlyPosSilenceCheck` ("Revisión de cajas en
+   silencio: …") y, para el correo del reporte, buscar
+   `No se pudo mandar la alerta de ventas bloqueadas` en los logs de `api`.
