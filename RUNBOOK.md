@@ -194,6 +194,9 @@ Cada vez que un cambio toque `firestore.indexes.json`:
    — no debe quedar ninguno en `CREATING`.
 3. Recién entonces desplegar las funciones (`npm run deploy:prod`).
 
+El job de producción de `deploy.yml` hace estos tres pasos solo (§8.3); a mano,
+`scripts/ci/wait-firestore-indexes.sh farma-jyv` reemplaza al paso 2.
+
 Con el logger de Nest activo (`error` y `warn`) el stack de cualquier 500 queda en los
 logs del servicio, con ruta, método y usuario: `gcloud logging read
 'resource.labels.service_name="api" AND severity>=ERROR' --freshness=1h`.
@@ -300,13 +303,31 @@ No afecta a las ventas: la llave solo protege el reintento de un cobro reciente.
 ## 6. Integración continua
 
 `.github/workflows/ci.yml` corre en cada push a `main` y en cada pull request:
-`npm ci` → `npm run lint` → `npm run build` → `npm run test:coverage`. Instala
+`npm ci` → `npm run lint` → `npm run build` → `npm run test:coverage` →
+**`npm run test:rules` desde la raíz** (paso `Pruebas de reglas`, SPEC 33). Instala
 Temurin JDK 21 porque las pruebas arrancan el emulador de Firestore, que
 necesita JVM, y publica el reporte de cobertura como artefacto durante 14 días
 aunque las pruebas fallen.
 
-**No despliega nada.** El despliegue sigue siendo manual (`npm run deploy`, y los
-índices *antes* que el código — §1).
+El paso de reglas corre desde la raíz a propósito: desde `functions/` el emulador
+no ve el `firebase.json` raíz, arranca con reglas abiertas y las aserciones
+pasarían en vacío. Para comprobar que el paso muerde: cambiar un `assertFails` por
+`assertSucceeds` en `functions/test-rules/` debe dejar el CI en rojo con
+`evaluation error at L<n>` apuntando a `firestore.rules`.
+
+**`ci.yml` no despliega.** El despliegue lo hace `deploy.yml` cuando el CI de
+`main` termina en verde (§8).
+
+Workflows del repo:
+
+| Workflow | Cuándo | Qué hace |
+|---|---|---|
+| `ci.yml` | push a `main`, PRs, llamado por `deploy.yml` | lint, build, tests, reglas |
+| `deploy.yml` | CI verde en `main` → dev; tag `v*` → prod con aprobación | despliegue (§8) |
+| `simulacro-restauracion.yml` | día 1 de cada mes, 09:00 CDMX, y a mano | abre el issue del simulacro (§4, SPEC 43) |
+
+GitHub desactiva los workflows programados de un repo sin actividad en 60 días;
+si el issue del simulacro no llega, revisa la pestaña Actions.
 
 El CI corre contra el emulador con el proyecto `farma-jyv-test`: no toca datos
 reales ni necesita credenciales.
@@ -374,3 +395,119 @@ Revisión rápida desde la terminal:
 ```bash
 firebase functions:log --only api | grep -i "ERROR"
 ```
+
+---
+
+## 8. Liberación (despliegue desde GitHub Actions)
+
+Contrato (SPEC 39): **merge a `main` con CI verde = `farma-jyv-dev`**; **tag
+`vX.Y.Z` sobre `main` = candidato a `farma-jyv`**, que sale solo cuando `dev-jyv`
+aprueba el environment `production`. El backend y el panel tienen **tags
+independientes**: un tag del backend despliega solo el backend y uno del panel
+solo el panel.
+
+`deploy.yml` se autentica con **Workload Identity Federation**: ninguna llave JSON
+vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
+
+### 8.1 Una sola vez por proyecto (dueño de la cuenta)
+
+1. `scripts/ci/setup-wif.sh farma-jyv-dev` y `scripts/ci/setup-wif.sh farma-jyv`
+   (con `gcloud auth login`). Crean el pool `github-actions`, el proveedor `github`
+   (solo los repos `dev-jyv/backend-farma-jyv` y `dev-jyv/farma-jyv-admin`; dev
+   solo `main` + environment `dev`, prod solo tags `v*` + environment
+   `production`) y las cuentas `deploy-backend@` (Functions, reglas, índices,
+   Storage) y `deploy-admin@` (solo Hosting), cada una suplantable solo por su
+   repo. Imprimen los valores de las variables de GitHub.
+2. Política de limpieza de imágenes de Functions, para que el deploy no
+   interactivo no falle pidiéndola:
+   `firebase functions:artifacts:setpolicy --project <dev|prod> --location us-central1 --days 7 --force`.
+3. En **cada repo** (backend y panel), environments de GitHub:
+   - `dev`: rama de despliegue `main`. Variables `GCP_WORKLOAD_IDENTITY_PROVIDER`,
+     `GCP_DEPLOY_SERVICE_ACCOUNT` (las de `farma-jyv-dev`).
+   - `production`: **revisor requerido `dev-jyv`**, reglas de despliegue solo
+     tags `v*`. Las mismas dos variables con los valores de `farma-jyv`.
+   - Solo backend, en los dos environments: variable `FUNCTIONS_ENV_FILE` con el
+     contenido de `functions/.env.<proyecto>` **sin credenciales** (CORS, RECEIPT_*,
+     REPORTS_EMAIL_*, R2_ACCOUNT_ID/R2_BUCKET, FIRESTORE_BACKUP_BUCKET…).
+     `scripts/ci/write-functions-env.mjs` la escribe en el job y se niega si trae
+     cualquiera de las siete credenciales de SPEC 35 (las variables se ven en
+     claro) o si el código todavía no las declara con `defineSecret`.
+4. Etiqueta `requiere-paso-manual` en ambos repos.
+
+Hasta que SPEC 35 esté en `main`, el job de despliegue falla a propósito en el
+paso de variables: el pipeline no maneja credenciales en `.env`. Mientras tanto,
+despliegue manual (§8.5).
+
+### 8.2 Etiquetar PRs con pasos manuales
+
+Un PR que exija backfill, `migrate:roles`, crear un secreto u otro paso de este
+RUNBOOK antes o después del código lleva la etiqueta **`requiere-paso-manual`**
+y una línea en su descripción:
+
+```
+Paso manual: RUNBOOK §2b — backfill:search-name antes de desplegar
+```
+
+El pipeline **no** ejecuta backfills ni `migrate:roles`. Si la línea falta, el
+resumen del run lo marca como "no indicado".
+
+### 8.3 Liberar a producción
+
+1. Confirmar que `main` está desplegado y probado en `farma-jyv-dev` (el job `dev`
+   de `deploy.yml` corre solo tras cada CI verde de `main`).
+2. Si el panel a liberar depende de un cambio del backend: **backend primero**.
+   Con tags independientes nada lo impone; liberar el panel antes rompe el panel
+   en producción.
+3. Crear el tag sobre `main` (`git tag v1.4.0 origin/main && git push origin v1.4.0`,
+   o un *release* en GitHub).
+4. En el run de `Deploy`: `verificar-tag` (el commit está en `main`), `CI del tag`
+   (el CI completo, incluidas reglas) y `pasos-manuales`, que escribe en el
+   **resumen del run** los PRs con `requiere-paso-manual` desde el tag anterior y
+   el paso que piden.
+5. Hacer esos pasos que van *antes* del código, y solo entonces **aprobar**
+   `production`. Aprobar es la confirmación; no hay otro registro.
+6. El job `prod` despliega `firestore:indexes`, espera a que ningún índice quede
+   en `CREATING` (`scripts/ci/wait-firestore-indexes.sh`, tope 30 min; si se
+   excede o alguno queda en `NEEDS_REPAIR` falla sin desplegar funciones) y
+   después `functions,firestore:rules,storage`.
+7. Hacer los pasos que van *después* del código (`migrate:roles`, backfills de
+   código-primero como §2d) y verificar.
+
+Si una función falla a medias, el job falla y lo reporta; **no se reintenta
+solo**. Revisa el log, corrige y relanza el job (o etiqueta un parche). No hay
+rollback automático: volver atrás es etiquetar el commit anterior como versión
+nueva (`v1.4.1` apuntando al código bueno) o desplegarlo a mano.
+
+Dos merges seguidos a `main`: el despliegue a dev del segundo cancela el del
+primero (`concurrency`). Los de producción nunca se cancelan entre sí: esperan.
+
+**No despliegues a mano mientras corre un job de `deploy.yml`** contra el mismo
+proyecto: Firebase serializa, pero el estado final es el del último en terminar.
+
+### 8.4 Panel
+
+`farma-jyv-admin/.github/workflows/deploy.yml` sigue el mismo flujo para Hosting
+(`hosting:admin-dev` en dev, `hosting:admin` en prod), con sus propios tags `v*`,
+su environment `production` (revisor `dev-jyv`) y su propio resumen de PRs con
+`requiere-paso-manual`. No despliega índices: el panel no tiene.
+
+### 8.5 Despliegue manual (GitHub Actions caído o `dev-jyv` no disponible)
+
+Con `firebase login` y `gcloud auth login` de una cuenta con acceso, desde un
+checkout limpio del commit a liberar (el del tag) y con los `.env.<proyecto>`
+locales (docs/AMBIENTES.md):
+
+```bash
+# Backend, en este orden (§1 / §2e)
+firebase deploy --project prod --only firestore:indexes
+scripts/ci/wait-firestore-indexes.sh farma-jyv
+npm --prefix functions run deploy:prod
+
+# Panel, desde farma-jyv-admin
+npm ci && npm run deploy:prod
+```
+
+Haz igual los pasos manuales de los PRs etiquetados (búscalos con
+`gh pr list --label requiere-paso-manual --state merged`) y anota en el PR o en
+el release que se desplegó a mano y por qué.
+

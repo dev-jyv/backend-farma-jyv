@@ -104,7 +104,9 @@ Emulator ports: functions 5001, firestore 8080, auth 9099. Tests live in [functi
 
 ### CI
 
-`.github/workflows/ci.yml` runs on push to `main` and on pull requests: `npm ci` → `npm run lint` → `npm run build` → `npm run test:coverage`, with Temurin JDK 21 installed because the Firestore emulator needs a JVM, and the coverage report uploaded as an artifact for 14 days.
+`.github/workflows/ci.yml` runs on push to `main`, on pull requests and as a reusable workflow (`workflow_call`): `npm ci` → `npm run lint` → `npm run build` → `npm run test:coverage` → **`Pruebas de reglas`** (`npm run test:rules` with `working-directory: .`, i.e. from the repo root — SPEC 33; from `functions/` the rules would pass vacuously), with Temurin JDK 21 installed because the Firestore emulator needs a JVM, and the coverage report uploaded as an artifact for 14 days.
+
+`.github/workflows/deploy.yml` (SPEC 39) deploys: CI green on a `main` push → `farma-jyv-dev`; tag `v*` on `main` → re-runs `ci.yml`, lists PRs labelled `requiere-paso-manual` in the run summary, then waits for `dev-jyv` to approve the `production` environment before deploying `farma-jyv`. Both jobs deploy `firestore:indexes` first and wait for none to be `CREATING` (`scripts/ci/wait-firestore-indexes.sh`) before `functions,firestore:rules,storage`. Auth is Workload Identity Federation (`vars.GCP_WORKLOAD_IDENTITY_PROVIDER` / `vars.GCP_DEPLOY_SERVICE_ACCOUNT` per environment, set up by `scripts/ci/setup-wif.sh`) — never a JSON key. `functions/.env.<project>` is written in the job from the environment variable `FUNCTIONS_ENV_FILE` by `scripts/ci/write-functions-env.mjs`, which refuses any of the SPEC 35 credentials and refuses to run until they are all declared with `defineSecret`. It never runs backfills or `migrate:roles`. `simulacro-restauracion.yml` opens the monthly restore-drill issue (SPEC 43). Release procedure: RUNBOOK §8.
 
 ## Request lifecycle
 
