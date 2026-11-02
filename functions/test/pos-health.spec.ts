@@ -1,6 +1,8 @@
 import * as posHealthService from '../src/services/pos-health.service';
 import { evaluateBlockedSalesAlert } from '../src/services/pos-health-alerts.service';
 import * as auditRepo from '../src/repositories/audit-logs.repository';
+import * as rolesRepo from '../src/repositories/roles.repository';
+import { seedSystemRoles } from '../src/services/roles.service';
 import {
     POS_DIAGNOSTICS_LIMITS,
     POS_TEXT_MAX,
@@ -158,6 +160,23 @@ describe('reportDiagnostics', () => {
         expect(doc.get('reportedBy')).toBe(CAJERO);
         expect(doc.get('receivedAt').toMillis()).toBeGreaterThanOrEqual(antes - 1000);
         expect(doc.get('blockedSales')).toHaveLength(1);
+    });
+
+    it('reloj de la caja adelantado 1 h: receivedAt es la hora del servidor', async () => {
+        // El panel juzga "sin reportar" por receivedAt; si se fiara de
+        // generatedAt, una caja adelantada parecería al día aunque llevara horas
+        // callada (y una atrasada, muerta aunque acabe de reportar).
+        const adelantado = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+        const antes = Date.now();
+        await posHealthService.reportDiagnostics(diagnostico({ generatedAt: adelantado }), CAJERO);
+        const despues = Date.now();
+
+        const [snapshot] = await posHealthService.listDiagnostics();
+        expect(snapshot.generatedAt).toBe(adelantado);
+        const recibido = new Date(snapshot.receivedAt).getTime();
+        expect(recibido).toBeGreaterThanOrEqual(antes - 1000);
+        expect(recibido).toBeLessThanOrEqual(despues + 1000);
+        expect(new Date(adelantado).getTime() - recibido).toBeGreaterThan(55 * 60 * 1000);
     });
 
     it('sobrescribe el snapshot: lo que la caja ya no reporta desaparece', async () => {
@@ -436,5 +455,39 @@ describe('evaluateBlockedSalesAlert', () => {
         const decision = evaluateBlockedSalesAlert(ventas('v1'), ventas('v2'));
         expect(decision.shouldAlert).toBe(false);
         expect(decision.newlyBlockedSaleIds).toEqual(['v2']);
+    });
+});
+
+describe('roles de sistema tras seedSystemRoles (lo que corre migrate:roles)', () => {
+    beforeEach(async () => {
+        for (const name of ['roles', 'users']) {
+            await db().recursiveDelete(db().collection(name));
+        }
+    });
+
+    it('manager queda con posHealth:write; cashier y doctor sin posHealth', async () => {
+        await seedSystemRoles();
+
+        const manager = await rolesRepo.getRoleBySlug('manager');
+        expect(manager?.permissions).toContainEqual({ area: 'posHealth', level: 'write' });
+        for (const slug of ['cashier', 'doctor']) {
+            const role = await rolesRepo.getRoleBySlug(slug);
+            expect(role).not.toBeNull();
+            expect(role?.permissions.some((p) => p.area === 'posHealth')).toBe(false);
+        }
+    });
+
+    it('un manager sembrado antes del área la recibe al volver a correr la migración', async () => {
+        await seedSystemRoles();
+        const manager = await rolesRepo.getRoleBySlug('manager');
+        await db().collection('roles').doc(manager!.id).update({
+            permissions: manager!.permissions.filter((p) => p.area !== 'posHealth'),
+        });
+
+        const { updated } = await seedSystemRoles();
+
+        expect(updated).toContain('manager');
+        const despues = await rolesRepo.getRoleBySlug('manager');
+        expect(despues?.permissions).toContainEqual({ area: 'posHealth', level: 'write' });
     });
 });
