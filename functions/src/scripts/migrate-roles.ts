@@ -161,7 +161,11 @@ const runLocalMigration = async (): Promise<void> => {
 
 const runRemoteMigration = async (): Promise<void> => {
     const env = parseEnvFile(path.join(functionsDir, '.env'));
-    const secret = process.env.MIGRATE_SECRET ?? env.MIGRATE_SECRET;
+    // Script local: sigue leyendo `process.env` (SPEC 35). En producción el valor
+    // vive en Secret Manager; se exporta solo para esta corrida (ver
+    // `printSetupHelp`). El `.env` queda como respaldo heredado, aunque
+    // `check-env-split` ya no deja desplegar con él ahí.
+    const secret = process.env.MIGRATE_SECRET?.trim() || env.MIGRATE_SECRET;
     const apiUrl = resolveApiUrl(env);
 
     if (!secret) {
@@ -209,9 +213,13 @@ const printSetupHelp = (reason: string): void => {
 
     if (reason === 'NO_MIGRATE_SECRET' || reason === 'NO_LOCAL_CREDENTIALS') {
         console.error('Opción B - Migración remota:');
-        console.error('1. Agrega MIGRATE_SECRET en functions/.env');
+        console.error('1. MIGRATE_SECRET vive en Secret Manager (RUNBOOK «Secretos»)');
         console.error('2. Despliega: npm run deploy');
-        console.error('3. Ejecuta: npm run migrate:roles\n');
+        console.error(
+            '3. Ejecuta exportándolo solo para esta corrida:\n' +
+            '   MIGRATE_SECRET="$(firebase functions:secrets:access MIGRATE_SECRET ' +
+            '--project prod)" npm run migrate:roles\n',
+        );
     }
 
     if (reason === 'NO_API_URL') {

@@ -1,5 +1,6 @@
 import { Controller, Headers, Post, Query } from '@nestjs/common';
 import { timingSafeEqual } from 'crypto';
+import { getMigrateSecret } from '../../config/env';
 import { runRoleMigration } from '../../services/roles.service';
 import { badRequest, forbidden } from '../../utils/errors';
 import { Public } from '../identity/decorators/public.decorator';
@@ -14,7 +15,7 @@ const secretMatches = (provided: string, expected: string): boolean => {
 };
 
 const assertMigrateSecret = (providedSecret?: string): void => {
-    const secret = process.env.MIGRATE_SECRET;
+    const secret = getMigrateSecret();
     if (!secret || !providedSecret || !secretMatches(providedSecret, secret)) {
         throw forbidden();
     }

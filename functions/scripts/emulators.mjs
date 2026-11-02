@@ -8,6 +8,11 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureSecretLocal } from './ensure-secret-local.mjs';
+
+// Sin esto, el emulador buscaría en Secret Manager cada secreto que
+// `.secret.local` no defina (ver ensure-secret-local.mjs).
+ensureSecretLocal();
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const dataDir = join(root, '.emulator-data');

@@ -1,39 +1,60 @@
 #!/usr/bin/env node
-// Falla si `functions/.env` todavía trae secretos.
+// Falla si un `.env` desplegable todavía trae secretos.
 //
-// Firebase carga `.env` en TODOS los proyectos y también en el emulador, así que
-// un secreto de producción ahí se desplegaría a `farma-jyv-dev` y el emulador
-// podría cobrar, mandar correo o subir archivos reales. Los secretos van en
-// `.env.farma-jyv` (prod), `.env.farma-jyv-dev` (dev) o `.env.local` (emulador).
+// 1. Los secretos de Secret Manager (los `defineSecret` de src/config/secrets.ts)
+//    no pueden aparecer en NINGÚN `.env` desplegable: ni `functions/.env` ni
+//    `functions/.env.<proyecto|alias>`. Ni siquiera vacíos: la función monta el
+//    secreto con ese mismo nombre de variable y un `.env` que lo repite choca con
+//    él (o lo pisa). Su lugar es Secret Manager (RUNBOOK «Secretos») y, en local,
+//    `functions/.secret.local` / `functions/.env.local`.
+// 2. `functions/.env` se carga en TODOS los proyectos y en el emulador, así que
+//    además no puede traer ninguna `MERCADOPAGO_*` con valor: la cuenta de dev
+//    no es la de producción.
 //
-// Solo lee NOMBRES de variables con valor no vacío; nunca imprime valores.
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+// `.env.local`, `.secret.local`, `.env.demo-*` (emulador) y las plantillas
+// `*.example` no se despliegan y no se revisan.
+//
+// Solo imprime NOMBRES de variables, nunca valores. Acepta como argumento otro
+// directorio a revisar (lo usan las pruebas); por defecto, `functions/`.
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { functionsDir, parseEnv, readSecretNames } from './secret-names.mjs';
 
-const SECRET_KEYS = [
-    /^MERCADOPAGO_/,
-    /^RESEND_API_KEY$/,
-    /^R2_ACCESS_KEY_ID$/,
-    /^R2_SECRET_ACCESS_KEY$/,
-    /^MIGRATE_SECRET$/,
-    /^OPENROUTER_API_KEY$/,
-];
+const targetDir = process.argv[2] ? resolve(process.argv[2]) : functionsDir;
+const secretNames = new Set(readSecretNames());
+const SHARED_ONLY = [/^MERCADOPAGO_/];
 
-const envPath = join(dirname(fileURLToPath(import.meta.url)), '..', '.env');
-if (!existsSync(envPath)) process.exit(0);
+const isDeployableEnvFile = (name) =>
+    (name === '.env' || name.startsWith('.env.')) &&
+    !name.endsWith('.example') &&
+    !name.endsWith('.local') &&
+    !name.startsWith('.env.demo-');
 
-const offending = readFileSync(envPath, 'utf8')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('#'))
-    .map((line) => line.split('=', 2))
-    .filter(([key, value]) => value && value.trim() && SECRET_KEYS.some((re) => re.test(key.trim())))
-    .map(([key]) => key.trim());
+const files = existsSync(targetDir) ? readdirSync(targetDir).filter(isDeployableEnvFile).sort() : [];
 
-if (offending.length) {
-    console.error('functions/.env contiene secretos que Firebase cargaría en todos los ambientes:');
-    offending.forEach((key) => console.error(`  - ${key}`));
-    console.error('Muévelos a functions/.env.farma-jyv (prod). Ver docs/AMBIENTES.md.');
+const problems = [];
+for (const file of files) {
+    const entries = parseEnv(readFileSync(join(targetDir, file), 'utf8'));
+    for (const [key, value] of entries) {
+        if (secretNames.has(key)) {
+            problems.push({ file, key, reason: 'es un secreto de Secret Manager' });
+        } else if (
+            file === '.env' &&
+            value.trim() &&
+            SHARED_ONLY.some((re) => re.test(key))
+        ) {
+            problems.push({ file, key, reason: 'se cargaría en todos los ambientes' });
+        }
+    }
+}
+
+if (problems.length) {
+    console.error('Hay secretos en archivos .env que se despliegan:');
+    problems.forEach(({ file, key, reason }) => console.error(`  - functions/${file}: ${key} (${reason})`));
+    console.error(
+        'Los secretos van en Secret Manager (RUNBOOK «Secretos») y, para el emulador o `npm run dev`,\n' +
+        'en functions/.secret.local. Las MERCADOPAGO_* no secretas van en .env.<proyecto>.\n' +
+        'Borra esas líneas (y los valores viejos) de los .env. Ver docs/AMBIENTES.md.',
+    );
     process.exit(1);
 }

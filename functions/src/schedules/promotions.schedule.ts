@@ -1,4 +1,5 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { EMAIL_SECRETS } from '../config/secrets';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
 
 /**
@@ -18,6 +19,8 @@ export const dailyPromotionsMaintenance = onSchedule(
         memory: '256MiB',
         timeoutSeconds: 120,
         schedule: '5 7 * * *',
+        // Solo Resend: el correo de desempeño y de las que terminan hoy.
+        secrets: EMAIL_SECRETS,
     },
     async () => {
         const { sendPromotionsMaintenanceReport } = await import(

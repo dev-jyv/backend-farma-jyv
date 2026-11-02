@@ -511,3 +511,146 @@ Haz igual los pasos manuales de los PRs etiquetados (búscalos con
 `gh pr list --label requiere-paso-manual --state merged`) y anota en el PR o en
 el release que se desplegó a mano y por qué.
 
+## 8. Secretos en Secret Manager (SPEC 35)
+
+Las credenciales del backend viven en **Cloud Secret Manager** de cada proyecto,
+no en `functions/.env.<proyecto>`. Se declaran una sola vez en
+`functions/src/config/secrets.ts` (`defineSecret`) y Firebase las monta como
+variables de entorno **al arrancar la instancia**, solo en las funciones que las
+declaran. Nada lee Secret Manager por petición.
+
+| Secreto | Proveedor | Montado en | Tiene valor hoy |
+|---|---|---|---|
+| `MERCADOPAGO_ACCESS_TOKEN` | Mercado Pago | `api` | sí |
+| `MERCADOPAGO_WEBHOOK_SECRET` | Mercado Pago | `api` | **no**: espacio reservado en blanco |
+| `RESEND_API_KEY` | Resend | `api`, `dailySalesReport`, `monthlySalesReport`, `dailyInventoryAlerts`, `dailyPromotionsMaintenance` | sí |
+| `R2_ACCESS_KEY_ID` | Cloudflare R2 | `api` | sí |
+| `R2_SECRET_ACCESS_KEY` | Cloudflare R2 | `api` | sí |
+| `MIGRATE_SECRET` | propio (aleatorio) | `api` | sí |
+| `OPENROUTER_API_KEY` | OpenRouter | `api` | sí |
+
+`dailyFirestoreBackup` y `dailyStatsIntegrityCheck` no montan ninguno. Lo no
+secreto (`CORS_ORIGINS`, `RECEIPT_*`, `REPORTS_EMAIL_*`, `R2_ACCOUNT_ID`,
+`R2_BUCKET`, `MERCADOPAGO_USER_ID`, modelos de OpenRouter…) sigue en los `.env`.
+
+**Comportamiento sin valor**, igual que antes: R2 sin alguna llave manda las
+facturas a `uploads/` de Firebase Storage; el webhook de Mercado Pago sin secreto
+se rechaza en producción (el POS resuelve por sondeo); sin token de Mercado Pago,
+Resend u OpenRouter esas rutas responden su error controlado. Un valor en blanco
+cuenta como "sin valor" (el backend recorta).
+
+Los dos chequeos que protegen el deploy (`deploy:dev` / `deploy:prod` los corren
+solos):
+
+- `scripts/check-env-split.mjs` — falla si alguno de los siete aparece, aunque
+  sea vacío, en `functions/.env` o `functions/.env.<proyecto|alias>`.
+- `scripts/check-secrets.mjs <dev|prod>` — falla, **nombrando el que falta**, si
+  algún secreto no existe en el proyecto o su última versión no está habilitada.
+  Sin él, `firebase deploy` interactivo *pide el valor en la terminal* y lo crea
+  al vuelo; no escribas valores ahí: cancela y sigue §8.1. A mano:
+  `npm --prefix functions run check:secrets -- dev`.
+
+Permisos de quien opera: `roles/secretmanager.admin` para crear y rotar (o
+`roles/secretmanager.secretVersionManager` si el secreto ya existe);
+`roles/secretmanager.viewer` basta para `check:secrets` (solo metadatos).
+`roles/secretmanager.secretAccessor` (leer valores) solo a la cuenta de servicio
+de las funciones y, puntualmente, a quien corra `migrate:roles` remoto.
+
+### 8.1 Crear (por proyecto: primero `farma-jyv-dev`, luego `farma-jyv`)
+
+```bash
+# Pide el valor sin mostrarlo. Repetir por cada secreto con valor.
+firebase functions:secrets:set RESEND_API_KEY --project dev
+
+# MIGRATE_SECRET: 48 bytes aleatorios (≥ 32), sin salto de línea.
+openssl rand -base64 48 | tr -d '\n' \
+  | firebase functions:secrets:set MIGRATE_SECRET --data-file=- --project dev
+
+# MERCADOPAGO_WEBHOOK_SECRET todavía no tiene valor (configurarlo es otra tarea):
+# solo se reserva su espacio con un blanco (no vacío, para que la versión exista
+# con contenido), que el backend recorta y trata como "sin secreto".
+printf ' ' | firebase functions:secrets:set MERCADOPAGO_WEBHOOK_SECRET --data-file=- --project dev
+
+# Verificar que estén los siete antes de desplegar:
+npm --prefix functions run check:secrets -- dev
+```
+
+En dev, credenciales de **prueba** (Mercado Pago `TEST-...`, bucket R2 aparte,
+dominio/destinatario de prueba en Resend).
+
+### 8.2 Dar acceso
+
+`firebase deploy` concede `roles/secretmanager.secretAccessor` sobre cada
+secreto a la cuenta de servicio con la que corre cada función que lo declara
+(por omisión, la de Compute Engine:
+`<PROJECT_NUMBER>-compute@developer.gserviceaccount.com`). No hace falta tocar
+IAM salvo que cambie la cuenta de servicio o se quiera dar acceso a una persona:
+
+```bash
+gcloud secrets add-iam-policy-binding MIGRATE_SECRET --project farma-jyv \
+  --member="user:<correo>" --role="roles/secretmanager.secretAccessor"
+# y quitarlo al terminar:
+gcloud secrets remove-iam-policy-binding MIGRATE_SECRET --project farma-jyv \
+  --member="user:<correo>" --role="roles/secretmanager.secretAccessor"
+```
+
+Revisar quién puede leer: `gcloud secrets get-iam-policy <NOMBRE> --project <proyecto>`.
+Las lecturas de valores quedan en Cloud Audit Logs (Data Access de Secret
+Manager, si está habilitado para el servicio).
+
+### 8.3 Rotar — en este orden, por proyecto y por secreto
+
+1. **Emitir el valor nuevo en el proveedor** sin revocar el viejo.
+2. **Guardarlo** en Secret Manager:
+   `firebase functions:secrets:set <NOMBRE> --project <dev|prod>` (crea una
+   versión nueva).
+3. **Desplegar** (`npm --prefix functions run deploy:<dev|prod>`). Las instancias
+   calientes conservan el valor anterior hasta reciclarse: el deploy crea una
+   revisión nueva y es lo que fuerza el cambio. Sin deploy, el valor nuevo no se
+   usa.
+4. **Verificar el flujo que lo usa** (tabla de abajo).
+5. **Revocar el valor viejo en el proveedor.** Nunca antes de 4: revocar primero
+   deja sin cobros con tarjeta, correos o facturas.
+6. Destruir las versiones viejas en Secret Manager:
+   `firebase functions:secrets:prune --project <dev|prod>` (o
+   `firebase functions:secrets:destroy <NOMBRE>@<versión>`).
+
+| Secreto | Emitir nuevo / revocar viejo | Verificar |
+|---|---|---|
+| `MERCADOPAGO_ACCESS_TOKEN` | Mercado Pago → Tus integraciones → la app → Credenciales → renovar | una orden Point (`POST /v1/payments/mercadopago/orders`) cobrada en la terminal. **Probar primero en dev**: renovar puede afectar la vinculación con la Point |
+| `RESEND_API_KEY` | Resend → API Keys → crear (solo envío) / borrar la vieja | `POST /v1/internal/reports/daily` con `x-migrate-secret` llega al correo |
+| `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` | Cloudflare → R2 → Manage API tokens → token Object Read & Write **solo sobre el bucket** / borrar el viejo. Las dos se rotan juntas | subir un comprobante a `POST /v1/uploads/facturas`, que quede en `facturas/` y que su URL firmada abra |
+| `OPENROUTER_API_KEY` | OpenRouter → Keys → crear / borrar la vieja | una pregunta a `POST /v1/assistant/chat` responde (no 503) |
+| `MIGRATE_SECRET` | `openssl rand -base64 48` (no hay proveedor: queda revocado cuando el deploy deja de montar la versión vieja y se destruye en el paso 6) | `POST /v1/internal/migrate-roles` con el nuevo responde 200 y con el viejo **403** |
+| `MERCADOPAGO_WEBHOOK_SECRET` | hoy no se rota (espacio en blanco). Al configurarlo: Mercado Pago → Webhooks → clave secreta | un aviso firmado del panel de MP llega y uno sin firma se rechaza |
+
+### 8.4 Migración inicial desde `.env` (una vez por proyecto: dev, después prod)
+
+Los valores que vivieron en `.env` viajaron en paquetes desplegados: **se rotan**,
+no se copian.
+
+1. Crear los siete secretos con valores **nuevos** (§8.1 y pasos 1–2 de §8.3).
+2. Borrar las siete líneas de `functions/.env.<proyecto>` (y de `functions/.env`
+   si las hubiera). `check-env-split` no deja desplegar mientras sigan ahí.
+3. `npm --prefix functions run deploy:<dev|prod>` (corre los dos chequeos).
+4. Verificar: venta con tarjeta / orden Point, correo de reporte manual, subida a
+   `facturas/`, consulta al asistente, `migrate-roles` con el secreto nuevo.
+5. Revocar en cada proveedor los valores viejos y comprobar que fallan (p. ej.
+   `migrate-roles` con el `MIGRATE_SECRET` viejo responde 403).
+6. Pedir a todos los que tengan `functions/.env.farma-jyv` /
+   `.env.farma-jyv-dev` locales que borren de ahí los valores viejos.
+
+### 8.5 Local (emulador y `npm run dev`)
+
+No usan Secret Manager. Los valores salen de `functions/.secret.local` (ignorado
+por git y por el deploy); `npm run emulators` lo completa solo, con `" "` para lo
+que no tenga valor (el emulador no sale a buscarlo y el backend lo trata como
+"sin valor"). Plantilla: `functions/.secret.local.example`. `npm run dev` carga
+`.env`, `.env.local` y `.secret.local`, en ese orden. En Jest, las pruebas
+inyectan los valores con `process.env`. Los scripts locales (`migrate:roles`,
+`seed:emulator`) siguen leyendo `process.env`; para `migrate:roles` remoto:
+
+```bash
+MIGRATE_SECRET="$(firebase functions:secrets:access MIGRATE_SECRET --project prod)" \
+  npm --prefix functions run migrate:roles
+```
