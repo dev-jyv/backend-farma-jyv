@@ -133,6 +133,12 @@ export const posDiagnosticsSchema = z.object({
      * equipo, así que es la única forma de saber qué caja tiene turno en curso.
      */
     openCashSessionId: z.string().max(128).nullable().optional(),
+    /**
+     * Fecha (ISO) de la última copia local de rutina de la base de la caja
+     * (SPEC 37), o `null` si nunca se ha hecho. Opcional: una caja sin
+     * actualizar no la manda y su reporte se tiene que seguir aceptando.
+     */
+    lastLocalBackupAt: clientDate.nullable().optional(),
 });
 
 export const posCommandTypeSchema = z.enum([

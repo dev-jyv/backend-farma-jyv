@@ -17,6 +17,9 @@ const mapSnapshot = (data: FirebaseFirestore.DocumentData): StoredPosDiagnostics
     const { receivedAt, reportedBy, silenceAlertedAt, ...input } = data;
     return {
         ...(input as PosDiagnosticsInput),
+        // Las cajas sin actualizar (o los snapshots anteriores a SPEC 37) no lo
+        // traen: el panel recibe `null`, "sin copia reportada", no un campo ausente.
+        lastLocalBackupAt: (input.lastLocalBackupAt as string | null | undefined) ?? null,
         receivedAt: (receivedAt as Timestamp).toDate().toISOString(),
         reportedBy: reportedBy as string,
         // Ausente en snapshots anteriores a SPEC 44: equivale a "no se ha avisado".

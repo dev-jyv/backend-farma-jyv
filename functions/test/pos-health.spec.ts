@@ -128,6 +128,26 @@ describe('posDiagnosticsSchema', () => {
         expect(posDiagnosticsSchema.safeParse(diagnostico({ deviceId })).success).toBe(false);
     });
 
+    it('acepta lastLocalBackupAt ISO o null (SPEC 37)', () => {
+        const iso = '2026-11-02T20:39:30.695Z';
+        const conCopia = posDiagnosticsSchema.parse(diagnostico({ lastLocalBackupAt: iso }));
+        expect(conCopia.lastLocalBackupAt).toBe(iso);
+        const sinCopia = posDiagnosticsSchema.parse(diagnostico({ lastLocalBackupAt: null }));
+        expect(sinCopia.lastLocalBackupAt).toBeNull();
+    });
+
+    it('una caja sin actualizar (sin lastLocalBackupAt) se sigue aceptando', () => {
+        const viejo = diagnostico();
+        expect('lastLocalBackupAt' in viejo).toBe(false);
+        const parsed = posDiagnosticsSchema.safeParse(viejo);
+        expect(parsed.success).toBe(true);
+    });
+
+    it('rechaza un lastLocalBackupAt que no es texto', () => {
+        const malo = { ...diagnostico(), lastLocalBackupAt: 12345 };
+        expect(posDiagnosticsSchema.safeParse(malo).success).toBe(false);
+    });
+
     it('rechaza enums fuera del contrato', () => {
         const malo = diagnostico({ syncLog: [{
             at: 'x', level: 'debug' as never, entity: 'sale', message: 'm', ref: null,
@@ -183,6 +203,24 @@ describe('reportDiagnostics', () => {
         expect(recibido).toBeGreaterThanOrEqual(antes - 1000);
         expect(recibido).toBeLessThanOrEqual(despues + 1000);
         expect(new Date(adelantado).getTime() - recibido).toBeGreaterThan(55 * 60 * 1000);
+    });
+
+    it('guarda y devuelve lastLocalBackupAt; sin él (caja vieja) se lee null', async () => {
+        const iso = '2026-11-02T20:39:30.695Z';
+        await posHealthService.reportDiagnostics(
+            posDiagnosticsSchema.parse(diagnostico({ lastLocalBackupAt: iso })), CAJERO,
+        );
+        await posHealthService.reportDiagnostics(
+            posDiagnosticsSchema.parse(diagnostico({ deviceId: 'caja-vieja' })), CAJERO,
+        );
+
+        const lista = await posHealthService.listDiagnostics();
+        const nueva = lista.find((item) => item.deviceId === 'caja-01');
+        const vieja = lista.find((item) => item.deviceId === 'caja-vieja');
+        expect(nueva?.lastLocalBackupAt).toBe(iso);
+        expect(vieja?.lastLocalBackupAt).toBeNull();
+        const { snapshot } = await posHealthService.getDeviceDiagnostics('caja-01');
+        expect(snapshot.lastLocalBackupAt).toBe(iso);
     });
 
     it('sobrescribe el snapshot: lo que la caja ya no reporta desaparece', async () => {

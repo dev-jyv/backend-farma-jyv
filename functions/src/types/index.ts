@@ -1899,6 +1899,11 @@ export interface PosDiagnosticsInput {
      * anterior a SPEC 44: esas no reciben aviso de silencio.
      */
     openCashSessionId?: string | null;
+    /**
+     * Última copia local de rutina de la base de la caja (ISO), `null` si no hay
+     * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
+     */
+    lastLocalBackupAt?: string | null;
 }
 
 export type PosCommandType =
