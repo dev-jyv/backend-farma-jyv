@@ -45,6 +45,12 @@ jobs:
       - name: Compilar
         run: npm run build
 
+      # Definiciones y scripts de operación (SPEC 31/32/34/42/43): validan las
+      # plantillas y que nada llame a gcloud sin --apply. No tocan GCP.
+      - name: Pruebas de scripts/ops
+        working-directory: .
+        run: npm run test:ops
+
       - name: Tests con umbral de cobertura
         run: npm run test:coverage
         env:

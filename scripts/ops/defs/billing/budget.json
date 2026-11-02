@@ -1,0 +1,19 @@
+{
+  "displayName": "FarmaJyV · presupuesto mensual {{PROJECT}}",
+  "budgetFilter": {
+    "projects": ["projects/{{PROJECT_NUMBER}}"],
+    "calendarPeriod": "MONTH",
+    "creditTypesTreatment": "INCLUDE_ALL_CREDITS"
+  },
+  "amount": {
+    "specifiedAmount": { "currencyCode": "{{CURRENCY}}", "units": "{{AMOUNT}}" }
+  },
+  "thresholdRules": [
+    { "thresholdPercent": 0.5, "spendBasis": "CURRENT_SPEND" },
+    { "thresholdPercent": 0.9, "spendBasis": "CURRENT_SPEND" },
+    { "thresholdPercent": 1.0, "spendBasis": "CURRENT_SPEND" }
+  ],
+  "notificationsRule": {
+    "disableDefaultIamRecipients": false
+  }
+}

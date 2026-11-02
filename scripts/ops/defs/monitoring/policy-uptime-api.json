@@ -1,0 +1,31 @@
+{
+  "displayName": "FarmaJyV · API caída (/v1/health)",
+  "combiner": "OR",
+  "severity": "CRITICAL",
+  "conditions": [
+    {
+      "displayName": "/v1/health falla desde 2 o más regiones durante 5 min",
+      "conditionThreshold": {
+        "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND resource.type=\"uptime_url\" AND metric.label.check_id=\"{{UPTIME_CHECK_ID}}\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "1200s",
+            "perSeriesAligner": "ALIGN_NEXT_OLDER",
+            "crossSeriesReducer": "REDUCE_COUNT_FALSE",
+            "groupByFields": ["resource.label.*"]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 1,
+        "duration": "300s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "86400s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "subject": "FarmaJyV: la API no responde",
+    "content": "`GET https://{{API_HOST}}{{HEALTH_PATH}}` falla desde al menos 2 regiones durante 5 minutos. Sin `api` no hay panel, ni cobro con terminal, ni sincronización del POS (el efectivo se encola en la caja).\n\n1. Abrir los logs de `api` (RUNBOOK §7) y buscar el error de arranque.\n2. Si coincide con un despliegue, revisar §1/§2e (índices antes que código).\n3. Avisar a la farmacia si dura más de 15 minutos."
+  }
+}

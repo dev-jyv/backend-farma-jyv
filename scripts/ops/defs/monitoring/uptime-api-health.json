@@ -1,0 +1,20 @@
+{
+  "displayName": "FarmaJyV · api GET /v1/health",
+  "monitoredResource": {
+    "type": "uptime_url",
+    "labels": { "project_id": "{{PROJECT}}", "host": "{{API_HOST}}" }
+  },
+  "httpCheck": {
+    "requestMethod": "GET",
+    "path": "{{HEALTH_PATH}}",
+    "port": 443,
+    "useSsl": true,
+    "validateSsl": true,
+    "acceptedResponseStatusCodes": [{ "statusValue": 200 }]
+  },
+  "contentMatchers": [{ "content": "\"status\":\"ok\"", "matcher": "CONTAINS_STRING" }],
+  "period": "300s",
+  "timeout": "{{=UPTIME_TIMEOUT_SECONDS}}s",
+  "selectedRegions": ["USA_IOWA", "USA_OREGON", "USA_VIRGINIA"],
+  "checkerType": "STATIC_IP_CHECKERS"
+}
