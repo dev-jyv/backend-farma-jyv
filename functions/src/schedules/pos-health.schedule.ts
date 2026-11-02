@@ -1,5 +1,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { EMAIL_SECRETS } from '../config/secrets';
 import { APP_TIME_ZONE } from '../utils/timezone';
+import { monitoredJob } from './scheduled-job';
 
 /**
  * Revisión horaria de cajas en silencio (SPEC 44): avisa por correo de cada
@@ -22,8 +24,11 @@ export const hourlyPosSilenceCheck = onSchedule(
         memory: '256MiB',
         timeoutSeconds: 120,
         schedule: '0 * * * *',
+        // Solo Resend: el correo de caja en silencio (SPEC 35).
+        secrets: EMAIL_SECRETS,
     },
-    async () => {
+    // Log estructurado `scheduled_job.finished` para las alertas de SPEC 32.
+    monitoredJob('hourlyPosSilenceCheck', async () => {
         const { checkSilentDevices } = await import(
             '../services/pos-health-alerts-sender.service'
         );
@@ -33,5 +38,6 @@ export const hourlyPosSilenceCheck = onSchedule(
                 `${alerted.length} avisadas, ${failed.length} con envío fallido`,
             { alerted, failed },
         );
-    },
+        return { checked, alerted: alerted.length, failed: failed.length };
+    }),
 );

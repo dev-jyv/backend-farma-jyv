@@ -2,7 +2,7 @@
 --
 -- Consulta de Log Analytics (Logging → Log Analytics). Guardarla con el nombre
 -- "SPEC 41 · App Check sin token por día" y compartirla con el proyecto; el
--- enlace va en RUNBOOK.md §8. Para dev, cambiar `farma-jyv` por `farma-jyv-dev`.
+-- enlace va en RUNBOOK.md §13. Para dev, cambiar `farma-jyv` por `farma-jyv-dev`.
 --
 -- La fuente es el log `Petición sin App Check válido` que escribe AppCheckGuard
 -- (functions/src/modules/identity/guards/app-check.guard.ts) con severidad

@@ -42,6 +42,13 @@
       "severity": "WARNING",
       "schedule": "07:10 diario",
       "action": "La verificación de dailyStats no corrió: correr npm run backfill:daily-stats -- --dry-run."
+    },
+    {
+      "name": "hourlyPosSilenceCheck",
+      "retryCount": 0,
+      "severity": "WARNING",
+      "schedule": "cada hora (minuto 0)",
+      "action": "No se revisaron las cajas en silencio: ver /salud-cajas en el panel; la siguiente corrida (en 1 h) vuelve a revisar y avisa lo pendiente."
     }
   ]
 }

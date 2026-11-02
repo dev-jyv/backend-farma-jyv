@@ -2,7 +2,7 @@
 # Workload Identity Federation para desplegar desde GitHub Actions (SPEC 39).
 #
 # NO lo corre el pipeline ni ningún agente: lo ejecuta UNA vez por proyecto el
-# dueño de la cuenta, con `gcloud auth login` (RUNBOOK §8.1). Es idempotente:
+# dueño de la cuenta, con `gcloud auth login` (RUNBOOK §10.1). Es idempotente:
 # lo que ya existe se reporta y se sigue.
 #
 #   scripts/ci/setup-wif.sh farma-jyv-dev

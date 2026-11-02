@@ -39,6 +39,11 @@ gcloud config get-value project
 | Medición de arranque en frío (SPEC 34) | ⏳ consulta y reporte listos; faltan los 14 días — §8 |
 | Disparador de límites compartidos (SPEC 42) | ⏳ dashboard y reporte listos, sin aplicar — §9 |
 | Simulacro de restauración (SPEC 43) | ⏳ procedimiento listo; falta el primero — §4 |
+| Despliegue desde GitHub Actions (SPEC 39) | ⏳ workflows listos; faltan WIF, environments y variables — §10 |
+| Secretos en Secret Manager (SPEC 35) | ⏳ código listo; faltan los siete secretos en cada proyecto — §11 |
+| Función `reportsPdf` (SPEC 38) | ⏳ código listo, sin desplegar — §12 |
+| App Check en modo registro (SPEC 41) | ⏳ guard listo; falta registrar el panel en App Check — §13 |
+| Salud de cajas, copia local y alertas (SPEC 36/37/44) | ⏳ código listo; faltan índices, `migrate:roles` y despliegue — §14–§15 |
 
 ### Limpieza de datos de prueba — 2026-09-17
 
@@ -789,7 +794,7 @@ límite compartido es la respuesta o basta revisar el uso. No incluye compartir
 
 ---
 
-## 8. Liberación (despliegue desde GitHub Actions)
+## 10. Liberación (despliegue desde GitHub Actions)
 
 Contrato (SPEC 39): **merge a `main` con CI verde = `farma-jyv-dev`**; **tag
 `vX.Y.Z` sobre `main` = candidato a `farma-jyv`**, que sale solo cuando `dev-jyv`
@@ -800,7 +805,7 @@ solo el panel.
 `deploy.yml` se autentica con **Workload Identity Federation**: ninguna llave JSON
 vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
 
-### 8.1 Una sola vez por proyecto (dueño de la cuenta)
+### 10.1 Una sola vez por proyecto (dueño de la cuenta)
 
 1. `scripts/ci/setup-wif.sh farma-jyv-dev` y `scripts/ci/setup-wif.sh farma-jyv`
    (con `gcloud auth login`). Crean el pool `github-actions`, el proveedor `github`
@@ -824,12 +829,21 @@ vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
      cualquiera de las siete credenciales de SPEC 35 (las variables se ven en
      claro) o si el código todavía no las declara con `defineSecret`.
 4. Etiqueta `requiere-paso-manual` en ambos repos.
+5. Secretos (SPEC 35), antes del primer despliegue desde el pipeline: los siete
+   tienen que existir en el proyecto (§11.1) — el job `Verificar secretos en
+   Secret Manager` corre `check-secrets.mjs` y se detiene nombrando el que falte —
+   y la cuenta de servicio de las funciones ya debe tener
+   `roles/secretmanager.secretAccessor` sobre cada uno. `deploy-backend@` solo
+   tiene `roles/secretmanager.viewer` y **no puede concederlo**: haz el primer
+   despliegue con secretos a mano (§11.4, que lo concede) o da el acceso con el
+   `gcloud secrets add-iam-policy-binding` de §11.2. Un secreto nuevo en
+   `config/secrets.ts` repite este paso.
 
 Hasta que SPEC 35 esté en `main`, el job de despliegue falla a propósito en el
 paso de variables: el pipeline no maneja credenciales en `.env`. Mientras tanto,
-despliegue manual (§8.5).
+despliegue manual (§10.5).
 
-### 8.2 Etiquetar PRs con pasos manuales
+### 10.2 Etiquetar PRs con pasos manuales
 
 Un PR que exija backfill, `migrate:roles`, crear un secreto u otro paso de este
 RUNBOOK antes o después del código lleva la etiqueta **`requiere-paso-manual`**
@@ -842,7 +856,7 @@ Paso manual: RUNBOOK §2b — backfill:search-name antes de desplegar
 El pipeline **no** ejecuta backfills ni `migrate:roles`. Si la línea falta, el
 resumen del run lo marca como "no indicado".
 
-### 8.3 Liberar a producción
+### 10.3 Liberar a producción
 
 1. Confirmar que `main` está desplegado y probado en `farma-jyv-dev` (el job `dev`
    de `deploy.yml` corre solo tras cada CI verde de `main`).
@@ -875,14 +889,14 @@ primero (`concurrency`). Los de producción nunca se cancelan entre sí: esperan
 **No despliegues a mano mientras corre un job de `deploy.yml`** contra el mismo
 proyecto: Firebase serializa, pero el estado final es el del último en terminar.
 
-### 8.4 Panel
+### 10.4 Panel
 
 `farma-jyv-admin/.github/workflows/deploy.yml` sigue el mismo flujo para Hosting
 (`hosting:admin-dev` en dev, `hosting:admin` en prod), con sus propios tags `v*`,
 su environment `production` (revisor `dev-jyv`) y su propio resumen de PRs con
 `requiere-paso-manual`. No despliega índices: el panel no tiene.
 
-### 8.5 Despliegue manual (GitHub Actions caído o `dev-jyv` no disponible)
+### 10.5 Despliegue manual (GitHub Actions caído o `dev-jyv` no disponible)
 
 Con `firebase login` y `gcloud auth login` de una cuenta con acceso, desde un
 checkout limpio del commit a liberar (el del tag) y con los `.env.<proyecto>`
@@ -902,7 +916,9 @@ Haz igual los pasos manuales de los PRs etiquetados (búscalos con
 `gh pr list --label requiere-paso-manual --state merged`) y anota en el PR o en
 el release que se desplegó a mano y por qué.
 
-## 8. Secretos en Secret Manager (SPEC 35)
+---
+
+## 11. Secretos en Secret Manager (SPEC 35)
 
 Las credenciales del backend viven en **Cloud Secret Manager** de cada proyecto,
 no en `functions/.env.<proyecto>`. Se declaran una sola vez en
@@ -914,13 +930,15 @@ declaran. Nada lee Secret Manager por petición.
 |---|---|---|---|
 | `MERCADOPAGO_ACCESS_TOKEN` | Mercado Pago | `api` | sí |
 | `MERCADOPAGO_WEBHOOK_SECRET` | Mercado Pago | `api` | **no**: espacio reservado en blanco |
-| `RESEND_API_KEY` | Resend | `api`, `dailySalesReport`, `monthlySalesReport`, `dailyInventoryAlerts`, `dailyPromotionsMaintenance` | sí |
+| `RESEND_API_KEY` | Resend | `api`, `dailySalesReport`, `monthlySalesReport`, `dailyInventoryAlerts`, `dailyPromotionsMaintenance`, `hourlyPosSilenceCheck` | sí |
 | `R2_ACCESS_KEY_ID` | Cloudflare R2 | `api` | sí |
 | `R2_SECRET_ACCESS_KEY` | Cloudflare R2 | `api` | sí |
 | `MIGRATE_SECRET` | propio (aleatorio) | `api` | sí |
 | `OPENROUTER_API_KEY` | OpenRouter | `api` | sí |
 
-`dailyFirestoreBackup` y `dailyStatsIntegrityCheck` no montan ninguno. Lo no
+`dailyFirestoreBackup`, `dailyStatsIntegrityCheck` y `reportsPdf` no montan ninguno
+(los PDF solo leen Firestore; si algún día uno toca R2, sin las llaves cae a
+`uploads/` igual que sin configurar). Lo no
 secreto (`CORS_ORIGINS`, `RECEIPT_*`, `REPORTS_EMAIL_*`, `R2_ACCOUNT_ID`,
 `R2_BUCKET`, `MERCADOPAGO_USER_ID`, modelos de OpenRouter…) sigue en los `.env`.
 
@@ -938,7 +956,7 @@ solos):
 - `scripts/check-secrets.mjs <dev|prod>` — falla, **nombrando el que falta**, si
   algún secreto no existe en el proyecto o su última versión no está habilitada.
   Sin él, `firebase deploy` interactivo *pide el valor en la terminal* y lo crea
-  al vuelo; no escribas valores ahí: cancela y sigue §8.1. A mano:
+  al vuelo; no escribas valores ahí: cancela y sigue §11.1. A mano:
   `npm --prefix functions run check:secrets -- dev`.
 
 Permisos de quien opera: `roles/secretmanager.admin` para crear y rotar (o
@@ -947,7 +965,7 @@ Permisos de quien opera: `roles/secretmanager.admin` para crear y rotar (o
 `roles/secretmanager.secretAccessor` (leer valores) solo a la cuenta de servicio
 de las funciones y, puntualmente, a quien corra `migrate:roles` remoto.
 
-### 8.1 Crear (por proyecto: primero `farma-jyv-dev`, luego `farma-jyv`)
+### 11.1 Crear (por proyecto: primero `farma-jyv-dev`, luego `farma-jyv`)
 
 ```bash
 # Pide el valor sin mostrarlo. Repetir por cada secreto con valor.
@@ -969,7 +987,7 @@ npm --prefix functions run check:secrets -- dev
 En dev, credenciales de **prueba** (Mercado Pago `TEST-...`, bucket R2 aparte,
 dominio/destinatario de prueba en Resend).
 
-### 8.2 Dar acceso
+### 11.2 Dar acceso
 
 `firebase deploy` concede `roles/secretmanager.secretAccessor` sobre cada
 secreto a la cuenta de servicio con la que corre cada función que lo declara
@@ -989,7 +1007,7 @@ Revisar quién puede leer: `gcloud secrets get-iam-policy <NOMBRE> --project <pr
 Las lecturas de valores quedan en Cloud Audit Logs (Data Access de Secret
 Manager, si está habilitado para el servicio).
 
-### 8.3 Rotar — en este orden, por proyecto y por secreto
+### 11.3 Rotar — en este orden, por proyecto y por secreto
 
 1. **Emitir el valor nuevo en el proveedor** sin revocar el viejo.
 2. **Guardarlo** en Secret Manager:
@@ -1015,12 +1033,12 @@ Manager, si está habilitado para el servicio).
 | `MIGRATE_SECRET` | `openssl rand -base64 48` (no hay proveedor: queda revocado cuando el deploy deja de montar la versión vieja y se destruye en el paso 6) | `POST /v1/internal/migrate-roles` con el nuevo responde 200 y con el viejo **403** |
 | `MERCADOPAGO_WEBHOOK_SECRET` | hoy no se rota (espacio en blanco). Al configurarlo: Mercado Pago → Webhooks → clave secreta | un aviso firmado del panel de MP llega y uno sin firma se rechaza |
 
-### 8.4 Migración inicial desde `.env` (una vez por proyecto: dev, después prod)
+### 11.4 Migración inicial desde `.env` (una vez por proyecto: dev, después prod)
 
 Los valores que vivieron en `.env` viajaron en paquetes desplegados: **se rotan**,
 no se copian.
 
-1. Crear los siete secretos con valores **nuevos** (§8.1 y pasos 1–2 de §8.3).
+1. Crear los siete secretos con valores **nuevos** (§11.1 y pasos 1–2 de §11.3).
 2. Borrar las siete líneas de `functions/.env.<proyecto>` (y de `functions/.env`
    si las hubiera). `check-env-split` no deja desplegar mientras sigan ahí.
 3. `npm --prefix functions run deploy:<dev|prod>` (corre los dos chequeos).
@@ -1031,7 +1049,7 @@ no se copian.
 6. Pedir a todos los que tengan `functions/.env.farma-jyv` /
    `.env.farma-jyv-dev` locales que borren de ahí los valores viejos.
 
-### 8.5 Local (emulador y `npm run dev`)
+### 11.5 Local (emulador y `npm run dev`)
 
 No usan Secret Manager. Los valores salen de `functions/.secret.local` (ignorado
 por git y por el deploy); `npm run emulators` lo completa solo, con `" "` para lo
@@ -1048,7 +1066,7 @@ MIGRATE_SECRET="$(firebase functions:secrets:access MIGRATE_SECRET --project pro
 
 ---
 
-## 8. PDF fuera de `api`: función `reportsPdf` (SPEC 38)
+## 12. PDF fuera de `api`: función `reportsPdf` (SPEC 38)
 
 Los PDF lanzan Chromium (Puppeteer + `@sparticuz/chromium`). Dentro de `api`
 (512 MiB, 60 s) un reporte grande podía agotar la memoria y tumbar la instancia
@@ -1119,7 +1137,7 @@ Chromium); no bloquea la caja porque es otra función.
 
 ---
 
-## 8. App Check en modo registro (SPEC 41)
+## 13. App Check en modo registro (SPEC 41)
 
 `AppCheckGuard` corre antes de `AuthGuard` y verifica `X-Firebase-AppCheck` en
 toda ruta no `@Public()`. **Nunca rechaza**: si falta o no es válida escribe un
@@ -1174,7 +1192,9 @@ firebase functions:log --only api | grep "App Check"
 curl -s https://api-vykfsskx3q-uc.a.run.app/v1/health
 ```
 
-## 8. Salud de cajas (SPEC 36) — despliegue
+---
+
+## 14. Salud de cajas (SPEC 36) — despliegue
 
 `posHealth` es un área de permiso nueva y `posCommands` trae dos índices compuestos.
 En orden:
@@ -1190,7 +1210,9 @@ En orden:
    el diagnóstico (cada sync y, con red, cada 15 min). Una caja reinstalada deja su
    fila vieja; a los 7 días sin reporte el panel la atenúa al final.
 
-## 9. Alertas de cajas por correo (SPEC 44) — despliegue
+---
+
+## 15. Alertas de cajas por correo (SPEC 44) — despliegue
 
 Sin índices ni roles nuevos: la revisión horaria usa el índice automático de un campo
 sobre `posDiagnostics.receivedAt`.

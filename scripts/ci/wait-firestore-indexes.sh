@@ -33,7 +33,7 @@ while true; do
 
     ELAPSED=$(( $(date +%s) - START ))
     if [ "${ELAPSED}" -ge "${TIMEOUT_SECONDS}" ]; then
-        echo "::error::Tras ${ELAPSED}s quedan ${CREATING} índice(s) en CREATING en ${PROJECT_ID}. No se despliegan funciones. Cuando terminen, relanza el job (RUNBOOK §8)."
+        echo "::error::Tras ${ELAPSED}s quedan ${CREATING} índice(s) en CREATING en ${PROJECT_ID}. No se despliegan funciones. Cuando terminen, relanza el job (RUNBOOK §10)."
         exit 1
     fi
 

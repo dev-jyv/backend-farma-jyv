@@ -61,7 +61,7 @@ if (undeclared.length) {
     fail(
         'Estas credenciales todavía no se declaran con defineSecret (SPEC 35): ' +
         `${undeclared.join(', ')}. El pipeline no maneja credenciales en .env; ` +
-        'despliega a mano (RUNBOOK §8) hasta que SPEC 35 esté en main.',
+        'despliega a mano (RUNBOOK §10.5) hasta que SPEC 35 esté en main.',
     );
 }
 

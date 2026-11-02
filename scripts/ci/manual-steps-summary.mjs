@@ -95,7 +95,7 @@ if (!included.length) {
     lines.push(
         `**${included.length} PR(s) con \`${LABEL}\` en ${range}.** ` +
         'Confirma que cada paso se hizo en producción **antes** de aprobar el environment ' +
-        '`production` (RUNBOOK §8). Aprobar es la confirmación; no hay otro registro.',
+        '`production` (RUNBOOK §10). Aprobar es la confirmación; no hay otro registro.',
         '',
         '| PR | Título | Paso del RUNBOOK |',
         '|---|---|---|',

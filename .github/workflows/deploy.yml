@@ -3,7 +3,7 @@ name: Deploy
 # Despliegue del backend (SPEC 39). Contrato: `main` con CI verde → `farma-jyv-dev`
 # automático; tag `vX.Y.Z` sobre `main` → `farma-jyv` tras aprobación en el
 # environment `production`. Solo despliega este repo: los tags del panel son
-# independientes (RUNBOOK §8).
+# independientes (RUNBOOK §10).
 #
 # Autenticación por Workload Identity Federation: no hay llave JSON en ningún
 # secreto. El proveedor y la cuenta de servicio vienen de variables del
@@ -78,6 +78,13 @@ jobs:
           FUNCTIONS_ENV_FILE: ${{ vars.FUNCTIONS_ENV_FILE }}
         run: node scripts/ci/write-functions-env.mjs "${PROJECT_ID}"
 
+      # SPEC 35: cada secreto de `functions/src/config/secrets.ts` debe existir en
+      # el proyecto con su última versión habilitada (solo metadatos; la cuenta de
+      # despliegue tiene `roles/secretmanager.viewer`). Si falta uno, el job lo
+      # nombra y no despliega nada, en vez de fallar a media subida de funciones.
+      - name: Verificar secretos en Secret Manager
+        run: node functions/scripts/check-secrets.mjs dev
+
       - name: Desplegar índices
         run: >-
           firebase deploy --project dev --only firestore:indexes --non-interactive
@@ -104,7 +111,7 @@ jobs:
         run: |
           git fetch --no-tags origin main
           if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
-            echo "::error::El tag ${GITHUB_REF_NAME} apunta a un commit que no está en main. Solo se libera desde main (RUNBOOK §8)."
+            echo "::error::El tag ${GITHUB_REF_NAME} apunta a un commit que no está en main. Solo se libera desde main (RUNBOOK §10)."
             exit 1
           fi
 
@@ -175,6 +182,13 @@ jobs:
         env:
           FUNCTIONS_ENV_FILE: ${{ vars.FUNCTIONS_ENV_FILE }}
         run: node scripts/ci/write-functions-env.mjs "${PROJECT_ID}"
+
+      # SPEC 35: cada secreto de `functions/src/config/secrets.ts` debe existir en
+      # el proyecto con su última versión habilitada (solo metadatos; la cuenta de
+      # despliegue tiene `roles/secretmanager.viewer`). Si falta uno, el job lo
+      # nombra y no despliega nada, en vez de fallar a media subida de funciones.
+      - name: Verificar secretos en Secret Manager
+        run: node functions/scripts/check-secrets.mjs prod
 
       # RUNBOOK §1 / §2e: índices primero. `firebase deploy` no espera a que se
       # construyan, por eso el paso siguiente sondea hasta que ninguno quede en

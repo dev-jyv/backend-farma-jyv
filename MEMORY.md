@@ -6,7 +6,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 
 - **Proyecto Firebase:** `farma-jyv` (ver [.firebaserc](.firebaserc)).
 - **Runtime:** Node 22, TypeScript, **NestJS 11** sobre Express 5, Firebase Functions v2 (`onRequest`, región `us-central1`, **512MiB**).
-- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts), más `reportsPdf` (SPEC 38: las 11 rutas PDF con Chromium, 1GiB/120s/concurrencia 1, misma configuración HTTP vía `common/http-pipeline.ts`; RUNBOOK §8). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
+- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts), más `reportsPdf` (SPEC 38: las 11 rutas PDF con Chromium, 1GiB/120s/concurrencia 1, misma configuración HTTP vía `common/http-pipeline.ts`; RUNBOOK §12). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
 - **Base de datos:** Firestore (`ignoreUndefinedProperties: true` global, ver `utils/firestore.ts`). **Auth:** Firebase Auth (ID tokens + custom claims). **Archivos:** Cloud Storage.
 - **Rama actual:** `feature/prducts`.
 
@@ -144,12 +144,12 @@ Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventari
 - `npm run test:coverage` aplica `coverageThreshold` de `jest.config.js`. Con las suites aisladas la cifra es reproducible (±0.02 entre corridas), así que el piso global va justo por debajo de lo medido en vez de los 2 puntos de holgura que hacían falta antes. Gates estrictos donde importa: `auth.guard.ts` y `memory-cache.ts` al 100% de líneas, `users.service.ts` al 80%. `src/scripts/**` excluido.
 - Resuelto (antes flake ~1/4): `sales.spec.ts › dos requests concurrentes con la misma llave produce una sola venta`. Era contención del emulador, no la lógica de idempotencia — confirmado forzando `maxAttempts: 1`, que lo hace fallar el 100% con `ABORTED: Transaction lock timeout`. Lo cerró el aislamiento entre suites; **no** se tocó `maxAttempts` en producción.
 - CI: `.github/workflows/ci.yml` — `npm ci` → `lint` → `build` → `test:coverage` → `test:rules` desde la raíz (SPEC 33), con JDK 21 (Temurin) porque el emulador necesita JVM. Cobertura como artefacto 14 días.
-- Deploy: `.github/workflows/deploy.yml` (SPEC 39) — CI verde en `main` → `farma-jyv-dev`; tag `v*` → CI de nuevo + resumen de PRs `requiere-paso-manual` + aprobación de `dev-jyv` (environment `production`) → `farma-jyv`. Índices primero con espera. WIF (sin llaves); variables por environment: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `FUNCTIONS_ENV_FILE` (sin credenciales; bloquea hasta que SPEC 35 declare los siete `defineSecret`). Liberación: RUNBOOK §8.
+- Deploy: `.github/workflows/deploy.yml` (SPEC 39) — CI verde en `main` → `farma-jyv-dev`; tag `v*` → CI de nuevo + resumen de PRs `requiere-paso-manual` + aprobación de `dev-jyv` (environment `production`) → `farma-jyv`. Índices primero con espera. WIF (sin llaves); variables por environment: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `FUNCTIONS_ENV_FILE` (sin credenciales; bloquea hasta que SPEC 35 declare los siete `defineSecret`). Liberación: RUNBOOK §10.
 - `simulacro-restauracion.yml` (SPEC 43): día 1 de cada mes abre el issue del simulacro asignado a `dev-jyv` (checklist en `.github/simulacro-restauracion.md`).
 
 ## Secretos (Cloud Secret Manager, SPEC 35)
 
-Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leídos con `.value()` en tiempo de ejecución vía los getters de `config/env.ts`. Nunca en un `.env` desplegable (`check-env-split.mjs` lo bloquea; `check-secrets.mjs` frena el deploy si falta alguno en el proyecto). Crear/rotar/acceso: RUNBOOK §8. Local: `functions/.secret.local`.
+Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leídos con `.value()` en tiempo de ejecución vía los getters de `config/env.ts`. Nunca en un `.env` desplegable (`check-env-split.mjs` lo bloquea; `check-secrets.mjs` frena el deploy si falta alguno en el proyecto). Crear/rotar/acceso: RUNBOOK §11. Local: `functions/.secret.local`.
 
 - `MIGRATE_SECRET` — protege `POST /v1/internal/*` (`api`).
 - `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes) (`api`).
@@ -161,7 +161,7 @@ Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leído
 ## Variables de entorno ([functions/.env](functions/.env) / `.env.<proyecto>`, no versionados, sin secretos)
 
 - `CORS_ORIGINS` — allowlist separado por comas.
-- `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §8).
+- `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §13).
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
 - `MERCADOPAGO_PUBLIC_KEY` — Public Key (frontend); el backend no la consume.
 - `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API). Solo en `.env.<proyecto>`.
