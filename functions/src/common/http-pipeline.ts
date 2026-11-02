@@ -4,6 +4,7 @@ import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, NestFactory } from '@nestjs/cor
 import { ExpressAdapter } from '@nestjs/platform-express';
 import { AppExceptionFilter } from './app-exception.filter';
 import { ResponseEnvelopeInterceptor } from './response-envelope.interceptor';
+import { AppCheckGuard } from '../modules/identity/guards/app-check.guard';
 import { AuthGuard } from '../modules/identity/guards/auth.guard';
 import { PermissionsGuard } from '../modules/identity/guards/permissions.guard';
 import { corsMiddleware } from '../middleware/cors';
@@ -20,10 +21,13 @@ import { corsMiddleware } from '../middleware/cors';
 export const NEST_LOG_LEVELS: LogLevel[] = ['error', 'warn'];
 
 /**
- * Guards, filtro e interceptor globales. **El orden importa**: `AuthGuard` debe
- * resolver `req.authUser` antes de que `PermissionsGuard` lo consulte.
+ * Guards, filtro e interceptor globales. **El orden importa**: App Check (SPEC 41,
+ * solo registra, nunca rechaza) → `AuthGuard`, que debe resolver `req.authUser`
+ * antes de que `PermissionsGuard` lo consulte. `reportsPdf` mide App Check igual
+ * que `api`: el panel también descarga los PDF.
  */
 export const GLOBAL_HTTP_PROVIDERS: Provider[] = [
+    { provide: APP_GUARD, useClass: AppCheckGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
     { provide: APP_FILTER, useClass: AppExceptionFilter },

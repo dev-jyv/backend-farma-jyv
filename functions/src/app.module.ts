@@ -50,7 +50,7 @@ import { AssistantModule } from './modules/assistant/assistant.module';
         AssistantModule,
     ],
     controllers: [HealthController],
-    // Guards (AuthGuard → PermissionsGuard), filtro e interceptor compartidos con
+    // Guards (AppCheckGuard → AuthGuard → PermissionsGuard), filtro e interceptor compartidos con
     // `reportsPdf`: ver `common/http-pipeline.ts`.
     providers: [...GLOBAL_HTTP_PROVIDERS],
 })

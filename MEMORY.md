@@ -157,6 +157,7 @@ Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leído
 ## Variables de entorno ([functions/.env](functions/.env) / `.env.<proyecto>`, no versionados, sin secretos)
 
 - `CORS_ORIGINS` — allowlist separado por comas.
+- `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §8).
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
 - `MERCADOPAGO_PUBLIC_KEY` — Public Key (frontend); el backend no la consume.
 - `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API). Solo en `.env.<proyecto>`.
