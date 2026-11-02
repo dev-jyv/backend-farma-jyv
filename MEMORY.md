@@ -201,6 +201,9 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 - **Retención fuera del código**: regla de ciclo de vida del bucket, 30 días, solo sobre el prefijo `firestore-backups/` — así los respaldos manuales (`manual/`, `pre-borrado-*`) sobreviven.
 - Se factura como una lectura por documento exportado: es un costo diario fijo proporcional al tamaño de la base. Un escalón de lecturas de madrugada es esto.
 - Restauración, permisos IAM y respaldo manual: [RUNBOOK.md](RUNBOOK.md) §4.
+- **SPEC 31/43 (declarado, sin aplicar):** PITR 7 días (`scripts/ops/31-pitr.sh`), copia diaria de `firestore-backups/` a un bucket de un proyecto aislado (`farma-jyv-respaldos`, nombre a confirmar) por Storage Transfer con rol sin `delete`, recuperación por PITR documento a documento (`npm run pitr:restore`, en seco por defecto) y simulacro mensual (`scripts/ops/restore-drill.mjs`, rechaza `farma-jyv`/`farma-jyv-dev` como destino).
+- **Log de funciones programadas:** todas van envueltas en `monitoredJob` (`schedules/scheduled-job.ts`) → `scheduled_job.finished` con `job`/`outcome`; de ahí salen las alertas de SPEC 32 (métrica `farmajyv_scheduled_job_runs`, `scripts/ops/scheduled-jobs.json`). RUNBOOK §7.
+- **SPEC 34/42:** consulta de arranques en frío y dashboard de instancias en `scripts/ops/`; reportes de solo lectura `node scripts/ops/reports.mjs cold-start|instances`. RUNBOOK §8–§9.
 
 ## Pendientes conocidos
 

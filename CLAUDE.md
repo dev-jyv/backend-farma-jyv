@@ -35,6 +35,8 @@ flowchart LR
         backups[("GCS backups<br/>30 days")]
     end
 
+    extbk[("Backup project<br/>external copy · restore drill")]
+
     subgraph ext["External"]
         mp["Mercado Pago Point"]
         r2[("Cloudflare R2<br/>facturas/ · private")]
@@ -52,6 +54,7 @@ flowchart LR
     crons --> fs
     crons --> resend
     crons --> backups
+    backups -. "Storage Transfer daily" .-> extbk
 ```
 
 Two things the picture is meant to make obvious:
@@ -84,7 +87,10 @@ npm run migrate:roles  # build + run lib/scripts/migrate-roles.js
 npm run backfill:denormalized          # backfill totalStock / productIds / batches.supplierId
 npm run backfill:denormalized -- --dry-run --only=products,batches   # idempotent; --force recomputes
 npm run logs           # firebase functions:log
+npm run pitr:restore -- --project farma-jyv --read-time <ISO con zona> --doc col/id   # en seco; --execute reescribe
 ```
+
+Operational infrastructure (SPEC 31/32/34/42/43: PITR, external backup copy, alert policies, budget, cold-start query, instances dashboard, restore drill) is declared in [scripts/ops/](scripts/ops/) and applied by hand: every script is **dry-run by default** and needs `--apply` to touch GCP. `npm run test:ops` (repo root, also in CI) validates the templates in `scripts/ops/defs/` and that no script calls `gcloud` without `--apply`. Procedures live in RUNBOOK §4 and §7–§9.
 
 ### Security-rules tests (run from the repo root, not from `functions/`)
 
@@ -259,6 +265,16 @@ Deliberate choices worth not undoing:
   objects from an unsupervised cron, and the prefix scope is what keeps the
   manual `manual/` and `pre-borrado-*` snapshots — taken on purpose before risky
   operations — from being swept away.
+
+**Every scheduled function is wrapped in `monitoredJob('<exported name>', …)`**
+([schedules/scheduled-job.ts](functions/src/schedules/scheduled-job.ts)), which logs
+one structured `scheduled_job.finished` entry (`job`, `outcome`) and rethrows on
+failure so Cloud Scheduler still retries. The log-based metric
+`farmajyv_scheduled_job_runs` and the SPEC 32 alert policies (definitive failure =
+more failed attempts than `retryCount` in 1 h; backup absence = 26 h without
+`succeeded`) count those entries, so renaming the fields silences alerts. A new
+`onSchedule` needs its row in `scripts/ops/scheduled-jobs.json` —
+[test/scheduled-job-log.spec.ts](functions/test/scheduled-job-log.spec.ts) fails otherwise.
 
 Note managed exports are billed as one document read each, so the nightly dump is
 a fixed daily read cost proportional to total database size. If the read graph
