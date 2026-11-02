@@ -1,6 +1,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { EMAIL_SECRETS } from '../config/secrets';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+import { monitoredJob } from './scheduled-job';
 
 /**
  * Mantenimiento de promociones a las 07:05, justo después de las alertas de
@@ -22,7 +23,7 @@ export const dailyPromotionsMaintenance = onSchedule(
         // Solo Resend: el correo de desempeño y de las que terminan hoy.
         secrets: EMAIL_SECRETS,
     },
-    async () => {
+    monitoredJob('dailyPromotionsMaintenance', async () => {
         const { sendPromotionsMaintenanceReport } = await import(
             '../services/promotion-alerts-sender.service'
         );
@@ -32,5 +33,5 @@ export const dailyPromotionsMaintenance = onSchedule(
                 `${result.endingSoon.length} por terminar` +
                 (sent ? ' (correo enviado)' : ' (sin correo)'),
         );
-    },
+    }),
 );

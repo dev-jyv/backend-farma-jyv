@@ -1,0 +1,30 @@
+{
+  "displayName": "FarmaJyV · falló la copia externa de respaldos (Storage Transfer)",
+  "combiner": "OR",
+  "severity": "CRITICAL",
+  "conditions": [
+    {
+      "displayName": "Storage Transfer publicó un fallo o aborto en {{TOPIC}}",
+      "conditionThreshold": {
+        "filter": "metric.type=\"pubsub.googleapis.com/topic/send_request_count\" AND resource.type=\"pubsub_topic\" AND resource.label.topic_id=\"{{TOPIC}}\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0,
+        "duration": "0s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "86400s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "subject": "FarmaJyV: falló la copia de respaldos al proyecto externo",
+    "content": "El job `{{TRANSFER_JOB}}` de Storage Transfer (proyecto `{{PROJECT}}`) terminó en `FAILED` o `ABORTED`. El topic `{{TOPIC}}` solo recibe esos eventos.\n\n1. Consola > Storage Transfer > el job > última operación: ver el error (lo típico es un permiso: RUNBOOK §4 'Copia externa').\n2. Corregir y relanzar: `gcloud transfer jobs run {{TRANSFER_JOB}} --project {{PROJECT}}`.\n3. Mientras tanto la copia externa envejece; el bucket origen sigue recibiendo exports."
+  }
+}

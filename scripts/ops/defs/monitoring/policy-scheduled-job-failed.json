@@ -1,0 +1,30 @@
+{
+  "displayName": "FarmaJyV · falló {{JOB}}",
+  "combiner": "OR",
+  "severity": "{{SEVERITY}}",
+  "conditions": [
+    {
+      "displayName": "{{JOB}}: más de {{=RETRY_COUNT}} intento(s) fallido(s) en 1 h (fallo definitivo)",
+      "conditionThreshold": {
+        "filter": "metric.type=\"logging.googleapis.com/user/farmajyv_scheduled_job_runs\" AND resource.type=\"cloud_run_revision\" AND metric.label.function=\"{{JOB}}\" AND metric.label.outcome=\"failed\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "3600s",
+            "perSeriesAligner": "ALIGN_SUM",
+            "crossSeriesReducer": "REDUCE_SUM"
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": {{=RETRY_COUNT}},
+        "duration": "0s",
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "86400s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "subject": "FarmaJyV: falló la función programada {{JOB}}",
+    "content": "La función programada **{{JOB}}** ({{SCHEDULE}}, CDMX) terminó en error y ya no le quedan reintentos.\n\nQué hacer: {{ACTION}}\n\nDetalle del error: Logging, filtro `jsonPayload.event=\"scheduled_job.finished\" AND jsonPayload.job=\"{{JOB}}\"` (RUNBOOK §7)."
+  }
+}

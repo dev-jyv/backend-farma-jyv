@@ -1,5 +1,6 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+import { monitoredJob } from './scheduled-job';
 
 /**
  * Compara `dailyStats` contra las ventas de los últimos 7 días a las 07:10 y
@@ -14,8 +15,8 @@ export const dailyStatsIntegrityCheck = onSchedule(
         timeoutSeconds: 120,
         schedule: '10 7 * * *',
     },
-    async () => {
+    monitoredJob('dailyStatsIntegrityCheck', async () => {
         const { checkDailyStatsIntegrity } = await import('../services/daily-stats.service');
         await checkDailyStatsIntegrity(7);
-    },
+    }),
 );

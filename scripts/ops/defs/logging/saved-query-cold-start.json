@@ -1,0 +1,13 @@
+{
+  "displayName": "FarmaJyV · arranques en frío de api",
+  "description": "SPEC 34: arranques de instancia de api (varlog/system 'Starting new instance') y peticiones (requests) con labels.instanceId y httpRequest.latency. La primera petición de cada instanceId tras su arranque es la latencia en frío. Tabla: node scripts/ops/reports.mjs cold-start.",
+  "visibility": "SHARED",
+  "loggingQuery": {
+    "filter": "{{COLD_START_FILTER}}",
+    "summaryFields": [
+      { "field": "labels.instanceId" },
+      { "field": "httpRequest.latency" },
+      { "field": "resource.labels.revision_name" }
+    ]
+  }
+}

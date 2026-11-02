@@ -1,0 +1,30 @@
+{
+  "name": "transferJobs/{{TRANSFER_JOB_ID}}",
+  "description": "FarmaJyV: copia diaria de gs://{{SOURCE_BUCKET}}/firestore-backups/ al bucket externo (SPEC 31)",
+  "projectId": "{{PROJECT}}",
+  "status": "ENABLED",
+  "transferSpec": {
+    "gcsDataSource": { "bucketName": "{{SOURCE_BUCKET}}", "path": "firestore-backups/" },
+    "gcsDataSink": { "bucketName": "{{DEST_BUCKET}}", "path": "firestore-backups/" },
+    "objectConditions": { "maxTimeElapsedSinceLastModification": "604800s" },
+    "transferOptions": {
+      "overwriteWhen": "NEVER",
+      "deleteObjectsFromSourceAfterTransfer": false,
+      "deleteObjectsUniqueInSink": false
+    }
+  },
+  "schedule": {
+    "scheduleStartDate": { "year": {{=START_YEAR}}, "month": {{=START_MONTH}}, "day": {{=START_DAY}} },
+    "startTimeOfDay": { "hours": {{=START_HOUR_UTC}}, "minutes": 0, "seconds": 0, "nanos": 0 },
+    "repeatInterval": "86400s"
+  },
+  "notificationConfig": {
+    "pubsubTopic": "projects/{{PROJECT}}/topics/{{TOPIC}}",
+    "eventTypes": ["TRANSFER_OPERATION_FAILED", "TRANSFER_OPERATION_ABORTED"],
+    "payloadFormat": "JSON"
+  },
+  "loggingConfig": {
+    "logActions": ["FIND", "COPY"],
+    "logActionStates": ["FAILED"]
+  }
+}

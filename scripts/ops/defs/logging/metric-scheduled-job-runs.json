@@ -1,0 +1,19 @@
+{
+  "name": "farmajyv_scheduled_job_runs",
+  "description": "Ejecuciones de funciones programadas por función y resultado (log scheduled_job.finished de functions/src/schedules/scheduled-job.ts). SPEC 32.",
+  "filter": "jsonPayload.event=\"scheduled_job.finished\"",
+  "metricDescriptor": {
+    "metricKind": "DELTA",
+    "valueType": "INT64",
+    "unit": "1",
+    "displayName": "FarmaJyV · ejecuciones de funciones programadas",
+    "labels": [
+      { "key": "function", "valueType": "STRING", "description": "Nombre exportado de la función programada" },
+      { "key": "outcome", "valueType": "STRING", "description": "succeeded | failed" }
+    ]
+  },
+  "labelExtractors": {
+    "function": "EXTRACT(jsonPayload.job)",
+    "outcome": "EXTRACT(jsonPayload.outcome)"
+  }
+}

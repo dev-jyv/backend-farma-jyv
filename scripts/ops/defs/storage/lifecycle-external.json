@@ -1,0 +1,12 @@
+{
+  "rule": [
+    {
+      "action": { "type": "Delete" },
+      "condition": { "age": 30, "matchesPrefix": ["firestore-backups/"] }
+    },
+    {
+      "action": { "type": "Delete" },
+      "condition": { "isLive": false, "daysSinceNoncurrentTime": 30 }
+    }
+  ]
+}
