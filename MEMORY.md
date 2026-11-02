@@ -144,6 +144,7 @@ Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventari
 ## Variables de entorno ([functions/.env](functions/.env), no versionado)
 
 - `CORS_ORIGINS` — allowlist separado por comas.
+- `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §8).
 - `MIGRATE_SECRET` — protege `POST /v1/internal/migrate-roles`.
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
 - `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes).

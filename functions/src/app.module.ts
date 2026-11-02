@@ -5,6 +5,7 @@ import { AppExceptionFilter } from './common/app-exception.filter';
 import { ResponseEnvelopeInterceptor } from './common/response-envelope.interceptor';
 import { HealthController } from './modules/health/health.controller';
 import { IdentityModule } from './modules/identity/identity.module';
+import { AppCheckGuard } from './modules/identity/guards/app-check.guard';
 import { AuthGuard } from './modules/identity/guards/auth.guard';
 import { PermissionsGuard } from './modules/identity/guards/permissions.guard';
 import { DoctorModule } from './modules/doctor/doctor.module';
@@ -55,6 +56,9 @@ import { AssistantModule } from './modules/assistant/assistant.module';
     ],
     controllers: [HealthController],
     providers: [
+        // Orden de los guards globales: App Check (solo registra, nunca rechaza)
+        // → Auth (resuelve `req.authUser`) → Permissions (lo necesita resuelto).
+        { provide: APP_GUARD, useClass: AppCheckGuard },
         { provide: APP_GUARD, useClass: AuthGuard },
         { provide: APP_GUARD, useClass: PermissionsGuard },
         { provide: APP_FILTER, useClass: AppExceptionFilter },

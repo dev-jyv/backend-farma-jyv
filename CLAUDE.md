@@ -111,14 +111,15 @@ Emulator ports: functions 5001, firestore 8080, auth 9099. Tests live in [functi
 Every request flows through the same layered path — respect these boundaries when adding features:
 
 ```
-modules/<domain>/*.controller.ts  ->  Guards (AuthGuard, PermissionsGuard) + ZodValidationPipe
+modules/<domain>/*.controller.ts  ->  Guards (AppCheckGuard, AuthGuard, PermissionsGuard) + ZodValidationPipe
   ->  services/*.service.ts  (business logic, Firestore transactions)
     ->  repositories/*.repository.ts  (raw Firestore reads/writes for one collection)
 ```
 
 ```mermaid
 flowchart LR
-    req([Request /v1/...]) --> g1["AuthGuard<br/>verifies token → req.authUser"]
+    req([Request /v1/...]) --> g0["AppCheckGuard<br/>logs missing/invalid · never rejects"]
+    g0 --> g1["AuthGuard<br/>verifies token → req.authUser"]
     g1 --> g2["PermissionsGuard<br/>RequirePermission area, level"]
     g2 --> pipe["ZodValidationPipe<br/>body · query · params"]
     pipe --> ctrl["controller<br/>modules/domain"]
@@ -142,9 +143,11 @@ Get Firestore via `db()` and timestamps via `now()` / `toTimestamp()` from [util
 
 [app.ts](functions/src/app.ts) builds a single Express instance, applies `corsMiddleware` and a conditional JSON body-parser (skipped for `multipart/form-data`, since uploads are parsed by a custom Busboy-based interceptor — see below), then hands that Express instance to `NestFactory.create(AppModule, new ExpressAdapter(expressApp), { bodyParser: false })` and calls `setGlobalPrefix('v1')`. The resulting app is cached at module scope (`cachedApp`) so warm Cloud Function invocations don't re-pay Nest's DI bootstrap cost, and the JSON parser is built once rather than per request. [index.ts](functions/src/index.ts) awaits this once and reuses it across `onRequest` invocations — **caching the promise but not its rejection**: a failed bootstrap clears the cache so the next request retries, instead of that instance answering the same error until Cloud Run recycles it; [dev-server.ts](functions/src/dev-server.ts) does the same for local dev.
 
-[app.module.ts](functions/src/app.module.ts) is the root Nest module: it registers `AuthGuard` and `PermissionsGuard` as global `APP_GUARD`s (in that order — auth must resolve `req.authUser` before permissions can be checked) and `AppExceptionFilter` as the global `APP_FILTER`, then imports `CommonModule` (global, exports `FirestoreService`) plus every domain module.
+[app.module.ts](functions/src/app.module.ts) is the root Nest module: it registers `AppCheckGuard`, `AuthGuard` and `PermissionsGuard` as global `APP_GUARD`s (in that order — App Check only logs and never rejects; auth must resolve `req.authUser` before permissions can be checked) and `AppExceptionFilter` as the global `APP_FILTER`, then imports `CommonModule` (global, exports `FirestoreService`) plus every domain module.
 
 ## Auth & permissions
+
+- **App Check is log-only (SPEC 41).** `AppCheckGuard` ([modules/identity/guards/app-check.guard.ts](functions/src/modules/identity/guards/app-check.guard.ts)) runs first, verifies `X-Firebase-AppCheck` with `getAppCheck().verifyToken()` (lazy `import()`, 2 s cap) and, when it is missing or invalid, writes a structured `WARNING` (`appCheck`, `path`, `method`, `uid`, `userAgent`, `client`, `origin`, `status`) **on response close**, so the `uid` is the one `AuthGuard` verified, not one read from an unverified token. It never rejects, skips `@Public()` routes, and is controlled by `APP_CHECK_MODE` (`off` | `log`; unset = `log` deployed, `off` in the emulator; any other value, `enforce` included, is treated as `log`). The POS (Electron) has no App Check provider and always logs `missing`. Saved Logging query: [docs/logging/app-check-sin-token.sql](docs/logging/app-check-sin-token.sql), RUNBOOK §8. Rejecting requests is a later spec.
 
 - `AuthGuard` ([modules/identity/guards/auth.guard.ts](functions/src/modules/identity/guards/auth.guard.ts)) verifies the Firebase ID token (`Authorization: Bearer <token>`), loads the user profile, resolves the active role, and attaches `req.authUser` (uid, email, role summary, and full `permissions` array). Reject inactive users. Skipped for routes marked `@Public()` (see [modules/identity/decorators/public.decorator.ts](functions/src/modules/identity/decorators/public.decorator.ts) — used by `/health` and `/internal/migrate-roles`, which authenticates via a header secret instead).
 - `PermissionsGuard` ([modules/identity/guards/permissions.guard.ts](functions/src/modules/identity/guards/permissions.guard.ts)) reads the `@RequirePermission(area, level?)` decorator metadata (level defaults to `write`) and calls `hasPermission()` unchanged from before the migration. No decorator on a route means no permission check beyond authentication.
@@ -218,7 +221,7 @@ Enforced by ESLint ([.eslintrc.js](functions/.eslintrc.js)): single quotes, **4-
 
 The three environments (emulator `demo-farmajyv`, cloud `farma-jyv-dev`, prod `farma-jyv`), the `functions/.env.<project>` split and `npm run dev:all` (whole ecosystem locally, from the repo root) are documented in [docs/AMBIENTES.md](docs/AMBIENTES.md). `functions/.env` must hold no secrets: Firebase loads it for every project and for the emulator, and `scripts/check-env-split.mjs` blocks `emulators`/`deploy:dev` until it is clean.
 
-Set in [functions/.env](functions/.env) (not committed): `CORS_ORIGINS`, `MIGRATE_SECRET`, `FIRESTORE_BACKUP_BUCKET` (destination bucket for the nightly Firestore export, without `gs://`; the schedule throws rather than guessing), Mercado Pago (`MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_USER_ID`, optional `MERCADOPAGO_WEBHOOK_SECRET`), sales report emails (`RESEND_API_KEY`, `REPORTS_EMAIL_FROM`, `REPORTS_EMAIL_TO`), and receipt header/footer (`RECEIPT_STORE_NAME`, `RECEIPT_STORE_RFC`, `RECEIPT_STORE_ADDRESS`, `RECEIPT_STORE_PHONE`, `RECEIPT_FOOTER` — all optional, the name falls back to `Farmacia JyV`). Local `npm run dev` loads `.env` via Node `--env-file`. [functions/.env.example](functions/.env.example) lists them all; add new variables there too.
+Set in [functions/.env](functions/.env) (not committed): `CORS_ORIGINS`, `MIGRATE_SECRET`, `FIRESTORE_BACKUP_BUCKET` (destination bucket for the nightly Firestore export, without `gs://`; the schedule throws rather than guessing), Mercado Pago (`MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_USER_ID`, optional `MERCADOPAGO_WEBHOOK_SECRET`), sales report emails (`RESEND_API_KEY`, `REPORTS_EMAIL_FROM`, `REPORTS_EMAIL_TO`), App Check mode (`APP_CHECK_MODE`, `off` | `log`, see Auth & permissions), and receipt header/footer (`RECEIPT_STORE_NAME`, `RECEIPT_STORE_RFC`, `RECEIPT_STORE_ADDRESS`, `RECEIPT_STORE_PHONE`, `RECEIPT_FOOTER` — all optional, the name falls back to `Farmacia JyV`). Local `npm run dev` loads `.env` via Node `--env-file`. [functions/.env.example](functions/.env.example) lists them all; add new variables there too.
 
 ## Cost and cold start
 

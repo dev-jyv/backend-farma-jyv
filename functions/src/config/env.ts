@@ -180,3 +180,32 @@ export const getOpenRouterChatModel = (): string =>
 
 export const getOpenRouterEmbedModel = (): string =>
     process.env.OPENROUTER_EMBED_MODEL?.trim() || 'openai/text-embedding-3-small';
+
+export type AppCheckMode = 'off' | 'log';
+
+let warnedAppCheckMode: string | null = null;
+
+/**
+ * Modo del guard de App Check (SPEC 41). `log` verifica y registra las
+ * peticiones sin token válido; `off` no verifica ni registra. **No existe un modo
+ * que rechace**: eso se decide en un spec posterior con los datos que deje `log`.
+ *
+ * Sin la variable: `log` desplegado (prod y dev) y `off` en el emulador y en las
+ * pruebas, que no tienen App Check. Un valor desconocido —`enforce` incluido— se
+ * trata como `log` con un aviso: nunca debe terminar rechazando peticiones ni
+ * apagando la medición por una errata.
+ */
+export const getAppCheckMode = (): AppCheckMode => {
+    const raw = process.env.APP_CHECK_MODE?.trim().toLowerCase();
+    if (!raw) {
+        return isProduction() ? 'log' : 'off';
+    }
+    if (raw === 'off' || raw === 'log') {
+        return raw;
+    }
+    if (warnedAppCheckMode !== raw) {
+        warnedAppCheckMode = raw;
+        console.warn(`APP_CHECK_MODE="${raw}" no es válido (off|log); se usa "log".`);
+    }
+    return 'log';
+};

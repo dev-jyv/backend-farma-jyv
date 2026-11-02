@@ -374,3 +374,60 @@ Revisión rápida desde la terminal:
 ```bash
 firebase functions:log --only api | grep -i "ERROR"
 ```
+
+---
+
+## 8. App Check en modo registro (SPEC 41)
+
+`AppCheckGuard` corre antes de `AuthGuard` y verifica `X-Firebase-AppCheck` en
+toda ruta no `@Public()`. **Nunca rechaza**: si falta o no es válida escribe un
+log `WARNING` `Petición sin App Check válido` con `appCheck` (`missing` |
+`invalid`), ruta, uid, `User-Agent`, `client` y `origin`, y la petición sigue.
+Al ser `WARNING`, no dispara la alerta de error nuevo de §7.
+
+`APP_CHECK_MODE` (`off` | `log`): sin la variable vale `log` desplegado (prod y
+dev) y `off` en el emulador. No hay `enforce`; rechazar se decide en otro spec con
+lo que mida esta consulta.
+
+**Consulta guardada** — conteos por día separados por cliente:
+
+- SQL versionado: [`docs/logging/app-check-sin-token.sql`](docs/logging/app-check-sin-token.sql)
+  (Log Analytics). Para casos sueltos: [`docs/logging/app-check-sin-token.filter.txt`](docs/logging/app-check-sin-token.filter.txt)
+  (Logs Explorer).
+- Consola: <https://console.cloud.google.com/logs/analytics?project=farma-jyv>
+  → *Saved queries* → `SPEC 41 · App Check sin token por día`.
+  _Enlace directo a la consulta guardada: pendiente de crearla (abajo)._
+
+Cómo leerla: la caja sale siempre como `client = pos` y `missing` (Electron no
+tiene proveedor de App Check); el front del consultorio sale como `navegador` con
+su propio `origin`. Lo que importa es `navegador` + origen del panel + `missing` o
+`invalid`: reCAPTCHA bloqueado por una extensión, un token vencido o alguien
+llamando a la API con un ID token fuera del panel.
+
+### Puesta en marcha (una vez por proyecto, `farma-jyv` y `farma-jyv-dev`)
+
+1. Habilitar la API de reCAPTCHA Enterprise y crear una clave de sitio **web**
+   con los dominios del panel (`farma-jyv.web.app`, `farma-jyv.firebaseapp.com`,
+   `localhost` solo en dev).
+2. Consola de Firebase → App Check → app web del panel → proveedor
+   *reCAPTCHA Enterprise* con esa clave. **No** activar *Enforce* para ningún
+   servicio: el modo registro vive en la API, no en la consola.
+3. Poner la clave de sitio en `appCheck.siteKey` de los `environment*.ts` del
+   panel y desplegar el hosting (la CSP ya admite reCAPTCHA y App Check).
+4. Registrar en App Check → *Manage debug tokens* el token de depuración que
+   imprime la consola del navegador con `npm start` del panel.
+5. Habilitar Log Analytics en el bucket `_Default` (Logging → Logs Storage →
+   *Upgrade*), pegar el SQL, guardarlo con el nombre de arriba, compartirlo con el
+   proyecto y reemplazar aquí la línea "pendiente" por su enlace.
+6. Anotar el uso de reCAPTCHA Enterprise del primer mes (tiene costo por encima
+   de la cuota gratuita).
+
+Verificación rápida tras desplegar `api`:
+
+```bash
+# Un ID token válido, sin App Check: misma respuesta que antes y un log `missing`.
+curl -s -H "Authorization: Bearer ${ID_TOKEN}" https://api-vykfsskx3q-uc.a.run.app/v1/auth/me
+firebase functions:log --only api | grep "App Check"
+# /v1/health no deja log de App Check.
+curl -s https://api-vykfsskx3q-uc.a.run.app/v1/health
+```
