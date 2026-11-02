@@ -6,7 +6,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 
 - **Proyecto Firebase:** `farma-jyv` (ver [.firebaserc](.firebaserc)).
 - **Runtime:** Node 22, TypeScript, **NestJS 11** sobre Express 5, Firebase Functions v2 (`onRequest`, región `us-central1`, **512MiB**).
-- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
+- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts), más `reportsPdf` (SPEC 38: las 11 rutas PDF con Chromium, 1GiB/120s/concurrencia 1, misma configuración HTTP vía `common/http-pipeline.ts`; RUNBOOK §8). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
 - **Base de datos:** Firestore (`ignoreUndefinedProperties: true` global, ver `utils/firestore.ts`). **Auth:** Firebase Auth (ID tokens + custom claims). **Archivos:** Cloud Storage.
 - **Rama actual:** `feature/prducts`.
 
