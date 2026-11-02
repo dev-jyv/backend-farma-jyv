@@ -374,3 +374,19 @@ Revisión rápida desde la terminal:
 ```bash
 firebase functions:log --only api | grep -i "ERROR"
 ```
+
+## 8. Salud de cajas (SPEC 36) — despliegue
+
+`posHealth` es un área de permiso nueva y `posCommands` trae dos índices compuestos.
+En orden:
+
+1. Índices primero (§2e): `firebase deploy --project prod --only firestore:indexes,firestore:rules`
+   y esperar a que los dos `posCommands [deviceId, …]` estén `READY`.
+2. Funciones: `npm run deploy:prod`.
+3. Roles: `npm run migrate:roles` (o `POST /v1/internal/migrate-roles` con
+   `x-migrate-secret`). Sin este paso `manager` no tiene `posHealth` y el panel le
+   responde 403 en `GET /v1/pos/diagnostics`. Verificar después en `roles`:
+   `manager` con `{ area: 'posHealth', level: 'write' }`, `cashier` y `doctor` sin el área.
+4. Las cajas aparecen en el panel cuando cada POS se actualiza a la versión que reporta
+   el diagnóstico (cada sync y, con red, cada 15 min). Una caja reinstalada deja su
+   fila vieja; a los 7 días sin reporte el panel la atenúa al final.
