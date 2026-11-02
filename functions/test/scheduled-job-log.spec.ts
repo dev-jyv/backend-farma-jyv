@@ -10,6 +10,14 @@ import { runScheduledJob, SCHEDULED_JOB_EVENT } from '../src/schedules/scheduled
  * falle: de ahí estas pruebas.
  */
 
+// Las exportaciones del logger no son reasignables (`jest.spyOn` falla): se
+// sustituyen solo `info` y `warn`, que es lo que escribe `monitoredJob`.
+jest.mock('firebase-functions/logger', () => ({
+    ...jest.requireActual('firebase-functions/logger'),
+    info: jest.fn(),
+    warn: jest.fn(),
+}));
+
 jest.mock('@google-cloud/firestore', () => {
     const exportDocuments = jest.fn(async () => [{ name: 'operations/op-123' }]);
     class FirestoreAdminClient {
@@ -23,15 +31,11 @@ jest.mock('@google-cloud/firestore', () => {
 
 const scheduledEvent = { scheduleTime: '2026-11-02T08:00:00Z' } as never;
 
-describe('runScheduledJob', () => {
-    let info: jest.SpyInstance;
-    let warn: jest.SpyInstance;
+const info = logger.info as jest.Mock;
+const warn = logger.warn as jest.Mock;
 
-    beforeEach(() => {
-        info = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
-        warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
-    });
-    afterEach(() => jest.restoreAllMocks());
+describe('runScheduledJob', () => {
+    beforeEach(() => jest.clearAllMocks());
 
     it('deja un succeeded con el nombre de la función y el detalle de la tarea', async () => {
         await runScheduledJob('dailySalesReport', async () => ({ date: '2026-11-01' }));
@@ -81,12 +85,8 @@ describe('runScheduledJob', () => {
 describe('dailyFirestoreBackup: log de ejecución', () => {
     const originalBucket = process.env.FIRESTORE_BACKUP_BUCKET;
     const originalProject = process.env.GCLOUD_PROJECT;
-    let info: jest.SpyInstance;
-    let warn: jest.SpyInstance;
-
     beforeEach(() => {
-        info = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
-        warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+        jest.clearAllMocks();
         jest.spyOn(console, 'log').mockImplementation(() => undefined);
         process.env.GCLOUD_PROJECT = 'demo-backup';
     });
