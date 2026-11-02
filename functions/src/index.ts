@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { createApp } from './app';
+import { API_SECRETS } from './config/secrets';
 
 if (!admin.apps.length) {
     admin.initializeApp();
@@ -43,6 +44,8 @@ export const api = onRequest(
         region: 'us-central1',
         memory: '512MiB',
         timeoutSeconds: 60,
+        // Montados como variables de entorno al arrancar la instancia (SPEC 35).
+        secrets: API_SECRETS,
     },
     async (req, res) => {
         const app = await getApp();

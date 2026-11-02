@@ -58,32 +58,62 @@ Lo que falta hacer una sola vez (requiere cuenta con permisos en Firebase):
    `environment.dev-cloud.ts` de cada front (hoy dicen `REEMPLAZAR_CON_CONFIG_DE_farma-jyv-dev`).
 4. Crear los sitios de Hosting `farma-jyv-dev`, `farma-jyv-dev-clinic` y `farma-jyv-dev-updates`.
 5. `cp functions/.env.farma-jyv-dev.example functions/.env.farma-jyv-dev` y
-   rellenar con credenciales de **prueba** (Mercado Pago `TEST-...`, bucket R2 aparte).
+   rellenar la configuración no secreta (bucket R2 aparte, correos de prueba).
+   Crear los siete secretos en `farma-jyv-dev` con credenciales de **prueba**
+   (Mercado Pago `TEST-...`): RUNBOOK «Secretos».
 6. `npm --prefix functions run deploy:dev`, luego `npm run migrate:roles` contra dev.
 
-## Secretos: por qué `functions/.env` debe quedar sin secretos
+## Secretos: Secret Manager, no `.env` (SPEC 35)
 
-Firebase carga `functions/.env` en **todos** los proyectos y en el emulador, y
-después el archivo específico (`.env.farma-jyv`, `.env.farma-jyv-dev` o
-`.env.local`). Un secreto de producción en `.env` terminaría en dev y en el
-emulador (cobros, correos y archivos reales desde tu laptop).
+Las siete credenciales del backend viven en **Cloud Secret Manager** de cada
+proyecto y se declaran una sola vez en `functions/src/config/secrets.ts`
+(`defineSecret`). Firebase las monta como variables de entorno solo en las
+funciones que las declaran: `api` las siete y las programadas que mandan correo
+solo `RESEND_API_KEY`. Crear, rotar y dar acceso: RUNBOOK, sección «Secretos».
 
-| Archivo | Uso | ¿Se versiona? |
-|---|---|---|
-| `functions/.env` | solo valores comunes sin secretos | no |
-| `functions/.env.farma-jyv` | secretos de producción | no |
-| `functions/.env.farma-jyv-dev` | secretos de prueba de dev | no |
-| `functions/.env.local` | emulador | no |
-| `functions/*.example` | plantillas | sí |
+| Secreto | Lo usa |
+|---|---|
+| `MERCADOPAGO_ACCESS_TOKEN` | `api` (Point, Checkout Pro, reembolsos) |
+| `MERCADOPAGO_WEBHOOK_SECRET` | `api` (firma del webhook; hoy espacio reservado en blanco) |
+| `RESEND_API_KEY` | `api` (disparo manual) y los cuatro correos programados |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | `api` (facturas en R2) |
+| `MIGRATE_SECRET` | `api` (`/v1/internal/*`) |
+| `OPENROUTER_API_KEY` | `api` (asistente, facturas-RAG) |
 
-`scripts/check-env-split.mjs` corre antes de `emulators` y de `deploy:dev`. Si
-`functions/.env` todavía trae secretos, se niega a arrancar y lista **solo los
-nombres** de las variables. Para migrar: mueve esas líneas a
-`functions/.env.farma-jyv`. `deploy:prod` las sigue cargando desde ahí.
+Los `.env` quedan **solo** con configuración no secreta (`CORS_ORIGINS`,
+`RECEIPT_*`, `REPORTS_EMAIL_*`, `R2_ACCOUNT_ID`, `R2_BUCKET`, modelos de
+OpenRouter, `MERCADOPAGO_USER_ID`…). Firebase carga `functions/.env` en **todos**
+los proyectos y en el emulador, y después el específico (`.env.farma-jyv`,
+`.env.farma-jyv-dev` o `.env.local`).
+
+| Archivo | Uso | ¿Se versiona? | ¿Se despliega? |
+|---|---|---|---|
+| `functions/.env` | valores comunes, sin secretos ni `MERCADOPAGO_*` | no | sí |
+| `functions/.env.farma-jyv` | config de producción, **sin secretos** | no | sí |
+| `functions/.env.farma-jyv-dev` | config de dev, **sin secretos** | no | sí |
+| `functions/.env.local` | emulador y `npm run dev` | no | no |
+| `functions/.secret.local` | valores de los secretos en emulador y `npm run dev` | no | no |
+| `functions/*.example` | plantillas | sí | — |
+
+`scripts/check-env-split.mjs` corre antes de `emulators`, `deploy:dev` y
+`deploy:prod`. Falla si alguno de los siete aparece (aunque sea vacío) en
+`functions/.env` o en un `functions/.env.<proyecto|alias>`, o si `functions/.env`
+trae alguna `MERCADOPAGO_*` con valor, y lista **solo los nombres**. Para migrar:
+borra esas líneas (y los valores viejos, que se rotan; RUNBOOK «Secretos»).
+`scripts/check-secrets.mjs <dev|prod>` corre en los `deploy:*` después de compilar
+y antes de `firebase deploy`: si un secreto no existe en el proyecto destino, el
+deploy se detiene nombrándolo en lugar de pedir el valor a mano.
+
+**Emulador.** `npm run emulators` completa `functions/.secret.local` con una
+línea por secreto (`scripts/ensure-secret-local.mjs`): copia el valor de
+`.env.local` si lo había ahí (p. ej. `MIGRATE_SECRET=local-dev-secret`) y si no
+escribe `" "`, que el emulador toma por valor —así no sale a buscarlo a Secret
+Manager— y el backend trata como "no configurado". Lo que ya pusiste a mano no se
+toca. Plantilla: `functions/.secret.local.example`.
 
 > `npm run dev` (el dev-server de Express) **no** usa emuladores: carga
-> `functions/.env` y las credenciales de tu máquina, es decir, producción. Para
-> desarrollar usa `npm run emulators`.
+> `functions/.env`, luego `.env.local` y `.secret.local`, y las credenciales de tu
+> máquina, es decir, la base de producción. Para desarrollar usa `npm run emulators`.
 
 ## POS: datos locales separados
 

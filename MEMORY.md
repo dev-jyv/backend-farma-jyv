@@ -141,17 +141,25 @@ Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventari
 - Resuelto (antes flake ~1/4): `sales.spec.ts › dos requests concurrentes con la misma llave produce una sola venta`. Era contención del emulador, no la lógica de idempotencia — confirmado forzando `maxAttempts: 1`, que lo hace fallar el 100% con `ABORTED: Transaction lock timeout`. Lo cerró el aislamiento entre suites; **no** se tocó `maxAttempts` en producción.
 - CI: `.github/workflows/ci.yml` — `npm ci` → `lint` → `build` → `test:coverage`, con JDK 21 (Temurin) porque el emulador necesita JVM. Cobertura como artefacto 14 días.
 
-## Variables de entorno ([functions/.env](functions/.env), no versionado)
+## Secretos (Cloud Secret Manager, SPEC 35)
+
+Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leídos con `.value()` en tiempo de ejecución vía los getters de `config/env.ts`. Nunca en un `.env` desplegable (`check-env-split.mjs` lo bloquea; `check-secrets.mjs` frena el deploy si falta alguno en el proyecto). Crear/rotar/acceso: RUNBOOK §8. Local: `functions/.secret.local`.
+
+- `MIGRATE_SECRET` — protege `POST /v1/internal/*` (`api`).
+- `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes) (`api`).
+- `MERCADOPAGO_WEBHOOK_SECRET` — valida firmas `x-signature` del webhook `orders` (`api`). Sin valor todavía: el espacio reservado tiene un blanco y en producción el webhook se rechaza.
+- `RESEND_API_KEY` — reportes por correo (`api` + las 4 programadas que mandan correo).
+- `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` — token de R2 para facturas (`api`); sin ellas, `uploads/`.
+- `OPENROUTER_API_KEY` — asistente y facturas-RAG (`api`); sin ella, 503.
+
+## Variables de entorno ([functions/.env](functions/.env) / `.env.<proyecto>`, no versionados, sin secretos)
 
 - `CORS_ORIGINS` — allowlist separado por comas.
-- `MIGRATE_SECRET` — protege `POST /v1/internal/migrate-roles`.
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
-- `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes).
 - `MERCADOPAGO_PUBLIC_KEY` — Public Key (frontend); el backend no la consume.
-- `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API).
-- `MERCADOPAGO_WEBHOOK_SECRET` — opcional; valida firmas `x-signature` del webhook `orders`.
+- `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API). Solo en `.env.<proyecto>`.
+- `R2_ACCOUNT_ID` / `R2_BUCKET` — cuenta y bucket de R2 (no secretos).
 - `RECEIPT_STORE_NAME` / `RECEIPT_STORE_RFC` / `RECEIPT_STORE_ADDRESS` / `RECEIPT_STORE_PHONE` / `RECEIPT_FOOTER` — encabezado y pie del ticket (opcionales; el nombre cae a `Farmacia JyV`).
-- `RESEND_API_KEY` — API key de Resend para reportes por correo.
 - `REPORTS_EMAIL_FROM` — remitente verificado en Resend (pruebas: `onboarding@resend.dev`).
 - `REPORTS_EMAIL_TO` — destinatarios de reportes, separados por comas.
 
@@ -214,7 +222,7 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 
 ## Hallazgos de seguridad abiertos (revisión 2026-08-04)
 
-- `verifyWebhookSignature` falla **abierto** si `MERCADOPAGO_WEBHOOK_SECRET` no está configurado; la ruta del webhook es `@Public()`.
+- `verifyWebhookSignature` sin `MERCADOPAGO_WEBHOOK_SECRET` (o con el espacio reservado en blanco) rechaza en producción y acepta sin firma solo fuera de producción; la ruta del webhook es `@Public()`.
 - El id de order de MP se interpola sin codificar en la ruta de la API (`mpRequest`); no explotable hoy porque `mapOrder` proyecta solo siete escalares, pero falta `encodeURIComponent` o regex en el schema.
 
 ## Decisiones cerradas
