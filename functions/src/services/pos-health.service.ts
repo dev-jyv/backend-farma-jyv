@@ -1,4 +1,5 @@
 import { recordAudit, AuditActor } from './audit.service';
+import { BlockedSalesAlertDecision, evaluateBlockedSalesAlert } from './pos-health-alerts.service';
 import * as diagnosticsRepo from '../repositories/pos-diagnostics.repository';
 import * as commandsRepo from '../repositories/pos-commands.repository';
 import {
@@ -66,18 +67,77 @@ export const fitDiagnosticsToDocument = (
 };
 
 /**
- * `POST /pos/diagnostics`. Una escritura + una consulta, en paralelo: se llama
- * cada pocos minutos desde cada caja, así que no lee el snapshot anterior ni
- * corre transacción.
+ * Tope de espera del correo de ventas bloqueadas dentro de un reporte. El envío
+ * se espera (en Cloud Functions el trabajo que sigue después de responder no
+ * tiene CPU garantizada y el correo podría no salir nunca), pero acotado: la
+ * caja no debe quedarse colgada porque Resend tarde. Pasado el tope se responde
+ * y el envío sigue por su cuenta.
+ */
+export const BLOCKED_SALES_ALERT_TIMEOUT_MS = 5_000;
+
+/**
+ * Manda el correo de ventas bloqueadas **sin poder fallar**: cualquier error
+ * (Resend caído, variable sin configurar, la propia carga del módulo) se queda
+ * en el log, igual que `recordAudit`. La cadena de correo se importa aquí
+ * dentro para no cargarla en el arranque en frío de `api`.
+ */
+const notifyBlockedSales = async (
+    input: PosDiagnosticsInput,
+    decision: BlockedSalesAlertDecision,
+    reportedAt: Date,
+): Promise<void> => {
+    const send = (async () => {
+        const { sendBlockedSalesAlert } = await import('./pos-health-alerts-sender.service');
+        await sendBlockedSalesAlert(input, decision, reportedAt);
+    })().catch((error: unknown) => {
+        console.error('No se pudo mandar la alerta de ventas bloqueadas', {
+            deviceId: input.deviceId,
+            reason: decision.reason,
+            error: error instanceof Error ? error.message : String(error),
+        });
+    });
+
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+            console.warn('La alerta de ventas bloqueadas tardó más del tope; se responde igual', {
+                deviceId: input.deviceId,
+            });
+            resolve();
+        }, BLOCKED_SALES_ALERT_TIMEOUT_MS);
+    });
+    try {
+        await Promise.race([send, timeout]);
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
+/**
+ * `POST /pos/diagnostics`. Lee el snapshot previo (solo `blockedSales`, 1
+ * lectura) en paralelo con los comandos pendientes, lo sobrescribe y, si las
+ * ventas bloqueadas aparecieron o crecieron (`evaluateBlockedSalesAlert`),
+ * avisa por correo. El correo no puede tumbar el reporte: la caja recibe 200
+ * aunque Resend esté caído.
+ *
+ * La alerta va **después** de guardar: si la escritura falla, la caja
+ * reintenta y el aviso sale con ese reintento, no dos veces.
  */
 export const reportDiagnostics = async (
     input: PosDiagnosticsInput,
     reportedBy: string,
 ): Promise<{ commands: PosCommand[] }> => {
-    const [, commands] = await Promise.all([
-        diagnosticsRepo.saveDiagnostics(fitDiagnosticsToDocument(input), reportedBy),
+    const fitted = fitDiagnosticsToDocument(input);
+    const [previous, commands] = await Promise.all([
+        diagnosticsRepo.getPreviousBlockedSales(input.deviceId),
         commandsRepo.listPendingForDevice(input.deviceId),
     ]);
+    await diagnosticsRepo.saveDiagnostics(fitted, reportedBy);
+
+    const decision = evaluateBlockedSalesAlert(previous, fitted);
+    if (decision.shouldAlert) {
+        await notifyBlockedSales(fitted, decision, new Date());
+    }
     return { commands };
 };
 

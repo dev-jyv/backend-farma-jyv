@@ -1,16 +1,12 @@
 import { PosBlockedSale } from '../types';
 
 /**
- * Decide si un diagnóstico de caja amerita alerta comparándolo con el anterior
- * del mismo equipo. **Todavía no se llama desde ningún lado** y no manda nada:
- * queda listo para conectarlo a un correo o push sin rehacer la regla.
+ * Reglas de alerta de la salud de cajas (SPEC 44). Funciones puras: deciden,
+ * no mandan nada. El envío vive en `pos-health-alerts-sender.service.ts`, que
+ * carga la cadena de correo y por eso solo se importa con `await import()`.
  *
- * No va en `reportDiagnostics` a propósito: allí el reporte es una escritura +
- * una consulta, y comparar exige leer el snapshot previo antes de
- * sobrescribirlo. Al conectarlo, leer el previo en el mismo paso (p. ej.
- * `getDiagnostics` antes del `set`) y mandar la alerta fuera del camino de la
- * respuesta a la caja, con el error tragado como `recordAudit`: una alerta que
- * falla no debe tumbar el reporte.
+ * `evaluateBlockedSalesAlert` la llama `reportDiagnostics` con el snapshot
+ * previo (leído antes de sobrescribirlo) y el reporte nuevo.
  *
  * Regla: alertar solo cuando el problema **aparece** (antes cero ventas
  * bloqueadas, ahora alguna) o **crece** (más que antes). Una caja que sigue
@@ -56,4 +52,43 @@ export const evaluateBlockedSalesAlert = (
         currentCount,
         newlyBlockedSaleIds,
     };
+};
+
+/**
+ * Horas sin reportar a partir de las cuales una caja con turno abierto se
+ * considera caída. Es el mismo umbral con el que el panel pinta la fila en rojo
+ * (SPEC 36): el correo y la tarjeta tienen que contar la misma historia.
+ */
+export const POS_SILENCE_THRESHOLD_MS = 2 * 60 * 60 * 1000;
+
+export interface SilenceAlertInput {
+    receivedAt: Date;
+    /** `undefined`: POS anterior a SPEC 44 que no informa su turno. */
+    openCashSessionId: string | null | undefined;
+    silenceAlertedAt: Date | null;
+}
+
+/**
+ * Una caja amerita aviso de silencio cuando:
+ *
+ * - informó un turno abierto en su último reporte (una caja apagada fuera de
+ *   horario, sin turno, no es noticia; una sin el campo —POS sin actualizar—
+ *   tampoco, porque no sabemos si tenía turno);
+ * - lleva más del umbral sin reportar (estrictamente más: exactamente 2 h aún
+ *   no es rojo en el panel);
+ * - no se le avisó ya desde ese reporte: el aviso se marca y solo un reporte
+ *   nuevo lo limpia, así que una caja sin red todo el día manda un solo correo.
+ */
+export const shouldAlertSilence = (
+    snapshot: SilenceAlertInput,
+    nowMs: number,
+    thresholdMs = POS_SILENCE_THRESHOLD_MS,
+): boolean => {
+    if (typeof snapshot.openCashSessionId !== 'string' || snapshot.openCashSessionId === '') {
+        return false;
+    }
+    if (snapshot.silenceAlertedAt) {
+        return false;
+    }
+    return nowMs - snapshot.receivedAt.getTime() > thresholdMs;
 };
