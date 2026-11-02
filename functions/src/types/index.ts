@@ -1894,6 +1894,11 @@ export interface PosDiagnosticsInput {
         message: string;
         ref: string | null;
     }>;
+    /**
+     * Última copia local de rutina de la base de la caja (ISO), `null` si no hay
+     * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
+     */
+    lastLocalBackupAt?: string | null;
 }
 
 export type PosCommandType =

@@ -126,6 +126,12 @@ export const posDiagnosticsSchema = z.object({
         }),
         POS_DIAGNOSTICS_LIMITS.syncLog,
     ),
+    /**
+     * Fecha (ISO) de la última copia local de rutina de la base de la caja
+     * (SPEC 37), o `null` si nunca se ha hecho. Opcional: una caja sin
+     * actualizar no la manda y su reporte se tiene que seguir aceptando.
+     */
+    lastLocalBackupAt: clientDate.nullable().optional(),
 });
 
 export const posCommandTypeSchema = z.enum([

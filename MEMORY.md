@@ -35,7 +35,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `medicalRecords` | Notas del expediente clínico (paciente/doctor denormalizados, `visitedAt`, `vitals` con `bmi` calculado en servidor, `attachments[]` con ruta de Storage) |
 | `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
 | `promotions` | Promociones por cantidad (`rule` inmutable: `tiered`/`nxm`/`percent`, `productIds[]`, `startsAt`/`endsAt`, `isActive`, `deactivatedAt`); baja lógica |
-| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor) y `reportedBy`. Solo API |
+| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor) y `reportedBy`; opcional `lastLocalBackupAt` (última copia local de rutina, SPEC 37; ausente se lee `null`). Solo API |
 | `posCommands` | Comandos remotos admin → caja (`retrySale`/`retryCashSession`/`retryProduct`/`sendSaleToUnreconciled`), `status` `pending`→`done`/`failed`, `completedBy`. Solo API |
 
 ## Endpoints (montados bajo `/v1`, servidos por controllers Nest en `src/modules/`)
