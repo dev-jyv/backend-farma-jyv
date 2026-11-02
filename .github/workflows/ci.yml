@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  # `deploy.yml` la llama antes de desplegar un tag a producción: el tag no
+  # dispara este workflow por sí mismo y un deploy sin CI verde no debe salir.
+  workflow_call:
+
+# Solo lee el código: sin esto el token toma el permiso por defecto del repo, y
+# `npm ci` ejecuta scripts de instalación de terceros.
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -51,6 +59,15 @@ jobs:
           # `emulators:exec` arranca el emulador con este proyecto; no toca datos
           # reales ni requiere credenciales.
           GCLOUD_PROJECT: farma-jyv-test
+
+      # Desde la raíz a propósito (SPEC 33): desde `functions/` el emulador no ve
+      # el `firebase.json` raíz, arranca con reglas abiertas y las aserciones
+      # pasarían en vacío. Usa el Firebase CLI y la JDK ya instalados arriba y
+      # las dependencias de `functions/` del `npm ci`; la raíz no tiene
+      # dependencias propias. El proyecto `farma-jyv-rules` lo fija el script.
+      - name: Pruebas de reglas
+        working-directory: .
+        run: npm run test:rules
 
       - name: Publicar reporte de cobertura
         if: always()
