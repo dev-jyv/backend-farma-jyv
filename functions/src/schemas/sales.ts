@@ -541,3 +541,16 @@ export const reportExportQuerySchema = z.object({
     scope: exportScope.optional(),
     days: z.coerce.number().int().min(1).max(365).optional(),
 });
+
+/**
+ * La misma descarga en la función `reportsPdf` (SPEC 38): solo `pdf`. XLSX y CSV
+ * no lanzan Chromium y se piden a `api`; aceptarlos aquí los mandaría a la función
+ * cara sin necesidad.
+ */
+export const reportPdfExportQuerySchema = reportExportQuerySchema.extend({
+    format: z.literal('pdf', {
+        errorMap: () => ({
+            message: 'Esta función solo genera PDF; XLSX y CSV se descargan desde la API',
+        }),
+    }).default('pdf'),
+});

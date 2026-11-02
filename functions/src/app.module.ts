@@ -1,12 +1,8 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { CommonModule } from './common/common.module';
-import { AppExceptionFilter } from './common/app-exception.filter';
-import { ResponseEnvelopeInterceptor } from './common/response-envelope.interceptor';
+import { GLOBAL_HTTP_PROVIDERS } from './common/http-pipeline';
 import { HealthController } from './modules/health/health.controller';
 import { IdentityModule } from './modules/identity/identity.module';
-import { AuthGuard } from './modules/identity/guards/auth.guard';
-import { PermissionsGuard } from './modules/identity/guards/permissions.guard';
 import { DoctorModule } from './modules/doctor/doctor.module';
 import { UploadsModule } from './modules/uploads/uploads.module';
 import { InternalModule } from './modules/internal/internal.module';
@@ -54,11 +50,8 @@ import { AssistantModule } from './modules/assistant/assistant.module';
         AssistantModule,
     ],
     controllers: [HealthController],
-    providers: [
-        { provide: APP_GUARD, useClass: AuthGuard },
-        { provide: APP_GUARD, useClass: PermissionsGuard },
-        { provide: APP_FILTER, useClass: AppExceptionFilter },
-        { provide: APP_INTERCEPTOR, useClass: ResponseEnvelopeInterceptor },
-    ],
+    // Guards (AuthGuard → PermissionsGuard), filtro e interceptor compartidos con
+    // `reportsPdf`: ver `common/http-pipeline.ts`.
+    providers: [...GLOBAL_HTTP_PROVIDERS],
 })
 export class AppModule {}

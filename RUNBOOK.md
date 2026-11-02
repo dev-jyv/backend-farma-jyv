@@ -374,3 +374,74 @@ Revisión rápida desde la terminal:
 ```bash
 firebase functions:log --only api | grep -i "ERROR"
 ```
+
+---
+
+## 8. PDF fuera de `api`: función `reportsPdf` (SPEC 38)
+
+Los PDF lanzan Chromium (Puppeteer + `@sparticuz/chromium`). Dentro de `api`
+(512 MiB, 60 s) un reporte grande podía agotar la memoria y tumbar la instancia
+que también atiende a las cajas. Desde SPEC 38 los sirve una función HTTP aparte:
+
+| | `api` | `reportsPdf` |
+|---|---|---|
+| Región | `us-central1` | `us-central1` |
+| Memoria / tiempo | 512 MiB / 60 s | **1 GiB / 120 s** |
+| Concurrencia por instancia | por defecto | **1** (dos PDF grandes no comparten el GiB) |
+| `maxInstances` | — | 5 |
+| URL | `https://api-vykfsskx3q-uc.a.run.app` | `https://us-central1-<proyecto>.cloudfunctions.net/reportsPdf` |
+
+Rutas que atiende, todas con prefijo `/v1` y el mismo contrato que en `api`
+(parámetros, `Content-Type: application/pdf`, `Content-Disposition`, errores
+`{ error: { code, message } }`):
+
+- `GET /reports/exports/sales-daily.pdf`, `sales-monthly.pdf`, `inventory.pdf`,
+  `low-stock.pdf`, `expiring.pdf`, `no-cost.pdf`, `expenses-monthly.pdf`,
+  `invoices.pdf` — `dashboard:read`.
+- `GET /reports/exports/:report?format=pdf` — `dashboard:read` + el `authorize` de
+  cada reporte. Aquí solo `pdf`: `xlsx`/`csv` responden 400 y se piden a `api`.
+- `GET /accounting/exports/income-statement.pdf`, `balance-sheet.pdf` —
+  `accounting:read`.
+
+CORS, `AuthGuard` → `PermissionsGuard`, `AppExceptionFilter`, interceptor y prefijo
+salen de `functions/src/common/http-pipeline.ts`, compartido con `api`; los
+orígenes son los mismos (`CORS_ORIGINS`, que Firebase carga para todas las
+funciones del proyecto). No hay variables nuevas.
+
+### Orden de despliegue
+
+1. **Backend primero.** `npm run deploy:dev` (y luego `deploy:prod`) crea
+   `reportsPdf`. Las rutas PDF de `api` **siguen** funcionando: el panel viejo en
+   caché las usa.
+2. Verificar la función en el proyecto antes de tocar el panel:
+
+   ```bash
+   firebase functions:list --project dev | grep reportsPdf
+   # Debe responder 401 (sin token), no 404 ni un 403 HTML de Google:
+   curl -s -o /dev/null -w '%{http_code}\n' \
+     https://us-central1-farma-jyv-dev.cloudfunctions.net/reportsPdf/v1/reports/exports/inventory.pdf
+   ```
+
+   Si responde 403 de Google (HTML, no JSON), la función quedó sin invocador
+   público: `gcloud functions add-invoker-policy-binding reportsPdf
+   --region=us-central1 --member=allUsers --project=<proyecto>` (Firebase lo pone
+   solo en `onRequest`; esto es solo si una política de la organización lo quitó).
+3. **Panel después.** El panel con `pdfApiUrl` (y el host en `connect-src` del CSP
+   de su `firebase.json`, en los dos sitios) se despliega a dev, se descargan los
+   PDF de Reportes y de Contabilidad sin errores de CSP en consola, y luego a
+   producción.
+4. **Borrado, días después.** Cuando el panel nuevo lleve días en producción, un PR
+   aparte quita `ReportPdfExportsController` de `ReportsModule` y
+   `AccountingPdfExportsController` de `AccountingModule`; con eso `api` deja de
+   importar `report-pdf.service.ts`. Un panel en caché vieja recibiría 404 hasta
+   recargar, por eso se espera. Ese PR añade la prueba del grafo de imports.
+
+### Diagnóstico
+
+```bash
+firebase functions:log --only reportsPdf
+gcloud logging read 'resource.labels.service_name="reportspdf" AND severity>=ERROR' --freshness=1h
+```
+
+La primera descarga tras un rato sin uso tarda más (arranque en frío con
+Chromium); no bloquea la caja porque es otra función.
