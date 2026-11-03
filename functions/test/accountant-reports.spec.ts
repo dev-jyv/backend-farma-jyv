@@ -186,7 +186,7 @@ describe('descargas del contador en api', () => {
         expect(data.truncated).toBe(false);
     });
 
-    it('json de compras: filas del periodo y totales en centavos', async () => {
+    it('json de compras: filas del periodo y totales en pesos', async () => {
         const res = await pedir(
             api.base,
             `/v1/reports/exports/facturas?month=${MES}&format=json`,
