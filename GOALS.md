@@ -84,10 +84,10 @@ Ninguno alcanzó el umbral de reporte de la revisión (severidad alta con explot
 
 | Módulo | Qué falta hoy |
 |---|---|
-| **Promociones y control de descuento** | Hecho (2026-09-24): precio por cantidad, NxM y % con mínimo por producto (`/v1/promotions`), con el tope del 20% solo sobre la parte manual. Falta: mix&match entre productos, % por categoría, cupones y motivo capturado del descuento manual. |
+| **Promociones y control de descuento** | Hecho (2026-09-24): precio por cantidad, NxM y % con mínimo por producto (`/v1/promotions`), con el tope del 20% solo sobre la parte manual. Cupones por producto o por venta (SPEC 47, 2026-11-03: `/v1/coupons`, `couponCode` en la venta, revisión offline). Falta: mix&match entre productos, % por categoría, cupones por cliente y motivo capturado del descuento manual. |
 | **Órdenes de compra y cuentas por pagar** | Solo hay entrada ligada a factura; falta PO, recepción parcial contra PO y saldo a proveedor. |
 | **Devolución a proveedor / canje de caducados** | No existe; la farmacia devuelve caducado con nota de crédito. |
-| **Venta fraccionada** | `Product.unit` es un solo campo; falta unidad de compra vs venta y factor de conversión (caja ↔ blíster ↔ tableta). |
+| **Venta fraccionada** | Hecho en parte (SPEC 46, 2026-11-03): venta por **caja completa** (`boxQuantity`/`boxPrice`/`boxBarcode`, `items[].saleUnit: 'box'`); el stock sigue en piezas. Falta: venta por debajo de la pieza (blíster/tableta), varias presentaciones por producto y unidad de compra vs venta. |
 | **Multi-sucursal y traspasos** | `batches` no tiene `locationId`; abrir una segunda sucursal implica remodelar el inventario. |
 | **Crédito a cliente y lealtad** | `Customer` es nombre + RFC + contacto: sin límite de crédito, saldo, historial ni puntos. |
 

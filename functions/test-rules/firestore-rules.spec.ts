@@ -78,6 +78,7 @@ const COLECCIONES = [
     'pharmacyServices',
     'serviceProviders',
     'promotions',
+    'coupons',
     'pointOrders',
     'posDiagnostics',
     'posCommands',

@@ -1,4 +1,6 @@
 import * as promotionsRepo from '../../../repositories/promotions.repository';
+import * as salesRepo from '../../../repositories/sales.repository';
+import { fromCents, toCents } from '../../../utils/taxes';
 import { Promotion } from '../../../types';
 import { getSalesByCashier, getTopProducts } from '../../analytics.service';
 import { getSalesByHour } from '../../insights.service';
@@ -216,10 +218,78 @@ export const promociones: ReportDefinition = {
     },
 };
 
+/**
+ * Cupones usados en el periodo (SPEC 47): usos y descuento por cupón. Sale de
+ * `Sale.coupon` de las ventas no anuladas del periodo, leídas una vez; no hace
+ * falta índice extra porque ya se recorre el periodo completo.
+ */
+export const cupones: ReportDefinition = {
+    key: 'cupones',
+    title: 'Cupones usados',
+    columns: [
+        { key: 'code', header: 'Código', type: 'text' },
+        { key: 'name', header: 'Cupón', type: 'text' },
+        { key: 'scope', header: 'Alcance', type: 'text' },
+        { key: 'uses', header: 'Usos', type: 'int', total: true },
+        { key: 'discount', header: 'Descuento otorgado', type: 'money', total: true },
+        { key: 'revenue', header: 'Venta con cupón', type: 'money', total: true },
+        { key: 'review', header: 'Por revisar', type: 'int', total: true },
+    ],
+    load: async ({ query, now }) => {
+        const range = resolveReportPeriod(query, now);
+        const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
+        const byCoupon = new Map<string, {
+            code: string; name: string; scope: string;
+            uses: number; discountCents: number; revenueCents: number; review: number;
+        }>();
+        for (const sale of sales) {
+            if (sale.voidedAt || !sale.coupon) {
+                continue;
+            }
+            const entry = byCoupon.get(sale.coupon.couponId) ?? {
+                code: sale.coupon.code,
+                name: sale.coupon.name,
+                scope: sale.coupon.scope === 'product' ? 'Producto' : 'Venta',
+                uses: 0,
+                discountCents: 0,
+                revenueCents: 0,
+                review: 0,
+            };
+            entry.uses += 1;
+            entry.discountCents += toCents(sale.coupon.discountAmount);
+            entry.revenueCents += toCents(sale.total);
+            entry.review += sale.couponReview ? 1 : 0;
+            byCoupon.set(sale.coupon.couponId, entry);
+        }
+        const rows: ReportRow[] = [...byCoupon.values()]
+            .sort((a, b) => b.discountCents - a.discountCents || a.code.localeCompare(b.code))
+            .map((entry) => ({
+                code: entry.code,
+                name: entry.name,
+                scope: entry.scope,
+                uses: entry.uses,
+                discount: fromCents(entry.discountCents),
+                revenue: fromCents(entry.revenueCents),
+                review: entry.review,
+            }));
+        return {
+            subtitle: range.label,
+            slug: range.slug,
+            rows,
+            emptyMessage: 'Sin ventas con cupón en el periodo.',
+            notes: [
+                'Las ventas anuladas no cuentan; anular o devolver no devuelve el uso del cupón.',
+                'Por revisar: ventas offline aceptadas con el cupón vencido o agotado.',
+            ],
+        };
+    },
+};
+
 export const salesDefinitions: ReportDefinition[] = [
     topProductos,
     porCajero,
     ventasPorHora,
     ventasPorDiaSemana,
     promociones,
+    cupones,
 ];
