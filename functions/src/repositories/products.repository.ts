@@ -64,8 +64,6 @@ const assertNoDuplicate = async (
 
 /** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
 const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;
-/** Lo que cambia la validez de la caja: si un update no toca nada de esto, no se revisa. */
-const BOX_DEPENDENCIES = ['salePrice', 'sku', 'barcode', ...BOX_FIELDS] as const;
 
 type BoxPatch = {
     boxQuantity?: number | null;
@@ -78,8 +76,11 @@ export type ProductPatch = Partial<Omit<
     'id' | 'createdAt' | 'updatedAt' | typeof BOX_FIELDS[number]
 >> & BoxPatch;
 
-const assertBoxConfig = (product: Parameters<typeof boxConfigProblem>[0]): void => {
-    const problem = boxConfigProblem(product);
+const assertBoxConfig = (
+    product: Parameters<typeof boxConfigProblem>[0],
+    options?: Parameters<typeof boxConfigProblem>[1],
+): void => {
+    const problem = boxConfigProblem(product, options);
     if (problem) {
         throw badRequest(problem);
     }
@@ -265,10 +266,14 @@ export const updateProduct = async (
         write[key] = value;
     }
 
-    // La caja se valida contra el documento leído aquí, no contra una lectura
-    // previa: bajar `salePrice` puede dejar una caja más cara que sus piezas.
-    if (BOX_DEPENDENCIES.some((field) => field in write)) {
-        assertBoxConfig(merged as unknown as Product);
+    // La caja se valida contra el documento leído aquí, y solo cuando la
+    // escritura toca la caja. Un cambio de `salePrice` (u otro campo) nunca se
+    // rechaza por la caja: el POS sube precios editados sin red y un push
+    // rechazado atora su cola. Si deja la caja más cara que las piezas, el
+    // servicio lo deja en la bitácora (`product.box_price_review`).
+    const writesBoxPrice = 'boxQuantity' in write || 'boxPrice' in write;
+    if (writesBoxPrice || 'boxBarcode' in write) {
+        assertBoxConfig(merged as unknown as Product, { checkPrice: writesBoxPrice });
     }
 
     const timestamp = now();

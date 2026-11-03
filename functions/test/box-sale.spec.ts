@@ -196,28 +196,54 @@ describe('venta por caja (SPEC 46)', () => {
             }) as never), 'CONFLICT', 'código de barras');
         });
 
-        it('bajar salePrice por debajo de la caja no se guarda (también en masivo)', async () => {
+        it('una edición de la caja más cara que sus piezas no se guarda', async () => {
             const { product } = await createBoxProduct();
             await expectAppError(
-                productsService.updateProduct(product.id, { salePrice: 17 }, ADMIN),
+                productsService.updateProduct(product.id, { boxPrice: 201 }, ADMIN),
                 'BAD_REQUEST',
                 'no puede ser mayor que 10 piezas',
             );
             await expectAppError(
-                productsService.updateProductPrices(
-                    [{ productId: product.id, salePrice: 17 }],
+                productsService.updateProduct(
+                    product.id,
+                    { salePrice: 15, boxQuantity: 10, boxPrice: 180 },
                     ADMIN,
                 ),
                 'BAD_REQUEST',
             );
-            const stored = await productsRepo.getProductById(product.id);
-            expect(stored?.salePrice).toBe(20);
-
-            await expectAppError(
-                productsService.updateProduct(product.id, { boxPrice: 201 }, ADMIN),
-                'BAD_REQUEST',
-            );
+            expect((await productsRepo.getProductById(product.id))?.boxPrice).toBe(180);
         });
+
+        it('bajar solo salePrice bajo la caja se acepta y queda en bitácora (POS offline)',
+            async () => {
+                const { product } = await createBoxProduct();
+                const updated = await productsService.updateProduct(
+                    product.id,
+                    { salePrice: 17 },
+                    ADMIN,
+                );
+                expect(updated.salePrice).toBe(17);
+                expect(updated).toMatchObject({ boxQuantity: 10, boxPrice: 180 });
+
+                const bulk = await createBoxProduct();
+                const [bulkUpdated] = await productsService.updateProductPrices(
+                    [{ productId: bulk.product.id, salePrice: 16 }],
+                    ADMIN,
+                );
+                expect(bulkUpdated.salePrice).toBe(16);
+
+                for (const id of [product.id, bulk.product.id]) {
+                    const logs = await auditRepo.listAuditLogs({ entityId: id });
+                    const review = logs.find((log) => log.action === 'product.box_price_review');
+                    expect(review?.summary).toContain('más cara');
+                }
+
+                // Una subida que deja la caja bien no deja marca.
+                const fine = await createBoxProduct();
+                await productsService.updateProduct(fine.product.id, { salePrice: 25 }, ADMIN);
+                const fineLogs = await auditRepo.listAuditLogs({ entityId: fine.product.id });
+                expect(fineLogs.map((log) => log.action)).not.toContain('product.box_price_review');
+            });
 
         it('cambiar el precio de caja se audita como cambio de precio', async () => {
             const { product } = await createBoxProduct();

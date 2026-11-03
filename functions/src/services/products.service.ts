@@ -22,6 +22,7 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
+import { boxPriceExceedsPieces } from '../utils/box-sale';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -625,6 +626,37 @@ const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
     'boxBarcode',
 ];
 
+/**
+ * La caja quedó más cara que sus piezas tras un cambio de `salePrice`: el
+ * precio ya se guardó (no se rechaza, ver `products.repository`) y aquí solo se
+ * deja constancia para que alguien ajuste la caja. Mismo criterio que
+ * `retirePromotionsBrokenByPrice`.
+ */
+const auditBoxPriceReview = async (
+    before: Product | undefined,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    if (!before || before.salePrice === after.salePrice || !boxPriceExceedsPieces(after)) {
+        return;
+    }
+    await recordAudit({
+        action: 'product.box_price_review',
+        entity: 'product',
+        entityId: after.id,
+        summary: `La caja de ${after.name} (${formatBoxPrice(after)}) quedó más cara que ` +
+            `${after.boxQuantity} piezas sueltas a ${after.salePrice.toFixed(2)}; revisa el ` +
+            'precio de caja',
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        metadata: {
+            salePrice: after.salePrice,
+            boxQuantity: after.boxQuantity,
+            boxPrice: after.boxPrice,
+        },
+    });
+};
+
 const formatBoxPrice = (product: Product): string => (product.boxPrice === undefined
     ? 'sin caja'
     : `${product.boxPrice.toFixed(2)} (${product.boxQuantity} pzas)`);
@@ -891,6 +923,7 @@ export const updateProduct = async (
     });
 
     await auditProductUpdate(existing, updated, actor);
+    await auditBoxPriceReview(existing, updated, actor);
     if (updated.salePrice !== existing.salePrice) {
         await retirePromotionsBrokenByPrice(updated, actor);
     }
@@ -944,6 +977,7 @@ export const updateProductPrices = async (
         });
     }));
     for (const product of updated) {
+        await auditBoxPriceReview(existingById.get(product.id), product, actor);
         if (existingById.get(product.id)?.salePrice !== product.salePrice) {
             await retirePromotionsBrokenByPrice(product, actor);
         }

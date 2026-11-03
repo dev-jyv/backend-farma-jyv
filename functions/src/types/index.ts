@@ -137,6 +137,11 @@ export type AuditAction =
     | 'product.created'
     | 'product.updated'
     | 'product.price_changed'
+    /**
+     * Un cambio de `salePrice` dejó la caja más cara que sus piezas sueltas
+     * (SPEC 46). Se acepta —el POS sube precios sin red— y queda para revisión.
+     */
+    | 'product.box_price_review'
     | 'product.deactivated'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */

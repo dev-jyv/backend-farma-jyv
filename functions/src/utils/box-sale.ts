@@ -19,6 +19,16 @@ export interface BoxConfig {
 }
 
 /**
+ * ¿La caja quedó más cara que sus piezas sueltas? Pasa cuando solo baja
+ * `salePrice` (el POS edita precios sin red): esa edición no se rechaza, se
+ * acepta y se deja en la bitácora para revisión.
+ */
+export const boxPriceExceedsPieces = (config: BoxConfig): boolean =>
+    config.boxQuantity !== undefined && config.boxQuantity !== null &&
+    config.boxPrice !== undefined && config.boxPrice !== null &&
+    toCents(config.boxPrice) > toCents(config.salePrice) * config.boxQuantity;
+
+/**
  * Por qué la configuración de caja no es válida, o `null`.
  *
  * - `boxQuantity` y `boxPrice` van juntos: una caja sin precio no se puede
@@ -28,7 +38,10 @@ export interface BoxConfig {
  * - `boxBarcode` solo con caja configurada y distinto del código y SKU propios:
  *   al escanearlo la caja tiene que saber que es una caja y no una pieza.
  */
-export const boxConfigProblem = (config: BoxConfig): string | null => {
+export const boxConfigProblem = (
+    config: BoxConfig,
+    options: { checkPrice?: boolean } = {},
+): string | null => {
     const hasQuantity = config.boxQuantity !== undefined && config.boxQuantity !== null;
     const hasPrice = config.boxPrice !== undefined && config.boxPrice !== null;
     if (hasQuantity !== hasPrice) {
@@ -49,7 +62,7 @@ export const boxConfigProblem = (config: BoxConfig): string | null => {
     if (!(boxPrice > 0)) {
         return 'El precio de caja debe ser mayor a cero';
     }
-    if (toCents(boxPrice) > toCents(config.salePrice) * quantity) {
+    if (options.checkPrice !== false && boxPriceExceedsPieces(config)) {
         return `El precio de caja ($${boxPrice.toFixed(2)}) no puede ser mayor que ` +
             `${quantity} piezas sueltas ($${(toCents(config.salePrice) * quantity / 100)
                 .toFixed(2)})`;
