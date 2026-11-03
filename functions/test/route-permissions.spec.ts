@@ -7,6 +7,8 @@ import { IS_PUBLIC_KEY } from '../src/modules/identity/decorators/public.decorat
 import {
     ANY_AUTHENTICATED,
     PERMISSION_KEY,
+    RequireAnyPermission,
+    isAnyOfPermissions,
 } from '../src/modules/identity/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../src/modules/identity/guards/permissions.guard';
 import { AppError } from '../src/utils/errors';
@@ -106,6 +108,63 @@ describe('PermissionsGuard', () => {
             expect((error as AppError).statusCode).toBe(403);
         }
     });
+
+    describe('@RequireAnyPermission (SPEC 45)', () => {
+        const handler = conMetadato({
+            anyOf: [
+                { area: 'dashboard', level: 'read' },
+                { area: 'reportDownloads', level: 'read' },
+            ],
+        });
+        const codigo = (authUser: AuthUser): number | 'pasa' => {
+            try {
+                guard.canActivate(contextoDe(handler, Cualquiera, authUser));
+                return 'pasa';
+            } catch (error) {
+                return (error as AppError).statusCode;
+            }
+        };
+
+        it('deja pasar con cualquiera de las opciones', () => {
+            expect(codigo(usuario('analista', [{ area: 'dashboard', level: 'read' }])))
+                .toBe('pasa');
+            expect(codigo(usuario('accountant', [{ area: 'reportDownloads', level: 'read' }])))
+                .toBe('pasa');
+            // `write` implica `read`, igual que en `@RequirePermission`.
+            expect(codigo(usuario('x', [{ area: 'reportDownloads', level: 'write' }])))
+                .toBe('pasa');
+            expect(codigo(usuario('admin'))).toBe('pasa');
+        });
+
+        it('niega a quien no cumple ninguna', () => {
+            expect(codigo(usuario('manager', [{ area: 'sales', level: 'write' }]))).toBe(403);
+            expect(codigo(usuario('cashier', []))).toBe(403);
+        });
+
+        it('exige sesión', () => {
+            try {
+                guard.canActivate(contextoDe(handler, Cualquiera, undefined));
+                fail('debía lanzar');
+            } catch (error) {
+                expect((error as AppError).statusCode).toBe(401);
+            }
+        });
+
+        it('una lista vacía no deja pasar a nadie, ni al admin', () => {
+            const vacio = conMetadato({ anyOf: [] });
+            for (const slug of ['manager', 'admin']) {
+                expect(() => guard.canActivate(contextoDe(vacio, Cualquiera, usuario(slug))))
+                    .toThrow(AppError);
+            }
+        });
+
+        it('el decorador no acepta cero opciones y guarda la forma { anyOf }', () => {
+            expect(() => RequireAnyPermission()).toThrow();
+            expect(isAnyOfPermissions({ anyOf: [] })).toBe(true);
+            expect(isAnyOfPermissions({ area: 'sales', level: 'read' })).toBe(false);
+            expect(isAnyOfPermissions(ANY_AUTHENTICATED)).toBe(false);
+        });
+    });
 });
 
 /** Recorre `imports` recursivamente y junta todos los `controllers`. */
@@ -176,6 +235,24 @@ describe('cobertura de autorización de las rutas', () => {
         expect(sinDeclarar).toEqual([]);
     });
 
+    it('solo las descargas de reportes usan @RequireAnyPermission', () => {
+        // Una ruta "esta área o aquella" es más ancha que una de un área: cada
+        // una nueva tiene que ser una decisión consciente, como los @Public.
+        const conVarias: string[] = [];
+        for (const controller of controllers) {
+            for (const { nombre, handler } of rutasDe(controller)) {
+                const permiso = reflector.getAllAndOverride(PERMISSION_KEY, [handler, controller]);
+                if (isAnyOfPermissions(permiso)) {
+                    const areas = permiso.anyOf.map((p) => `${p.area}:${p.level}`).join('|');
+                    conVarias.push(`${controller.name}.${nombre} ${areas}`);
+                }
+            }
+        }
+        expect(conVarias).toEqual([
+            'ReportExportsController.download dashboard:read|reportDownloads:read',
+        ]);
+    });
+
     it('los únicos endpoints @Public son los esperados', () => {
         // Un `@Public()` nuevo tiene que ser una decisión consciente: cada uno
         // de estos se defiende por su cuenta (secreto de despliegue con
@@ -192,6 +269,7 @@ describe('cobertura de autorización de las rutas', () => {
         expect(publicos.sort()).toEqual([
             'HealthController.getHealth',
             'InternalController.migrateRoles',
+            'InternalController.triggerAccountantReport',
             'InternalController.triggerDailyReport',
             'InternalController.triggerInventoryAlerts',
             'InternalController.triggerMonthlyReport',

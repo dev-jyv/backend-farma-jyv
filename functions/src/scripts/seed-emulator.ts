@@ -19,11 +19,23 @@ import * as admin from 'firebase-admin';
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? 'demo-farmajyv';
 const SEED_PASSWORD = 'Farmacia123!';
 
-const USERS: Array<{ email: string; displayName: string; slug: string }> = [
+const USERS: Array<{
+    email: string;
+    displayName: string;
+    slug: string;
+    monthlyReportEmail?: boolean;
+}> = [
     { email: 'admin@farmajyv.test', displayName: 'Admin Demo', slug: 'admin' },
     { email: 'gerente@farmajyv.test', displayName: 'Gerente Demo', slug: 'manager' },
     { email: 'cajero@farmajyv.test', displayName: 'Cajero Demo', slug: 'cashier' },
     { email: 'doctor@farmajyv.test', displayName: 'Doctora Demo', slug: 'doctor' },
+    // Contador (SPEC 45): solo reportes de ventas y compras, con el correo mensual.
+    {
+        email: 'contador@farmajyv.test',
+        displayName: 'Contador Demo',
+        slug: 'accountant',
+        monthlyReportEmail: true,
+    },
 ];
 
 const assertEmulatorOnly = (): void => {
@@ -70,6 +82,7 @@ const main = async (): Promise<void> => {
                 password: SEED_PASSWORD,
                 displayName: user.displayName,
                 roleId: role.id,
+                monthlyReportEmail: user.monthlyReportEmail,
             });
             if (user.slug === 'admin') adminUid = created.uid;
             console.log(`Usuario ${user.email} (${user.slug}) creado.`);

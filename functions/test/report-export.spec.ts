@@ -1,6 +1,14 @@
 import ExcelJS from 'exceljs';
-import { reportExportQuerySchema } from '../src/schemas';
-import { exportReport } from '../src/services/report-export/export-report';
+import { reportExportQuerySchema, reportPdfExportQuerySchema } from '../src/schemas';
+import {
+    REPORT_DOWNLOAD_KEYS,
+    REPORT_PREVIEW_MAX_ROWS,
+    assertCanExportReport,
+    buildReportPreview,
+    exportReport,
+} from '../src/services/report-export/export-report';
+import { PermissionArea } from '../src/types';
+import { AppError } from '../src/utils/errors';
 import { resolveReportPeriod } from '../src/services/report-export/period';
 import { REPORT_KEYS, REPORT_REGISTRY } from '../src/services/report-export/registry';
 import { renderCsv } from '../src/services/report-export/render-csv';
@@ -210,8 +218,110 @@ describe('exportReport', () => {
                 query: {},
                 generatedBy: 'Caja',
                 roleSlug: 'cashier',
+                // Con dashboard:read, para que el 403 sea del `authorize` del reporte.
+                permissions: [{ area: 'dashboard', level: 'read' }],
             }),
         ).rejects.toMatchObject({ statusCode: 403 });
+    });
+});
+
+describe('assertCanExportReport (SPEC 45)', () => {
+    const contador = {
+        roleSlug: 'accountant',
+        permissions: [{ area: 'reportDownloads' as const, level: 'read' as const }],
+    };
+    const codigo = (report: string, query: Record<string, string>, access: {
+        roleSlug: string;
+        permissions?: { area: PermissionArea; level: 'read' | 'write' }[];
+    }): number | 'pasa' => {
+        try {
+            assertCanExportReport(report, query, access);
+            return 'pasa';
+        } catch (error) {
+            return (error as AppError).statusCode;
+        }
+    };
+
+    it('reportDownloads abre ventas de farmacia o consultorio y facturas', () => {
+        expect(codigo('ventas', { scope: 'pharmacy' }, contador)).toBe('pasa');
+        expect(codigo('ventas', { scope: 'clinic' }, contador)).toBe('pasa');
+        expect(codigo('facturas', {}, contador)).toBe('pasa');
+    });
+
+    it('reportDownloads no abre el agregado ni otros reportes', () => {
+        expect(codigo('ventas', { scope: 'financial' }, contador)).toBe(403);
+        // Sin scope, `ventas` es el agregado (`financial`).
+        expect(codigo('ventas', {}, contador)).toBe(403);
+        for (const report of REPORT_KEYS.filter((k) => !REPORT_DOWNLOAD_KEYS.includes(k))) {
+            expect(codigo(report, { scope: 'pharmacy' }, contador)).toBe(403);
+        }
+    });
+
+    it('el mensaje dice que el reporte no está permitido', () => {
+        expect(() => assertCanExportReport('utilidad', {}, contador))
+            .toThrow('No tienes permiso para este reporte');
+    });
+
+    it('sin dashboard ni reportDownloads no abre nada (llamador sin guard)', () => {
+        expect(codigo('facturas', {}, { roleSlug: 'manager', permissions: [] })).toBe(403);
+        expect(codigo('facturas', {}, { roleSlug: 'manager' })).toBe(403);
+    });
+
+    it('dashboard:read y admin siguen abriendo todo', () => {
+        const analista = {
+            roleSlug: 'x',
+            permissions: [{ area: 'dashboard' as const, level: 'read' as const }],
+        };
+        expect(codigo('utilidad', {}, analista)).toBe('pasa');
+        expect(codigo('ventas', { scope: 'financial' }, analista)).toBe('pasa');
+        expect(codigo('corte-caja', {}, { roleSlug: 'admin' })).toBe('pasa');
+    });
+
+    it('la query acepta json en api y la de reportsPdf no', () => {
+        expect(reportExportQuerySchema.parse({ format: 'json' }).format).toBe('json');
+        expect(reportPdfExportQuerySchema.safeParse({ format: 'json' }).success).toBe(false);
+    });
+});
+
+describe('buildReportPreview (format=json)', () => {
+    const cols: ReportColumn[] = [
+        { key: 'folio', header: 'Folio', type: 'text' },
+        { key: 'units', header: 'Unidades', type: 'int' },
+        { key: 'amount', header: 'Importe', type: 'money', total: true },
+        { key: 'margin', header: 'Margen', type: 'percent' },
+    ];
+
+    it('topa en 500 filas pero suma todas', () => {
+        const rows = Array.from({ length: 501 }, (_, i) => ({
+            folio: `V-${i}`,
+            units: 1,
+            amount: 0.1,
+            margin: 10,
+        }));
+        const preview = buildReportPreview({ columns: cols }, rows);
+
+        expect(preview.rows).toHaveLength(REPORT_PREVIEW_MAX_ROWS);
+        expect(preview.truncated).toBe(true);
+        expect(preview.rowCount).toBe(501);
+        // En centavos: 501 × 0.1 no deja residuo de coma flotante.
+        expect(preview.totals).toEqual({ units: 501, amount: 50.1 });
+    });
+
+    it('con pocas filas no trunca y mapea las columnas a { key, label, type }', () => {
+        const preview = buildReportPreview({ columns: cols }, [
+            { folio: 'V-1', units: 2, amount: 10.5, margin: null },
+        ]);
+        expect(preview.truncated).toBe(false);
+        expect(preview.rowCount).toBe(1);
+        expect(preview.columns[2]).toEqual({ key: 'amount', label: 'Importe', type: 'money' });
+        expect(preview.totals).toEqual({ units: 2, amount: 10.5 });
+    });
+
+    it('vacío: encabezado completo, sin filas y totales en cero', () => {
+        const preview = buildReportPreview({ columns: cols }, []);
+        expect(preview).toMatchObject({ rows: [], truncated: false, rowCount: 0 });
+        expect(preview.columns).toHaveLength(4);
+        expect(preview.totals).toEqual({ units: 0, amount: 0 });
     });
 });
 

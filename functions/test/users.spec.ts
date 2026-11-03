@@ -7,8 +7,11 @@ import {
     listUserProfiles,
     updateUserProfile,
 } from '../src/repositories/users.repository';
-import { updateUser, deactivateUser } from '../src/services/users.service';
+import { updateUser, deactivateUser, getUser, listUsers } from '../src/services/users.service';
+import { registerStaff } from '../src/services/auth.service';
+import { registerStaffSchema, updateUserSchema } from '../src/schemas';
 import { RolePermission } from '../src/types';
+import { db } from '../src/utils/firestore';
 
 /**
  * `updateUser` concentra las protecciones de acceso del panel: nadie puede
@@ -269,5 +272,107 @@ describe('deactivateUser', () => {
         // usuario sigue obteniendo tokens válidos.
         expect(updateUserRecord).toHaveBeenCalledWith(uid, { disabled: true });
         expect(await getUserProfile(uid)).toMatchObject({ isActive: false });
+    });
+});
+
+describe('monthlyReportEmail (SPEC 45)', () => {
+    const rolContador = () => rolesRepo.createRole({
+        name: unique('Contador'),
+        slug: unique('accountant'),
+        permissions: [{ area: 'reportDownloads', level: 'read' }],
+        permissionsVersion: 1,
+        isSystem: false,
+        isActive: true,
+    });
+
+    const auditoriaDe = async (uid: string) => {
+        const snapshot = await db()
+            .collection('auditLogs')
+            .where('entityId', '==', uid)
+            .where('action', '==', 'user.updated')
+            .get();
+        return snapshot.docs.map((doc) => doc.data());
+    };
+
+    it('el alta lo guarda y lo devuelve; sin el campo no se escribe', async () => {
+        const createUser = jest.fn()
+            .mockResolvedValueOnce({ uid: unique('uid-con') })
+            .mockResolvedValueOnce({ uid: unique('uid-sin') });
+        jest.spyOn(admin, 'auth').mockReturnValue({
+            createUser,
+            setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
+        } as unknown as admin.auth.Auth);
+        const role = await rolContador();
+
+        const con = await registerStaff({
+            email: `${unique('c')}@farmajyv.test`,
+            password: 'secreta123',
+            displayName: 'Contadora',
+            roleId: role.id,
+            monthlyReportEmail: true,
+        });
+        const sin = await registerStaff({
+            email: `${unique('s')}@farmajyv.test`,
+            password: 'secreta123',
+            displayName: 'Sin correo',
+            roleId: role.id,
+        });
+
+        expect(con.monthlyReportEmail).toBe(true);
+        expect(sin).not.toHaveProperty('monthlyReportEmail');
+        expect((await getUser(con.uid)).monthlyReportEmail).toBe(true);
+        expect((await getUser(sin.uid)).monthlyReportEmail).toBeUndefined();
+        // Los dos aparecen en el listado con el campo tal como quedó guardado.
+        const { items } = await listUsers({ roleId: role.id });
+        const porUid = new Map(items.map((user) => [user.id, user.monthlyReportEmail]));
+        expect(porUid.get(con.uid)).toBe(true);
+        expect(porUid.get(sin.uid)).toBeUndefined();
+    });
+
+    it('PATCH lo activa y lo desactiva, y cada cambio se audita', async () => {
+        mockearAuth();
+        const role = await rolContador();
+        const uid = await crearUsuario(role.id);
+        const actor = unique('actor');
+
+        const activado = await updateUser(uid, { monthlyReportEmail: true }, actor, 'admin');
+        expect(activado.monthlyReportEmail).toBe(true);
+        await updateUser(uid, { monthlyReportEmail: false }, actor, 'admin');
+        expect((await getUserProfile(uid))?.monthlyReportEmail).toBe(false);
+
+        const logs = await auditoriaDe(uid);
+        expect(logs.map((log) => log.changes.monthlyReportEmail).sort(
+            (a, b) => Number(a.before) - Number(b.before),
+        )).toEqual([
+            { before: false, after: true },
+            { before: true, after: false },
+        ]);
+        expect(logs.every((log) => log.userId === actor && log.roleSlug === 'admin')).toBe(true);
+    });
+
+    it('un PATCH que no cambia el valor no deja bitácora', async () => {
+        mockearAuth();
+        const role = await rolContador();
+        const uid = await crearUsuario(role.id);
+
+        // Sin el campo equivale a `false`: mandar `false` no es un cambio.
+        await updateUser(uid, { monthlyReportEmail: false }, unique('actor'));
+        await updateUser(uid, { displayName: 'Otro nombre' }, unique('actor'));
+
+        expect(await auditoriaDe(uid)).toEqual([]);
+    });
+
+    it('el schema lo acepta en alta y edición, y solo como booleano', () => {
+        expect(updateUserSchema.parse({ monthlyReportEmail: true })).toEqual({
+            monthlyReportEmail: true,
+        });
+        expect(updateUserSchema.safeParse({ monthlyReportEmail: 'sí' }).success).toBe(false);
+        expect(registerStaffSchema.parse({
+            email: 'a@b.mx',
+            password: 'secreta123',
+            displayName: 'Ana',
+            roleId: 'r1',
+            monthlyReportEmail: false,
+        }).monthlyReportEmail).toBe(false);
     });
 });

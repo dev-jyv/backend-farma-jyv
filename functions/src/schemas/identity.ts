@@ -34,12 +34,15 @@ export const registerStaffSchema = z.object({
     password: passwordSchema,
     displayName: z.string().min(2),
     roleId: z.string().min(1),
+    /** Correo mensual del contador (SPEC 45); solo surte efecto con `reportDownloads:read`. */
+    monthlyReportEmail: z.boolean().optional(),
 });
 
 export const updateUserSchema = z.object({
     displayName: z.string().min(2).optional(),
     roleId: z.string().min(1).optional(),
     isActive: z.boolean().optional(),
+    monthlyReportEmail: z.boolean().optional(),
 });
 
 export const createRoleSchema = z.object({

@@ -12,6 +12,7 @@ export {
     dailySalesReport,
     monthlySalesReport,
 } from './schedules/sales-reports.schedule';
+export { monthlyAccountantReport } from './schedules/accountant-report.schedule';
 export { dailyFirestoreBackup } from './schedules/backup.schedule';
 export { dailyStatsIntegrityCheck } from './schedules/daily-stats.schedule';
 export { dailyPromotionsMaintenance } from './schedules/promotions.schedule';

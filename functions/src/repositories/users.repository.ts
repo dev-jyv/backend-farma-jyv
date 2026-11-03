@@ -56,7 +56,10 @@ export const createUserProfile = async (
 export const updateUserProfile = async (
     uid: string,
     data: Partial<
-        Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
+        Pick<
+            UserProfile,
+            'displayName' | 'roleId' | 'permissionsVersion' | 'isActive' | 'monthlyReportEmail'
+        >
     >,
 ): Promise<void> => {
     await collection()
@@ -135,4 +138,18 @@ export const countUsersByRoleId = async (roleId: string): Promise<number> => {
         .where('isActive', '==', true)
         .get();
     return snapshot.size;
+};
+
+/**
+ * Usuarios activos que pidieron el correo mensual del contador (SPEC 45). Una sola
+ * consulta de igualdades, que Firestore resuelve con los índices de un campo (sin
+ * índice compuesto). Si el rol todavía concede `reportDownloads` lo decide quien
+ * llama: el perfil no lo sabe.
+ */
+export const listMonthlyReportEmailProfiles = async (): Promise<UserProfile[]> => {
+    const snapshot = await collection()
+        .where('monthlyReportEmail', '==', true)
+        .where('isActive', '==', true)
+        .get();
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() } as UserProfile));
 };

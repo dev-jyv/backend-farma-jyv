@@ -85,7 +85,16 @@ export type PermissionArea =
      * mostrador: la caja *sube* su diagnóstico con `pos:write`, pero ver el de
      * todas las cajas y operarlas a distancia es de gerencia/administración.
      */
-    | 'posHealth';
+    | 'posHealth'
+    /**
+     * Descarga de reportes contables (ventas de farmacia, ventas de consultorio
+     * y compras), sin el resto del tablero. Existe para el contador externo:
+     * `dashboard:read` abre utilidad, cortes, bitácora y el asistente, y el
+     * contador no debe ver nada de eso. `exportReport` decide qué reportes y
+     * qué `scope` abre esta área (ver `REPORT_DOWNLOAD_KEYS`). El gerente no la
+     * hereda: hoy no descarga reportes y no debe empezar a hacerlo de lado.
+     */
+    | 'reportDownloads';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -186,6 +195,8 @@ export type AuditAction =
     | 'role.permissions_changed'
     | 'user.role_changed'
     | 'user.status_changed'
+    /** Preferencias del usuario que deciden a dónde sale información (correo mensual). */
+    | 'user.updated'
     /**
      * Expediente clínico: la NOM-004 exige que el expediente sea íntegro y
      * rastreable, así que toda edición de una nota ya guardada se audita
@@ -1541,6 +1552,12 @@ export interface UserProfile {
      */
     permissionsVersion?: number;
     isActive: boolean;
+    /**
+     * Recibe el día 1 el correo con ventas y compras del mes anterior
+     * (`monthlyAccountantReport`, SPEC 45). Solo cuenta si además el rol del
+     * usuario concede `reportDownloads:read`; sin el campo equivale a `false`.
+     */
+    monthlyReportEmail?: boolean;
     createdAt: Timestamp;
 }
 
