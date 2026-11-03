@@ -34,7 +34,7 @@
                 }
               }
             ],
-            "thresholds": [{ "value": 3, "label": "disparador (>3)", "color": "RED", "targetAxis": "Y1" }],
+            "thresholds": [{ "value": 3, "label": "disparador (>3)", "targetAxis": "Y1" }],
             "yAxis": { "label": "instancias", "scale": "LINEAR" }
           }
         }
@@ -63,7 +63,7 @@
                 }
               }
             ],
-            "thresholds": [{ "value": 3, "label": "disparador (>3)", "color": "RED", "targetAxis": "Y1" }],
+            "thresholds": [{ "value": 3, "label": "disparador (>3)", "targetAxis": "Y1" }],
             "yAxis": { "label": "instancias", "scale": "LINEAR" }
           }
         }

@@ -104,7 +104,9 @@ const ensureEmailChannels = async (client, project, channels) => {
         });
         names.push(channel.name);
     }
-    return names;
+    // Si ops y dueño son el mismo correo, es un solo canal: el API de presupuestos
+    // rechaza un canal repetido con un 400 sin detalle.
+    return [...new Set(names)];
 };
 
 // --- Recursos de Monitoring --------------------------------------------------
@@ -304,8 +306,19 @@ const commands = {
         gcloud(client.apply, ['iam', 'roles', roleExists ? 'update' : 'create', role,
             `--project=${project}`, '--title=FarmaJyV escritor de respaldos (sin borrar)',
             `--permissions=${permissions}`, '--stage=GA', '--quiet', '--format=none']);
-        gcloud(client.apply, ['storage', 'buckets', 'add-iam-policy-binding', `gs://${destBucket}`,
-            `--member=${member}`, `--role=projects/${project}/roles/${role}`, '--format=none']);
+        // Un rol propio recién creado tarda en propagarse: el bucket responde 400
+        // «does not exist in the resource's hierarchy» durante un minuto o dos.
+        const bindWriter = (allowFailure) => gcloud(client.apply, ['storage', 'buckets',
+            'add-iam-policy-binding', `gs://${destBucket}`, `--member=${member}`,
+            `--role=projects/${project}/roles/${role}`, '--format=none'], { allowFailure });
+        let bound = !client.apply || roleExists ? (bindWriter(false), true) : false;
+        for (let attempt = 1; !bound && attempt <= 12; attempt += 1) {
+            bound = bindWriter(attempt < 12) !== null;
+            if (!bound) {
+                client.log(`  el rol todavía no se propaga; reintento en 15 s (${attempt}/12)`);
+                Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15_000);
+            }
+        }
 
         // Topic que solo recibe fallos y abortos: cualquier mensaje dispara la alerta.
         const topicExists = client.apply &&

@@ -661,16 +661,16 @@ con los ids reales: **pegarla aquí** al aplicar en producción.
 |---|---|---|---|
 | errores en la API | `15126880163367668267` | más de 5 respuestas `5xx` en 5 min | ops + dueño |
 | error nuevo en la API | `206274569130471057` | cualquier log `severity>=ERROR` (1 aviso/h) | ops + dueño |
-| API caída (/v1/health) | _al aplicar_ | `GET /v1/health` falla desde ≥ 2 de 3 regiones durante 5 min (chequeo cada 5 min, timeout 30 s) | ops + dueño |
-| falló dailyFirestoreBackup | _al aplicar_ | 2 intentos fallidos en 1 h (`retryCount: 1`: el primer fallo con reintento exitoso no avisa) | ops + dueño |
-| falló dailySalesReport | _al aplicar_ | 1 intento fallido (sin reintentos) | ops + dueño |
-| falló monthlySalesReport | _al aplicar_ | 1 intento fallido | ops + dueño |
-| falló dailyInventoryAlerts | _al aplicar_ | 1 intento fallido | ops + dueño |
-| falló dailyPromotionsMaintenance | _al aplicar_ | 1 intento fallido | ops + dueño |
-| falló dailyStatsIntegrityCheck | _al aplicar_ | 1 intento fallido | ops + dueño |
-| dailyFirestoreBackup sin ejecución exitosa en 26 h | _al aplicar_ | ningún `succeeded` del respaldo en 26 h (schedule pausado, función borrada) | ops + dueño |
-| falló la copia externa (proyecto de respaldos) | _al aplicar_ | un mensaje `FAILED`/`ABORTED` del job de Storage Transfer | ops + dueño |
-| Presupuesto mensual `farma-jyv` (facturación, no Monitoring) | _al aplicar_ | gasto del mes ≥ 50 %, 90 % y 100 % de US$5 | ops + dueño + admins de facturación |
+| API caída (/v1/health) | `805394045522047583` | `GET /v1/health` falla desde ≥ 2 de 3 regiones durante 5 min (chequeo cada 5 min, timeout 30 s) | ops + dueño |
+| falló dailyFirestoreBackup | `9455455192738900608` | 2 intentos fallidos en 1 h (`retryCount: 1`: el primer fallo con reintento exitoso no avisa) | ops + dueño |
+| falló dailySalesReport | `3464500085811061360` | 1 intento fallido (sin reintentos) | ops + dueño |
+| falló monthlySalesReport | `6283531999313191507` | 1 intento fallido | ops + dueño |
+| falló dailyInventoryAlerts | `5308074763393349498` | 1 intento fallido | ops + dueño |
+| falló dailyPromotionsMaintenance | `15354933137577699141` | 1 intento fallido | ops + dueño |
+| falló dailyStatsIntegrityCheck | `9663636852653746300` | 1 intento fallido | ops + dueño |
+| dailyFirestoreBackup sin ejecución exitosa en 26 h | `15249784735070526972` | ningún `succeeded` del respaldo en 26 h (schedule pausado, función borrada) | ops + dueño |
+| falló la copia externa (proyecto de respaldos) | `89153530632118187` | un mensaje `FAILED`/`ABORTED` del job de Storage Transfer | ops + dueño |
+| Presupuesto mensual `farma-jyv` (facturación, no Monitoring) | `35aacec8-73c0-4a21-8bf2-b0e86b64c637` | gasto del mes ≥ 50 %, 90 % y 100 % de MXN 95 (≈ US$5; la cuenta factura en MXN) | ops + dueño + admins de facturación |
 
 Notas:
 
@@ -820,8 +820,11 @@ vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
 3. En **cada repo** (backend y panel), environments de GitHub:
    - `dev`: rama de despliegue `main`. Variables `GCP_WORKLOAD_IDENTITY_PROVIDER`,
      `GCP_DEPLOY_SERVICE_ACCOUNT` (las de `farma-jyv-dev`).
-   - `production`: **revisor requerido `dev-jyv`**, reglas de despliegue solo
-     tags `v*`. Las mismas dos variables con los valores de `farma-jyv`.
+   - `production`: reglas de despliegue solo tags `v*` y las mismas dos variables
+     con los valores de `farma-jyv`. En el backend, además, **revisor requerido
+     `dev-jyv`**. El panel no lleva revisor: es un repo privado en el plan
+     gratuito de GitHub, que no admite revisores ahí; crear el tag es la
+     aprobación (§10.4).
    - Solo backend, en los dos environments: variable `FUNCTIONS_ENV_FILE` con el
      contenido de `functions/.env.<proyecto>` **sin credenciales** (CORS, RECEIPT_*,
      REPORTS_EMAIL_*, R2_ACCOUNT_ID/R2_BUCKET, FIRESTORE_BACKUP_BUCKET…).
@@ -893,8 +896,15 @@ proyecto: Firebase serializa, pero el estado final es el del último en terminar
 
 `farma-jyv-admin/.github/workflows/deploy.yml` sigue el mismo flujo para Hosting
 (`hosting:admin-dev` en dev, `hosting:admin` en prod), con sus propios tags `v*`,
-su environment `production` (revisor `dev-jyv`) y su propio resumen de PRs con
+su environment `production` y su propio resumen de PRs con
 `requiere-paso-manual`. No despliega índices: el panel no tiene.
+
+**El panel no espera aprobación**: el repo es privado y el plan gratuito de
+GitHub no admite revisores requeridos en repos privados. El job `prod` corre en
+cuanto el CI del tag y `pasos-manuales` terminan, así que **crear el tag es la
+aprobación**: revisar antes el resumen de PRs con `requiere-paso-manual` (con
+`gh pr list -R dev-jyv/farma-jyv-admin --label requiere-paso-manual --state merged`)
+y hacer los pasos que van antes del código.
 
 ### 10.5 Despliegue manual (GitHub Actions caído o `dev-jyv` no disponible)
 
