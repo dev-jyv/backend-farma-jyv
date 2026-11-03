@@ -88,6 +88,7 @@ flowchart TB
 | `api` | HTTP | Toda la API REST |
 | `dailySalesReport` | 00:10 diario | Reporte de ventas del día por correo |
 | `monthlySalesReport` | día 1, 00:20 | Reporte mensual |
+| `monthlyAccountantReport` | día 1, 00:40 | Ventas (farmacia y consultorio) y compras del mes, PDF + XLSX, a cada contador con el correo activado (SPEC 45) |
 | `dailyInventoryAlerts` | 07:00 diario | Caducidades y mínimos de stock |
 | `dailyFirestoreBackup` | 02:00 diario | Volcado a Cloud Storage, 30 días de retención |
 

@@ -665,6 +665,7 @@ con los ids reales: **pegarla aquí** al aplicar en producción.
 | falló dailyFirestoreBackup | `9455455192738900608` | 2 intentos fallidos en 1 h (`retryCount: 1`: el primer fallo con reintento exitoso no avisa) | ops + dueño |
 | falló dailySalesReport | `3464500085811061360` | 1 intento fallido (sin reintentos) | ops + dueño |
 | falló monthlySalesReport | `6283531999313191507` | 1 intento fallido | ops + dueño |
+| falló monthlyAccountantReport | *(pendiente: SPEC 45, pegar al aplicar)* | 1 intento fallido (incluye «falló el envío a un destinatario») | ops + dueño |
 | falló dailyInventoryAlerts | `5308074763393349498` | 1 intento fallido | ops + dueño |
 | falló dailyPromotionsMaintenance | `15354933137577699141` | 1 intento fallido | ops + dueño |
 | falló dailyStatsIntegrityCheck | `9663636852653746300` | 1 intento fallido | ops + dueño |
@@ -1243,3 +1244,40 @@ sobre `posDiagnostics.receivedAt`.
 5. Logs: `firebase functions:log --only hourlyPosSilenceCheck` ("Revisión de cajas en
    silencio: …") y, para el correo del reporte, buscar
    `No se pudo mandar la alerta de ventas bloqueadas` en los logs de `api`.
+
+---
+
+## 16. Rol contador y correo mensual (SPEC 45) — despliegue
+
+Rol de sistema `accountant` («Contador») con solo `reportDownloads:read`: ve y
+descarga ventas de farmacia, ventas de consultorio y compras desde el panel
+(`/reportes-contables`), y quien tenga `monthlyReportEmail` recibe el día 1 a las
+00:40 un correo con los 6 archivos del mes anterior (PDF y XLSX de cada uno).
+Sin índices nuevos.
+
+1. **Funciones:** `npm run deploy:dev` primero. Crea `monthlyAccountantReport`
+   (1 GiB, 300 s, `America/Mexico_City`) y su job de Cloud Scheduler.
+2. **Roles:** `npm run migrate:roles` (o `POST /v1/internal/migrate-roles` con
+   `x-migrate-secret`). Crea el rol `accountant`; el reporte debe traer
+   `rolesCreated: ['accountant']` y ningún rol de sistema en `rolesUpdated` (el
+   gerente excluye el área nueva, su lista no cambia).
+3. **Alerta:** `node scripts/ops/gcp.mjs alerts --project farma-jyv-dev` (en seco),
+   luego `--apply` en dev y en `farma-jyv`. Agrega «falló monthlyAccountantReport»;
+   pegar su id en la tabla de §7.
+4. **Dominio en Resend (bloqueante para que llegue el correo).** `REPORTS_EMAIL_FROM`
+   en producción es `onboarding@resend.dev`, que Resend solo entrega al dueño de la
+   cuenta: a cualquier otro destinatario `emails.send` responde error, el job lo
+   registra y termina en error (alerta del paso 3). Verificar un dominio en
+   Resend (registros DNS SPF/DKIM que indica su consola), cambiar
+   `REPORTS_EMAIL_FROM` a una dirección de ese dominio en `functions/.env.farma-jyv`
+   (no es secreto) y desplegar. Afecta también a los demás reportes por correo.
+5. **Panel:** crear el usuario con rol Contador y activar «Recibir el día 1 el
+   correo con ventas y compras del mes».
+6. **Prueba en dev:** con un usuario contador con el correo activado,
+   `curl -X POST -H "x-migrate-secret: $MIGRATE_SECRET" "https://<api-dev>/v1/internal/reports/accountant?month=AAAA-MM"`
+   → `{ data: { month, recipients, sent, failed } }` y un correo con 6 adjuntos.
+   El disparo manual **reenvía a todos** los destinatarios.
+
+Diagnóstico: `firebase functions:log --only monthlyAccountantReport`; un envío
+fallido deja `Correo del contador AAAA-MM: no se pudo enviar a <correo>` y el
+mensaje final lista los correos que fallaron.
