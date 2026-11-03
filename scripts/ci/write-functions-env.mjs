@@ -27,8 +27,9 @@ const SECRET_NAMES = [
     'OPENROUTER_API_KEY',
 ];
 const SECRET_PATTERNS = [/^MERCADOPAGO_/, ...SECRET_NAMES.map((name) => new RegExp(`^${name}$`))];
-// `MERCADOPAGO_USER_ID` no es credencial: es el id público de la cuenta.
-const NOT_SECRET = new Set(['MERCADOPAGO_USER_ID']);
+// No son credenciales: `MERCADOPAGO_USER_ID` es el id público de la cuenta y
+// `MERCADOPAGO_PRINT_ON_TERMINAL` solo dice si la Point imprime el ticket.
+const NOT_SECRET = new Set(['MERCADOPAGO_USER_ID', 'MERCADOPAGO_PRINT_ON_TERMINAL']);
 const ALLOWED_PROJECTS = new Set(['farma-jyv', 'farma-jyv-dev']);
 
 const fail = (message) => {
