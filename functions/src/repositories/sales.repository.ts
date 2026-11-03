@@ -30,6 +30,12 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
             ? {}
             : { promotionIds: data.promotionIds as string[] }),
         ...(data.promotionReview === true ? { promotionReview: true as const } : {}),
+        // Cupón (SPEC 47): mismo criterio, solo si la venta lo trae.
+        ...(data.coupon ? { coupon: data.coupon as Sale['coupon'] } : {}),
+        ...(data.couponDiscountTotal === undefined
+            ? {}
+            : { couponDiscountTotal: data.couponDiscountTotal as number }),
+        ...(data.couponReview ? { couponReview: data.couponReview as Sale['couponReview'] } : {}),
         paymentMethod: data.paymentMethod as Sale['paymentMethod'],
         amountReceived: (data.amountReceived as number | null) ?? null,
         change: (data.change as number | null) ?? null,

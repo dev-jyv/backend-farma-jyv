@@ -3,12 +3,14 @@ import {
     cursorField,
     money,
     optionalNonEmpty,
+    positiveMoney,
     paginationFields,
     parseableDate,
     phoneMx,
 } from './common';
 import { MAX_IEPS_RATE } from '../constants/taxes';
 import { CONTROLLED_GROUPS } from '../constants/controlled';
+import { boxConfigProblem, MAX_BOX_QUANTITY, MIN_BOX_QUANTITY } from '../utils/box-sale';
 
 export const syncCategoriesQuerySchema = z.object({
     updatedSince: parseableDate.optional(),
@@ -40,6 +42,13 @@ const barcodeSchema = z
     .string()
     .trim()
     .regex(/^\d{8,14}$/, 'El código de barras debe tener entre 8 y 14 dígitos');
+
+/** Piezas por caja (SPEC 46): la caja trae al menos dos, si no es una pieza. */
+const boxQuantitySchema = z
+    .number()
+    .int('Las piezas por caja deben ser un número entero')
+    .min(MIN_BOX_QUANTITY, `Una caja debe traer al menos ${MIN_BOX_QUANTITY} piezas`)
+    .max(MAX_BOX_QUANTITY, `Una caja no puede traer más de ${MAX_BOX_QUANTITY} piezas`);
 
 /** Grupo COFEPRIS del producto (art. 226 LGS). */
 const controlledGroupSchema = z.enum(
@@ -93,12 +102,21 @@ export const createProductSchema = z
         controlledGroup: controlledGroupSchema.optional(),
         concentration: z.string().trim().max(80).optional(),
         requiresPrescription: z.boolean().optional(),
+        boxQuantity: boxQuantitySchema.optional(),
+        boxPrice: positiveMoney.optional(),
+        boxBarcode: barcodeSchema.optional(),
     })
     .refine((data) => !(data.hasIva && data.hasIvaZero), {
         message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',
         path: ['hasIvaZero'],
     })
-    .superRefine((data, ctx) => assertIepsRate(data, ctx));
+    .superRefine((data, ctx) => {
+        assertIepsRate(data, ctx);
+        const problem = boxConfigProblem(data);
+        if (problem) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem, path: ['boxPrice'] });
+        }
+    });
 
 export const updateProductSchema = z
     .object({
@@ -118,12 +136,29 @@ export const updateProductSchema = z
         concentration: z.string().trim().max(80).optional(),
         requiresPrescription: z.boolean().optional(),
         isActive: z.boolean().optional(),
+        /**
+         * `null` quita la venta por caja. Lo que depende del documento guardado
+         * (precio de caja contra el precio por pieza vigente, código repetido) se
+         * revisa dentro de la transacción de la escritura, no aquí.
+         */
+        boxQuantity: boxQuantitySchema.nullable().optional(),
+        boxPrice: positiveMoney.nullable().optional(),
+        boxBarcode: barcodeSchema.nullable().optional(),
     })
     .refine((data) => !(data.hasIva === true && data.hasIvaZero === true), {
         message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',
         path: ['hasIvaZero'],
     })
     .superRefine((data, ctx) => {
+        // Quitar la caja es quitar las dos cosas: medio par no se puede cobrar.
+        if ((data.boxQuantity === null) !== (data.boxPrice === null) &&
+            (data.boxQuantity === null || data.boxPrice === null)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Para quitar la venta por caja envía boxQuantity y boxPrice en null',
+                path: ['boxPrice'],
+            });
+        }
         // En update, `hasIeps` puede no venir: solo se valida si el request lo toca.
         if (data.hasIeps === undefined) {
             if (data.iepsRate !== undefined) {

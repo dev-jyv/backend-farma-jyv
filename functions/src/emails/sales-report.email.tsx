@@ -160,6 +160,14 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                                         `-${formatCurrency(totals.promotionDiscountTotal)}`
                                     : '0',
                             },
+                            // Solo si hubo: una celda "Cupones 0" diaria es ruido.
+                            ...((totals.couponSalesCount ?? 0) > 0
+                                ? [{
+                                    label: 'Cupones',
+                                    value: `${totals.couponSalesCount} · ` +
+                                        `-${formatCurrency(totals.couponDiscountTotal)}`,
+                                }]
+                                : []),
                         ]}
                     />
 

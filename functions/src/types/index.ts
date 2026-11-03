@@ -85,7 +85,16 @@ export type PermissionArea =
      * mostrador: la caja *sube* su diagnóstico con `pos:write`, pero ver el de
      * todas las cajas y operarlas a distancia es de gerencia/administración.
      */
-    | 'posHealth';
+    | 'posHealth'
+    /**
+     * Descarga de reportes contables (ventas de farmacia, ventas de consultorio
+     * y compras), sin el resto del tablero. Existe para el contador externo:
+     * `dashboard:read` abre utilidad, cortes, bitácora y el asistente, y el
+     * contador no debe ver nada de eso. `exportReport` decide qué reportes y
+     * qué `scope` abre esta área (ver `REPORT_DOWNLOAD_KEYS`). El gerente no la
+     * hereda: hoy no descarga reportes y no debe empezar a hacerlo de lado.
+     */
+    | 'reportDownloads';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -137,6 +146,11 @@ export type AuditAction =
     | 'product.created'
     | 'product.updated'
     | 'product.price_changed'
+    /**
+     * Un cambio de `salePrice` dejó la caja más cara que sus piezas sueltas
+     * (SPEC 46). Se acepta —el POS sube precios sin red— y queda para revisión.
+     */
+    | 'product.box_price_review'
     | 'product.deactivated'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
@@ -144,6 +158,8 @@ export type AuditAction =
     | 'sale.discount_override'
     /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
     | 'sale.promotion_out_of_window'
+    /** Venta offline aceptada con un cupón vencido, agotado o desconocido; pide revisión. */
+    | 'sale.coupon_review'
     | 'sale.returned'
     /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
     | 'pointOrder.refunded'
@@ -186,6 +202,8 @@ export type AuditAction =
     | 'role.permissions_changed'
     | 'user.role_changed'
     | 'user.status_changed'
+    /** Preferencias del usuario que deciden a dónde sale información (correo mensual). */
+    | 'user.updated'
     /**
      * Expediente clínico: la NOM-004 exige que el expediente sea íntegro y
      * rastreable, así que toda edición de una nota ya guardada se audita
@@ -203,6 +221,9 @@ export type AuditAction =
     | 'promotion.updated'
     | 'promotion.deactivated'
     | 'promotion.reactivated'
+    /** Cupones: deciden precio; alta y baja se auditan (SPEC 47). */
+    | 'coupon.created'
+    | 'coupon.deactivated'
     /**
      * Comando remoto a una caja (reintentar venta/turno/producto, mandar una
      * venta a no conciliadas). Se audita porque puede terminar moviendo dinero
@@ -234,6 +255,7 @@ export type AuditEntity =
     | 'directCharge'
     | 'unreconciledSale'
     | 'promotion'
+    | 'coupon'
     | 'posCommand';
 
 export interface AuditLog {
@@ -291,6 +313,16 @@ export interface Product {
      */
     iepsRate?: number;
     requiresPrescription?: boolean;
+    /**
+     * Venta por caja completa (SPEC 46). `boxQuantity` (piezas por caja, 2–1000)
+     * y `boxPrice` (precio de la caja, impuestos incluidos) van juntos y
+     * `boxPrice ≤ boxQuantity × salePrice`. El stock sigue en **piezas**: la
+     * caja solo cambia cuántas piezas baja una partida y a qué precio.
+     */
+    boxQuantity?: number;
+    boxPrice?: number;
+    /** Código de la caja; único contra `barcode`, `sku` y otros `boxBarcode`. */
+    boxBarcode?: string;
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
@@ -1015,12 +1047,40 @@ export interface SaleProductItem extends SaleItemCommon {
         quantity: number;
     }>;
     /**
+     * Partida vendida por caja completa (SPEC 46). `quantity` sigue en **piezas**
+     * (`boxes × piecesPerBox`) y `unitPrice` es el precio efectivo por pieza
+     * (`boxPrice / piecesPerBox`, sin redondear), así `unitPrice × quantity`
+     * sigue siendo el subtotal para quien lo lea. Esto es solo para mostrar:
+     * `boxPrice` es lo cobrado por caja y `catalogUnitPrice`, cuando aparece en
+     * una partida por caja, es el `boxPrice` del catálogo.
+     */
+    saleUnit?: SaleItemBoxUnit;
+    /**
+     * Parte de `discountAmount` que aportó un cupón de alcance `product`
+     * (SPEC 47). Calculada en el servidor con tope en lo que mandó la caja; no
+     * cuenta para el tope del 20 % del descuento manual.
+     */
+    coupon?: SaleItemCoupon;
+    /**
      * Promoción aplicada a la partida, con **copia de la regla** (mismo criterio
      * que las tasas guardadas en `taxes`): la devolución recalcula el reembolso
      * con la regla vigente al vender, no con la del catálogo de hoy.
      * `discountAmount` de la partida sigue siendo el total (promo + manual).
      */
     promotion?: SaleItemPromotion;
+}
+
+export interface SaleItemBoxUnit {
+    type: 'box';
+    boxes: number;
+    piecesPerBox: number;
+    /** Precio cobrado por caja. */
+    boxPrice: number;
+}
+
+export interface SaleItemCoupon {
+    couponId: string;
+    discountAmount: number;
 }
 
 export type PromotionType = 'tiered' | 'nxm' | 'percent';
@@ -1177,6 +1237,15 @@ export interface Sale {
     promotionIds?: string[];
     /** Alguna promo se aceptó fuera de vigencia (ver `SaleItemPromotion.outOfWindow`). */
     promotionReview?: true;
+    /** Cupón aplicado (SPEC 47), con copia del descuento; ausente sin cupón. */
+    coupon?: SaleCoupon;
+    /** Descuento total del cupón (producto o venta); ausente sin cupón. */
+    couponDiscountTotal?: number;
+    /**
+     * Venta offline aceptada con un cupón que no cumplía: fuera de vigencia a la
+     * hora del cobro, sin usos disponibles, o que el servidor no conoce.
+     */
+    couponReview?: SaleCouponReview;
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;
@@ -1294,6 +1363,14 @@ export interface ReceiptLine {
     promotionName?: string;
     /** Parte de `discountAmount` que vino de la promoción. */
     promotionDiscount?: number;
+    /** Partida por caja: el ticket imprime "N cajas × M pzas" (SPEC 46). */
+    saleUnit?: SaleItemBoxUnit;
+    /**
+     * Parte de `discountAmount` que vino del cupón (SPEC 47). En alcance
+     * `product` se imprime en la partida; en alcance `sale` es la parte
+     * prorrateada y el ticket la imprime una sola vez en los totales.
+     */
+    couponDiscount?: number;
 }
 
 export interface Receipt {
@@ -1324,6 +1401,8 @@ export interface Receipt {
     /** Aviso legal/nota; en devoluciones incluye el folio de la venta original. */
     notes: string[];
     voided: boolean;
+    /** Cupón de la venta: "Cupón CODIGO −$x" (SPEC 47). */
+    coupon?: { code: string; scope: CouponScope; discountAmount: number };
 }
 
 export type CashAdjustmentStatus = 'pending' | 'approved' | 'rejected';
@@ -1541,6 +1620,12 @@ export interface UserProfile {
      */
     permissionsVersion?: number;
     isActive: boolean;
+    /**
+     * Recibe el día 1 el correo con ventas y compras del mes anterior
+     * (`monthlyAccountantReport`, SPEC 45). Solo cuenta si además el rol del
+     * usuario concede `reportDownloads:read`; sin el campo equivale a `false`.
+     */
+    monthlyReportEmail?: boolean;
     createdAt: Timestamp;
 }
 
@@ -1721,6 +1806,74 @@ export interface Promotion {
     updatedBy: string;
     createdAt: Timestamp;
     updatedAt: Timestamp;
+}
+
+export type CouponScope = 'product' | 'sale';
+
+/** `amount` en pesos; en alcance `product` es por pieza. */
+export type CouponDiscount =
+    | { type: 'percent'; percent: number }
+    | { type: 'amount'; amount: number };
+
+/**
+ * Cupón de descuento (SPEC 47). El id del documento **es** el código
+ * normalizado (mayúsculas, `[A-Z0-9-]{4,20}`): único y no reciclable. `scope`,
+ * `discount` y `productIds` son inmutables, igual que la regla de una promoción,
+ * para que una venta offline valide al sincronizar.
+ */
+export interface Coupon {
+    id: string;
+    code: string;
+    name: string;
+    scope: CouponScope;
+    /** 1–50 en alcance `product`; vacío en `sale`. */
+    productIds: string[];
+    discount: CouponDiscount;
+    /** Solo en alcance `sale`; `null` sin mínimo. */
+    minPurchase: number | null;
+    startsAt: Timestamp;
+    endsAt: Timestamp | null;
+    maxUses: number | null;
+    usedCount: number;
+    isActive: boolean;
+    deactivatedAt: Timestamp | null;
+    createdBy: string;
+    updatedBy: string;
+    createdAt: Timestamp;
+    updatedAt: Timestamp;
+}
+
+/** Cupón como lo devuelve la API: mismas llaves, fechas en ISO. */
+export type CouponDto = Omit<
+    Coupon,
+    'startsAt' | 'endsAt' | 'deactivatedAt' | 'createdAt' | 'updatedAt'
+> & {
+    startsAt: string;
+    endsAt: string | null;
+    deactivatedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+};
+
+/** Copia del cupón guardada en la venta. */
+export interface SaleCoupon {
+    couponId: string;
+    code: string;
+    name: string;
+    scope: CouponScope;
+    discount: CouponDiscount;
+    /** Descuento total que aportó el cupón en esta venta. */
+    discountAmount: number;
+}
+
+export interface SaleCouponReview {
+    /**
+     * `out_of_window`: fuera de vigencia a la hora del cobro; `over_limit`: ya
+     * sin usos; `not_found`: el código no existe en el servidor (el descuento
+     * se trató como manual).
+     */
+    reason: 'out_of_window' | 'over_limit' | 'not_found';
+    code: string;
 }
 
 /**

@@ -42,6 +42,9 @@ export interface SalesReportTotals {
     /** Ventas con al menos una promoción y cuánto se descontó por ellas. */
     promotionSalesCount: number;
     promotionDiscountTotal: number;
+    /** Ventas con cupón y cuánto se descontó por él (SPEC 47). */
+    couponSalesCount: number;
+    couponDiscountTotal: number;
 }
 
 export interface ReportSaleRow {
@@ -246,6 +249,11 @@ const buildTotals = (sales: Sale[]): SalesReportTotals => {
             (sum, sale) => sum + (sale.promotionDiscountTotal ?? 0),
             0,
         ),
+        couponSalesCount: active.filter((sale) => (sale.couponDiscountTotal ?? 0) > 0).length,
+        couponDiscountTotal: fromCents(active.reduce(
+            (sum, sale) => sum + toCents(sale.couponDiscountTotal ?? 0),
+            0,
+        )),
     };
 };
 

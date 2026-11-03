@@ -69,7 +69,7 @@ describe('rol manager - alcance exacto', () => {
      * el pedido es que el gerente no la vea, esta prueba lo obliga a decidirlo
      * a propósito en vez de heredarla en silencio.
      */
-    it('excluye exactamente usuarios, dashboard, expediente y la auditoría de caja', () => {
+    it('excluye exactamente usuarios, dashboard, expediente, auditoría de caja y descargas', () => {
         const declaradas = permisosDe('manager').map((permission) => permission.area);
         const faltantes = ALL_PERMISSION_AREAS.filter((area) => !declaradas.includes(area));
         expect([...faltantes].sort()).toEqual([
@@ -77,6 +77,7 @@ describe('rol manager - alcance exacto', () => {
             'dashboard',
             'expenses',
             'medicalRecords',
+            'reportDownloads',
             'users',
         ]);
     });

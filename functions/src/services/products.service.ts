@@ -22,6 +22,7 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
+import { boxPriceExceedsPieces } from '../utils/box-sale';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -262,6 +263,10 @@ export interface SyncProduct {
     iepsRate?: number;
     controlledGroup?: ControlledGroup;
     requiresPrescription: boolean;
+    /** Venta por caja (SPEC 46); ausentes si el producto no se vende por caja. */
+    boxQuantity?: number;
+    boxPrice?: number;
+    boxBarcode?: string;
     isActive: boolean;
     /** Existencia total; el local la usa como foto hasta el siguiente pull. */
     stock: number;
@@ -304,6 +309,10 @@ const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
         ...(product.iepsRate === undefined ? {} : { iepsRate: product.iepsRate }),
         ...(product.controlledGroup ? { controlledGroup: product.controlledGroup } : {}),
         requiresPrescription: Boolean(product.requiresPrescription),
+        ...(product.boxQuantity && product.boxPrice
+            ? { boxQuantity: product.boxQuantity, boxPrice: product.boxPrice }
+            : {}),
+        ...(product.boxBarcode ? { boxBarcode: product.boxBarcode } : {}),
         isActive: product.isActive,
         // `totalStock` es el denormalizado que mantienen ventas y entradas; si el
         // producto es anterior a la denormalización se suma de los lotes que ya
@@ -612,7 +621,45 @@ const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
     'controlledGroup',
     'requiresPrescription',
     'isActive',
+    'boxQuantity',
+    'boxPrice',
+    'boxBarcode',
 ];
+
+/**
+ * La caja quedó más cara que sus piezas tras un cambio de `salePrice`: el
+ * precio ya se guardó (no se rechaza, ver `products.repository`) y aquí solo se
+ * deja constancia para que alguien ajuste la caja. Mismo criterio que
+ * `retirePromotionsBrokenByPrice`.
+ */
+const auditBoxPriceReview = async (
+    before: Product | undefined,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    if (!before || before.salePrice === after.salePrice || !boxPriceExceedsPieces(after)) {
+        return;
+    }
+    await recordAudit({
+        action: 'product.box_price_review',
+        entity: 'product',
+        entityId: after.id,
+        summary: `La caja de ${after.name} (${formatBoxPrice(after)}) quedó más cara que ` +
+            `${after.boxQuantity} piezas sueltas a ${after.salePrice.toFixed(2)}; revisa el ` +
+            'precio de caja',
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        metadata: {
+            salePrice: after.salePrice,
+            boxQuantity: after.boxQuantity,
+            boxPrice: after.boxPrice,
+        },
+    });
+};
+
+const formatBoxPrice = (product: Product): string => (product.boxPrice === undefined
+    ? 'sin caja'
+    : `${product.boxPrice.toFixed(2)} (${product.boxQuantity} pzas)`);
 
 const auditProductUpdate = async (
     before: Product,
@@ -628,14 +675,24 @@ const auditProductUpdate = async (
         return;
     }
 
+    // El precio de caja es precio: se audita igual que `salePrice` (SPEC 46).
     const priceChanged = Boolean(changes.salePrice);
+    const boxPriceChanged = Boolean(changes.boxPrice || changes.boxQuantity);
+    const summaries: string[] = [];
+    if (priceChanged) {
+        summaries.push(`Precio de ${after.name} de ${before.salePrice.toFixed(2)} a ` +
+            `${after.salePrice.toFixed(2)}`);
+    }
+    if (boxPriceChanged) {
+        summaries.push(`Precio de caja de ${after.name} de ${formatBoxPrice(before)} a ` +
+            `${formatBoxPrice(after)}`);
+    }
     await recordAudit({
-        action: priceChanged ? 'product.price_changed' : 'product.updated',
+        action: priceChanged || boxPriceChanged ? 'product.price_changed' : 'product.updated',
         entity: 'product',
         entityId: after.id,
-        summary: priceChanged
-            ? `Precio de ${after.name} de ${before.salePrice.toFixed(2)} a ` +
-                `${after.salePrice.toFixed(2)}`
+        summary: summaries.length
+            ? summaries.join('; ')
             : `Producto ${after.name} actualizado (${Object.keys(changes).join(', ')})`,
         userId: actor?.userId ?? 'system',
         roleSlug: actor?.roleSlug ?? null,
@@ -659,6 +716,9 @@ export const createProduct = async (input: {
     controlledGroup?: ControlledGroup;
     iepsRate?: number;
     requiresPrescription?: boolean;
+    boxQuantity?: number;
+    boxPrice?: number;
+    boxBarcode?: string;
     /** Actor para la bitácora; opcional para no romper llamadas internas. */
     actor?: AuditActor;
 }): Promise<Product> => {
@@ -696,6 +756,9 @@ export const createProduct = async (input: {
         controlledGroup: input.controlledGroup,
         iepsRate: input.iepsRate,
         requiresPrescription: input.requiresPrescription ?? false,
+        boxQuantity: input.boxQuantity,
+        boxPrice: input.boxPrice,
+        boxBarcode: input.boxBarcode?.trim() || undefined,
         isActive: true,
         suppliers: [],
     });
@@ -705,7 +768,8 @@ export const createProduct = async (input: {
         entity: 'product',
         entityId: created.id,
         summary: `Producto ${created.name} (${created.sku}) creado a ` +
-            `${created.salePrice.toFixed(2)}`,
+            `${created.salePrice.toFixed(2)}` +
+            (created.boxPrice === undefined ? '' : `, caja ${formatBoxPrice(created)}`),
         userId: input.actor?.userId ?? 'system',
         roleSlug: input.actor?.roleSlug ?? null,
     });
@@ -728,6 +792,9 @@ type CreateProductInput = {
     hasIeps: boolean;
     concentration?: string;
     requiresPrescription?: boolean;
+    boxQuantity?: number;
+    boxPrice?: number;
+    boxBarcode?: string;
 };
 
 export const bulkCreateProducts = async (
@@ -747,8 +814,12 @@ export const bulkCreateProducts = async (
         const name = item.name.trim().toLowerCase();
         const sku = item.sku.trim().toLowerCase();
         const barcode = item.barcode?.trim().toLowerCase();
+        // El código de caja comparte espacio con los de pieza (ver el repositorio).
+        const boxBarcode = item.boxBarcode?.trim().toLowerCase();
 
-        if (seen.name.has(name) || seen.sku.has(sku) || (barcode && seen.barcode.has(barcode))) {
+        if (seen.name.has(name) || seen.sku.has(sku) ||
+            (barcode && seen.barcode.has(barcode)) ||
+            (boxBarcode && (seen.barcode.has(boxBarcode) || boxBarcode === barcode))) {
             errors.push({
                 index,
                 sku: item.sku,
@@ -763,6 +834,9 @@ export const bulkCreateProducts = async (
             seen.sku.add(sku);
             if (barcode) {
                 seen.barcode.add(barcode);
+            }
+            if (boxBarcode) {
+                seen.barcode.add(boxBarcode);
             }
             created.push(product);
         } catch (error) {
@@ -797,6 +871,10 @@ export const updateProduct = async (
         iepsRate: number;
         requiresPrescription: boolean;
         isActive: boolean;
+        /** `null` quita la venta por caja (las ventas viejas conservan su `saleUnit`). */
+        boxQuantity: number | null;
+        boxPrice: number | null;
+        boxBarcode: string | null;
     }>,
     actor?: AuditActor,
 ): Promise<Product> => {
@@ -839,9 +917,13 @@ export const updateProduct = async (
         iepsRate: input.iepsRate,
         requiresPrescription: input.requiresPrescription,
         isActive: input.isActive,
+        boxQuantity: input.boxQuantity,
+        boxPrice: input.boxPrice,
+        boxBarcode: input.boxBarcode === null ? null : input.boxBarcode?.trim(),
     });
 
     await auditProductUpdate(existing, updated, actor);
+    await auditBoxPriceReview(existing, updated, actor);
     if (updated.salePrice !== existing.salePrice) {
         await retirePromotionsBrokenByPrice(updated, actor);
     }
@@ -895,6 +977,7 @@ export const updateProductPrices = async (
         });
     }));
     for (const product of updated) {
+        await auditBoxPriceReview(existingById.get(product.id), product, actor);
         if (existingById.get(product.id)?.salePrice !== product.salePrice) {
             await retirePromotionsBrokenByPrice(product, actor);
         }

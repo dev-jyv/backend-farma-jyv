@@ -50,3 +50,9 @@ describe('índices compuestos declarados para consultas con array-contains', () 
         ).toBe(true);
     });
 });
+
+describe('índices compuestos de cupones (SPEC 47)', () => {
+    it('listado del panel filtrado por estado, más recientes primero', () => {
+        expect(has('coupons', ['isActive', 'ASCENDING'], ['createdAt', 'DESCENDING'])).toBe(true);
+    });
+});

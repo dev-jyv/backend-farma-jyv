@@ -23,6 +23,13 @@
       "action": "Reenviar con POST /v1/internal/reports/monthly?month=AAAA-MM (x-migrate-secret)."
     },
     {
+      "name": "monthlyAccountantReport",
+      "retryCount": 0,
+      "severity": "ERROR",
+      "schedule": "00:40 día 1",
+      "action": "El contador no recibió ventas y compras del mes. Ver en el log a quién falló y reenviar con POST /v1/internal/reports/accountant?month=AAAA-MM (x-migrate-secret); reenvía a todos los destinatarios."
+    },
+    {
       "name": "dailyInventoryAlerts",
       "retryCount": 0,
       "severity": "WARNING",

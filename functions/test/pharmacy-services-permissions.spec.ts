@@ -121,6 +121,7 @@ describe('rol manager - áreas sin ningún permiso', () => {
             'dashboard',
             'expenses',
             'medicalRecords',
+            'reportDownloads',
             'users',
         ]);
         expect(faltantes).not.toContain(AREA);

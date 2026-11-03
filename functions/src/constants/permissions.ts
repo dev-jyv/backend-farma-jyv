@@ -23,6 +23,7 @@ export const ALL_PERMISSION_AREAS: PermissionArea[] = [
     'pharmacyServices',
     'promotions',
     'posHealth',
+    'reportDownloads',
 ];
 
 export const buildAllWritePermissions = (): RolePermission[] =>
@@ -66,7 +67,7 @@ export const hasPermission = (
     return permission.level === 'write';
 };
 
-export const SYSTEM_ROLE_SLUGS = ['admin', 'cashier', 'manager', 'doctor'] as const;
+export const SYSTEM_ROLE_SLUGS = ['admin', 'cashier', 'manager', 'doctor', 'accountant'] as const;
 
 export type SystemRoleSlug = typeof SYSTEM_ROLE_SLUGS[number];
 
@@ -174,6 +175,10 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
          * propósito: cuando una caja deja ventas atoradas quien está en la
          * farmacia para destrabarla es la gerencia, y los comandos remotos
          * (reintentar, mandar a no conciliadas) no deciden precio ni comisión.
+         *
+         * `reportDownloads` se excluye (SPEC 45): es el área del contador para
+         * descargar ventas y compras. El gerente hoy no exporta reportes, y
+         * heredarla en silencio le abriría descargas que nadie le dio.
          */
         permissions: [
             ...buildAllWritePermissions().filter(
@@ -182,7 +187,8 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
                     permission.area !== 'medicalRecords' &&
                     permission.area !== 'cashSessions' &&
                     permission.area !== 'expenses' &&
-                    permission.area !== 'pharmacyServices',
+                    permission.area !== 'pharmacyServices' &&
+                    permission.area !== 'reportDownloads',
             ),
             { area: 'pharmacyServices', level: 'read' },
         ],
@@ -196,6 +202,19 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
             { area: 'medicalRecords', level: 'write' },
             { area: 'appointments', level: 'write' },
             { area: 'products', level: 'read' },
+        ],
+    },
+    accountant: {
+        name: 'Contador',
+        description: 'Consulta y descarga ventas de farmacia, ventas de consultorio y compras',
+        /**
+         * Solo `reportDownloads` en lectura y nada más (SPEC 45). Sin
+         * `dashboard`, el contador no ve utilidad, cortes, bitácora ni el
+         * asistente; `exportReport` le abre únicamente `ventas` (farmacia y
+         * consultorio) y `facturas`. Sin `pos`, el POS no lo deja vender.
+         */
+        permissions: [
+            { area: 'reportDownloads', level: 'read' },
         ],
     },
 };

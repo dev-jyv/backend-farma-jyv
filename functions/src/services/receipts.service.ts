@@ -10,7 +10,7 @@ import {
 import { getReceiptStore } from '../config/env';
 import { formatCurrency } from '../utils/currency';
 import { escapeHtml } from '../utils/html';
-import { fromCents, toCents } from '../utils/taxes';
+import { fromCents, prorateDiscount, toCents } from '../utils/taxes';
 import { formatLocalDateTime } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
@@ -62,8 +62,19 @@ const buildTaxLines = (
 const buildSaleReceipt = (sale: Sale): Receipt => {
     // El ticket imprime mercancía y servicios en el mismo cuerpo: para el
     // cliente es un solo cobro, aunque el corte los separe.
-    const lines: ReceiptLine[] = sale.items.map((item) => {
+    // Cupón de venta: su parte de cada partida se reparte sobre lo prorrateado
+    // del descuento de la venta, para no imprimirla dos veces como "Desc.".
+    const saleCouponShares = sale.coupon?.scope === 'sale'
+        ? prorateDiscount(
+            sale.items.map((item) => item.saleDiscountShare ?? 0),
+            sale.coupon.discountAmount,
+        )
+        : null;
+    const lines: ReceiptLine[] = sale.items.map((item, index) => {
         const promotion = isSaleProductItem(item) ? item.promotion : undefined;
+        const couponDiscount = saleCouponShares
+            ? saleCouponShares[index]
+            : isSaleProductItem(item) ? item.coupon?.discountAmount ?? 0 : 0;
         return {
             productName: saleItemName(item),
             quantity: item.quantity,
@@ -73,6 +84,8 @@ const buildSaleReceipt = (sale: Sale): Receipt => {
             ...(promotion
                 ? { promotionName: promotion.name, promotionDiscount: promotion.discountAmount }
                 : {}),
+            ...(isSaleProductItem(item) && item.saleUnit ? { saleUnit: item.saleUnit } : {}),
+            ...(couponDiscount > 0 ? { couponDiscount } : {}),
         };
     });
 
@@ -121,6 +134,15 @@ const buildSaleReceipt = (sale: Sale): Receipt => {
         billing: sale.billing,
         notes,
         voided: Boolean(sale.voidedAt),
+        ...(sale.coupon
+            ? {
+                coupon: {
+                    code: sale.coupon.code,
+                    scope: sale.coupon.scope,
+                    discountAmount: sale.coupon.discountAmount,
+                },
+            }
+            : {}),
     };
 };
 
@@ -158,6 +180,20 @@ const buildReturnReceipt = (saleReturn: SaleReturn): Receipt => ({
 });
 
 /**
+ * Cantidad y precio del renglón. Por caja se imprime lo que se cobró —cajas al
+ * precio de caja— y cuántas piezas son, porque el inventario y la devolución
+ * cuentan piezas: "2 cajas × 10 pzas x $180.00".
+ */
+const formatQuantity = (line: ReceiptLine): string => {
+    if (line.saleUnit) {
+        const { boxes, piecesPerBox, boxPrice } = line.saleUnit;
+        return `${boxes} ${boxes === 1 ? 'caja' : 'cajas'} × ${piecesPerBox} pzas x ` +
+            formatCurrency(boxPrice);
+    }
+    return `${line.quantity} x ${formatCurrency(line.unitPrice)}`;
+};
+
+/**
  * HTML para rollo térmico. Sin dependencias ni assets externos: el frontend lo
  * inyecta y llama `window.print()`, o lo manda tal cual al driver de la impresora.
  * `@page { margin: 0 }` y el ancho fijo en milímetros son lo que evita que el
@@ -175,13 +211,21 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
         receipt.store.phone ? `Tel. ${receipt.store.phone}` : null,
     ].filter(Boolean) as string[];
 
+    const couponCode = receipt.coupon?.code ?? '';
     const itemRows = receipt.lines
         .map((line) => {
             // La promo se imprime con su nombre: el cliente debe ver por qué pagó
             // menos. Lo que quede (manual + parte del descuento de la venta) va
             // aparte como "Desc.".
             const promoCents = toCents(line.promotionDiscount ?? 0);
-            const otherCents = toCents(line.discountAmount) - promoCents;
+            const couponCents = toCents(line.couponDiscount ?? 0);
+            const otherCents = toCents(line.discountAmount) - promoCents - couponCents;
+            // El cupón de producto va en su partida; el de venta, una vez en totales.
+            const coupon = couponCents > 0 && receipt.coupon?.scope === 'product'
+                ? `<div class="muted">Cupón ${escapeHtml(couponCode)} -${
+                    escapeHtml(formatCurrency(couponCents / 100))
+                }</div>`
+                : '';
             const promo = line.promotionName && promoCents > 0
                 ? `<div class="muted">Promo ${escapeHtml(line.promotionName)} -${
                     escapeHtml(formatCurrency(promoCents / 100))
@@ -196,18 +240,19 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
                 <tr>
                     <td colspan="2" class="name">${
     escapeHtml(line.productName)
-}${promo}${discount}</td>
+}${promo}${coupon}${discount}</td>
                 </tr>
                 <tr>
-                    <td class="muted">${line.quantity} x ${
-    escapeHtml(formatCurrency(line.unitPrice))
-}</td>
+                    <td class="muted">${escapeHtml(formatQuantity(line))}</td>
                     <td class="num">${escapeHtml(formatCurrency(line.amount))}</td>
                 </tr>`;
         })
         .join('');
 
     const totalRows = [
+        receipt.coupon?.scope === 'sale' && toCents(receipt.coupon.discountAmount) > 0
+            ? [`Cupón ${receipt.coupon.code}`, `-${formatCurrency(receipt.coupon.discountAmount)}`]
+            : null,
         toCents(receipt.discountTotal) > 0
             ? ['Descuentos', `-${formatCurrency(receipt.discountTotal)}`]
             : null,

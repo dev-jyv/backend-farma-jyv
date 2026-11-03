@@ -39,8 +39,8 @@ npm run seed:emulator
 | Consultorio | http://localhost:4300 |
 | POS (renderer) | http://localhost:4400 |
 
-Usuarios del seed (contraseña `Farmacia123!`): `admin@`, `gerente@`, `cajero@` y
-`doctor@farmajyv.test`. El seed también crea categoría, proveedor, tres productos
+Usuarios del seed (contraseña `Farmacia123!`): `admin@`, `gerente@`, `cajero@`,
+`doctor@` y `contador@farmajyv.test` (rol `accountant`, con el correo mensual activado). El seed también crea categoría, proveedor, tres productos
 con lote (uno de grupo II) y un paciente. Es idempotente.
 
 Los datos del emulador se guardan en `.emulator-data/` al salir (Ctrl+C) y se

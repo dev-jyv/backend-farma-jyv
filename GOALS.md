@@ -28,6 +28,7 @@ Proveer la API REST que da soporte a la gestión de una farmacia: catálogo de p
 - **Cobro con terminal** — integración Mercado Pago Point (`/v1/payments/mercadopago`): sucursales, cajas, terminales, `orders`, consulta/cancelación/reembolso y webhook. Una venta `card`/`mixed` exige una order `processed` no reutilizada.
 - **Clientes** — registro básico (nombre, RFC, contacto) asociable a la venta, más datos de facturación (`billing`: RFC, razón social, uso CFDI, correo) que quedan como snapshot en la venta.
 - **Facturas de compra** — carga y almacenamiento de archivos de factura en Cloud Storage.
+- **Rol contador (SPEC 45)** — rol de sistema `accountant` con solo `reportDownloads:read`: ve (vista previa `format=json`) y descarga en PDF/XLSX/CSV las ventas de farmacia, las de consultorio y las compras, sin utilidad, cortes, bitácora ni asistente. Con `monthlyReportEmail` recibe el día 1 un correo con los 6 archivos del mes anterior.
 - **Reportes de ventas por correo** — funciones programadas diaria y mensual con el mismo orden de lectura: resultado del periodo (vendido − devoluciones − gastos), separación **farmacia vs consultorio** con comisiones de los prestadores, **gastos desglosados por categoría** (el diario además lista cada gasto), cobro por método de pago y top 10 de productos. El mensual agrega comparativo contra el mes anterior, mejor día, promedio por día con ventas, ventas por día y top de servicios. Se envían con el PDF adjunto.
 - **Usuarios y roles** — control de acceso por permisos `{ área, nivel }`, roles de sistema (admin, cajero, gerente, doctor) y roles personalizados, con permisos espejados en custom claims de Firebase Auth.
 - **Consultorio médico** — padrón de pacientes con folio de expediente (`EXP-`), expediente clínico (notas por consulta con signos vitales, diagnóstico, tratamiento y archivos adjuntos en Storage) y agenda de citas con horario de atención, huecos libres calculados y control de traslapes. Sirve al front [farma-jyv-clinic](../farma-jyv-clinic) (Angular 22).
@@ -83,10 +84,10 @@ Ninguno alcanzó el umbral de reporte de la revisión (severidad alta con explot
 
 | Módulo | Qué falta hoy |
 |---|---|
-| **Promociones y control de descuento** | Hecho (2026-09-24): precio por cantidad, NxM y % con mínimo por producto (`/v1/promotions`), con el tope del 20% solo sobre la parte manual. Falta: mix&match entre productos, % por categoría, cupones y motivo capturado del descuento manual. |
+| **Promociones y control de descuento** | Hecho (2026-09-24): precio por cantidad, NxM y % con mínimo por producto (`/v1/promotions`), con el tope del 20% solo sobre la parte manual. Cupones por producto o por venta (SPEC 47, 2026-11-03: `/v1/coupons`, `couponCode` en la venta, revisión offline). Falta: mix&match entre productos, % por categoría, cupones por cliente y motivo capturado del descuento manual. |
 | **Órdenes de compra y cuentas por pagar** | Solo hay entrada ligada a factura; falta PO, recepción parcial contra PO y saldo a proveedor. |
 | **Devolución a proveedor / canje de caducados** | No existe; la farmacia devuelve caducado con nota de crédito. |
-| **Venta fraccionada** | `Product.unit` es un solo campo; falta unidad de compra vs venta y factor de conversión (caja ↔ blíster ↔ tableta). |
+| **Venta fraccionada** | Hecho en parte (SPEC 46, 2026-11-03): venta por **caja completa** (`boxQuantity`/`boxPrice`/`boxBarcode`, `items[].saleUnit: 'box'`); el stock sigue en piezas. Falta: venta por debajo de la pieza (blíster/tableta), varias presentaciones por producto y unidad de compra vs venta. |
 | **Multi-sucursal y traspasos** | `batches` no tiene `locationId`; abrir una segunda sucursal implica remodelar el inventario. |
 | **Crédito a cliente y lealtad** | `Customer` es nombre + RFC + contacto: sin límite de crédito, saldo, historial ni puntos. |
 
