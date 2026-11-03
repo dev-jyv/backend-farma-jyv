@@ -1,5 +1,6 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+import { monitoredJob } from './scheduled-job';
 
 /**
  * Respaldo diario de Firestore a Cloud Storage.
@@ -49,7 +50,9 @@ export const dailyFirestoreBackup = onSchedule(
         schedule: '0 2 * * *',
         retryCount: 1,
     },
-    async () => {
+    // `monitoredJob` deja el log `scheduled_job.finished` del que dependen la
+    // alerta de fallo y la de ausencia (26 h sin éxito) de RUNBOOK §7.
+    monitoredJob('dailyFirestoreBackup', async () => {
         const bucket = getBackupBucket();
         const projectId = process.env.GCLOUD_PROJECT ?? process.env.GCP_PROJECT;
         if (!projectId) {
@@ -71,5 +74,6 @@ export const dailyFirestoreBackup = onSchedule(
         const [operation] = await client.exportDocuments({ name, outputUriPrefix });
 
         console.log(`Respaldo de Firestore lanzado: ${outputUriPrefix} (${operation.name})`);
-    },
+        return { outputUriPrefix, operation: operation.name };
+    }),
 );

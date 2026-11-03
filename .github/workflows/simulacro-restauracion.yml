@@ -1,0 +1,63 @@
+name: Recordatorio de simulacro de restauración
+
+# SPEC 43, requisito 8: el día 1 de cada mes abre el issue
+# "Simulacro de restauración <mes> <año>" asignado a dev-jyv, con el checklist de
+# `.github/simulacro-restauracion.md` y el enlace a RUNBOOK §4. El issue se cierra
+# a mano al anotar el resultado en el RUNBOOK.
+#
+# Ojo: GitHub desactiva los workflows programados de un repo sin actividad en 60
+# días. Si el recordatorio deja de llegar, revisa la pestaña Actions.
+
+on:
+  schedule:
+    # 15:00 UTC = 09:00 en Ciudad de México (sin horario de verano desde 2022).
+    - cron: '0 15 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: simulacro-restauracion
+  cancel-in-progress: false
+
+jobs:
+  abrir-issue:
+    name: Abrir issue del mes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/simulacro-restauracion.md
+          sparse-checkout-cone-mode: false
+
+      - name: Crear el issue si no existe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSIGNEE: dev-jyv
+        run: |
+          MESES=(enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre)
+          MES_NUM=$(TZ=America/Mexico_City date +%-m)
+          ANIO=$(TZ=America/Mexico_City date +%Y)
+          TITULO="Simulacro de restauración ${MESES[$((MES_NUM - 1))]} ${ANIO}"
+
+          # Un `workflow_dispatch` de prueba no debe duplicar el issue del mes.
+          EXISTENTE=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state all \
+            --search "\"${TITULO}\" in:title" --json number,title \
+            --jq "map(select(.title == \"${TITULO}\")) | .[0].number // empty")
+          if [ -n "${EXISTENTE}" ]; then
+            echo "Ya existe #${EXISTENTE} (${TITULO}); no se crea otro."
+            echo "Ya existía el issue #${EXISTENTE}: ${TITULO}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          RUNBOOK_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/RUNBOOK.md#4-respaldo-de-firestore"
+          sed "s|{{RUNBOOK_URL}}|${RUNBOOK_URL}|g; s|{{TITULO}}|${TITULO}|g" \
+            .github/simulacro-restauracion.md > "${RUNNER_TEMP}/cuerpo.md"
+
+          URL=$(gh issue create --repo "${GITHUB_REPOSITORY}" \
+            --title "${TITULO}" --assignee "${ASSIGNEE}" \
+            --body-file "${RUNNER_TEMP}/cuerpo.md")
+          echo "Creado: ${URL}"
+          echo "Creado [${TITULO}](${URL}), asignado a ${ASSIGNEE}." >> "${GITHUB_STEP_SUMMARY}"

@@ -1,0 +1,21 @@
+{
+  "displayName": "FarmaJyV · dailyFirestoreBackup sin ejecución exitosa en 26 h",
+  "combiner": "OR",
+  "severity": "CRITICAL",
+  "conditions": [
+    {
+      "displayName": "Ningún scheduled_job.finished succeeded de dailyFirestoreBackup en 26 h",
+      "conditionPrometheusQueryLanguage": {
+        "query": "absent_over_time(logging_googleapis_com:user_farmajyv_scheduled_job_runs{monitored_resource=\"cloud_run_revision\",function=\"dailyFirestoreBackup\",outcome=\"succeeded\"}[26h])",
+        "duration": "0s",
+        "evaluationInterval": "300s"
+      }
+    }
+  ],
+  "alertStrategy": { "autoClose": "86400s" },
+  "documentation": {
+    "mimeType": "text/markdown",
+    "subject": "FarmaJyV: el respaldo de Firestore no ha corrido en 26 h",
+    "content": "`dailyFirestoreBackup` no registra una ejecución exitosa en 26 horas, aunque no haya log de error: el schedule puede estar pausado, la función borrada o sin desplegar.\n\n1. `gcloud scheduler jobs list --project {{PROJECT}} --location us-central1` y revisar que `firebase-schedule-dailyFirestoreBackup-us-central1` esté `ENABLED`.\n2. Lanzar un export manual (RUNBOOK §4 'Manual').\n3. PITR (7 días) sigue cubriendo mientras tanto."
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "displayName": "FarmaJyV · instancias de api (SPEC 42)",
+  "mosaicLayout": {
+    "columns": 48,
+    "tiles": [
+      {
+        "xPos": 0,
+        "yPos": 0,
+        "width": 48,
+        "height": 6,
+        "widget": {
+          "title": "Cómo leerlo",
+          "text": {
+            "format": "MARKDOWN",
+            "content": "Disparador de SPEC 42 (RUNBOOK §9): **más de 3 instancias activas de `api` en horario de tienda durante 7 días de tienda seguidos**. La gráfica de arriba solo muestra el horario de tienda (L–V 09:00–20:00, S 09:00–13:00, CDMX = UTC−6 fijo); el pico de cada día es su máximo diario. Ver 14 días. Cifra exacta por día: `node scripts/ops/reports.mjs instances --project {{PROJECT}}`."
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 6,
+        "width": 48,
+        "height": 16,
+        "widget": {
+          "title": "Instancias activas de api — solo horario de tienda",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "LINE",
+                "minAlignmentPeriod": "300s",
+                "legendTemplate": "instancias activas",
+                "timeSeriesQuery": {
+                  "prometheusQuery": "sum(max_over_time(run_googleapis_com:container_instance_count{monitored_resource=\"cloud_run_revision\",service_name=\"api\",state=\"active\"}[5m])) and on() ((day_of_week() >= 1 and day_of_week() <= 5 and hour() >= 15) or (day_of_week() >= 2 and day_of_week() <= 6 and hour() < 2) or (day_of_week() == 6 and hour() >= 15 and hour() < 19))"
+                }
+              }
+            ],
+            "thresholds": [{ "value": 3, "label": "disparador (>3)", "color": "RED", "targetAxis": "Y1" }],
+            "yAxis": { "label": "instancias", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "xPos": 0,
+        "yPos": 22,
+        "width": 48,
+        "height": 16,
+        "widget": {
+          "title": "Máximo diario de instancias activas de api (día completo, referencia)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "plotType": "STACKED_BAR",
+                "minAlignmentPeriod": "86400s",
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"run.googleapis.com/container/instance_count\" AND resource.type=\"cloud_run_revision\" AND resource.label.service_name=\"api\" AND metric.label.state=\"active\"",
+                    "aggregation": {
+                      "alignmentPeriod": "86400s",
+                      "perSeriesAligner": "ALIGN_MAX",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  }
+                }
+              }
+            ],
+            "thresholds": [{ "value": 3, "label": "disparador (>3)", "color": "RED", "targetAxis": "Y1" }],
+            "yAxis": { "label": "instancias", "scale": "LINEAR" }
+          }
+        }
+      }
+    ]
+  }
+}

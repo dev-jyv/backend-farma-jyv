@@ -1,0 +1,206 @@
+name: Deploy
+
+# Despliegue del backend (SPEC 39). Contrato: `main` con CI verde → `farma-jyv-dev`
+# automático; tag `vX.Y.Z` sobre `main` → `farma-jyv` tras aprobación en el
+# environment `production`. Solo despliega este repo: los tags del panel son
+# independientes (RUNBOOK §10).
+#
+# Autenticación por Workload Identity Federation: no hay llave JSON en ningún
+# secreto. El proveedor y la cuenta de servicio vienen de variables del
+# environment (`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`).
+#
+# NO ejecuta backfills ni `migrate:roles`: los PRs que los piden llevan la etiqueta
+# `requiere-paso-manual` y el job `pasos-manuales` los lista antes de la aprobación.
+
+on:
+  # Dev: solo cuando el CI de un push a `main` terminó en verde (incluye las
+  # pruebas de reglas, SPEC 33).
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Prod: un tag `v*`. El tag no dispara `ci.yml`, así que aquí se vuelve a llamar.
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  dev:
+    name: Desplegar a farma-jyv-dev
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: dev
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    # Dos merges seguidos: el despliegue nuevo cancela el anterior.
+    concurrency:
+      group: deploy-backend-dev
+      cancel-in-progress: true
+    env:
+      PROJECT_ID: farma-jyv-dev
+    steps:
+      # El commit exacto que pasó el CI, no la punta de `main` al momento.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: functions
+        run: npm ci
+
+      - name: Instalar Firebase CLI
+        run: npm install -g firebase-tools@15
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Variables no secretas de las funciones
+        env:
+          FUNCTIONS_ENV_FILE: ${{ vars.FUNCTIONS_ENV_FILE }}
+        run: node scripts/ci/write-functions-env.mjs "${PROJECT_ID}"
+
+      # SPEC 35: cada secreto de `functions/src/config/secrets.ts` debe existir en
+      # el proyecto con su última versión habilitada (solo metadatos; la cuenta de
+      # despliegue tiene `roles/secretmanager.viewer`). Si falta uno, el job lo
+      # nombra y no despliega nada, en vez de fallar a media subida de funciones.
+      - name: Verificar secretos en Secret Manager
+        run: node functions/scripts/check-secrets.mjs dev
+
+      - name: Desplegar índices
+        run: >-
+          firebase deploy --project dev --only firestore:indexes --non-interactive
+
+      - name: Esperar a que los índices estén listos
+        run: scripts/ci/wait-firestore-indexes.sh "${PROJECT_ID}"
+
+      # Sin `--force`: si una función desapareció del código, el CLI se niega a
+      # borrarla sin confirmación y el job falla en vez de borrar algo en silencio.
+      - name: Desplegar funciones, reglas y Storage
+        run: >-
+          firebase deploy --project dev
+          --only functions,firestore:rules,storage --non-interactive
+
+  verificar-tag:
+    name: Verificar que el tag está en main
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: El commit del tag pertenece a main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::El tag ${GITHUB_REF_NAME} apunta a un commit que no está en main. Solo se libera desde main (RUNBOOK §10)."
+            exit 1
+          fi
+
+  ci:
+    name: CI del tag
+    needs: verificar-tag
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  pasos-manuales:
+    name: PRs con pasos manuales desde el tag anterior
+    needs: verificar-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Listar en el resumen del run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/ci/manual-steps-summary.mjs
+
+  prod:
+    name: Desplegar a farma-jyv
+    needs: [ci, pasos-manuales]
+    runs-on: ubuntu-latest
+    # Revisor requerido: dev-jyv. Antes de aprobar, leer el resumen de `pasos-manuales`.
+    environment: production
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    # Un despliegue a producción nunca se cancela a medias por otro tag.
+    concurrency:
+      group: deploy-backend-prod
+      cancel-in-progress: false
+    env:
+      PROJECT_ID: farma-jyv
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Instalar dependencias
+        working-directory: functions
+        run: npm ci
+
+      - name: Instalar Firebase CLI
+        run: npm install -g firebase-tools@15
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Autenticar con Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Variables no secretas de las funciones
+        env:
+          FUNCTIONS_ENV_FILE: ${{ vars.FUNCTIONS_ENV_FILE }}
+        run: node scripts/ci/write-functions-env.mjs "${PROJECT_ID}"
+
+      # SPEC 35: cada secreto de `functions/src/config/secrets.ts` debe existir en
+      # el proyecto con su última versión habilitada (solo metadatos; la cuenta de
+      # despliegue tiene `roles/secretmanager.viewer`). Si falta uno, el job lo
+      # nombra y no despliega nada, en vez de fallar a media subida de funciones.
+      - name: Verificar secretos en Secret Manager
+        run: node functions/scripts/check-secrets.mjs prod
+
+      # RUNBOOK §1 / §2e: índices primero. `firebase deploy` no espera a que se
+      # construyan, por eso el paso siguiente sondea hasta que ninguno quede en
+      # CREATING y solo entonces salen las funciones.
+      - name: Desplegar índices
+        run: >-
+          firebase deploy --project prod --only firestore:indexes --non-interactive
+
+      - name: Esperar a que los índices estén listos
+        run: scripts/ci/wait-firestore-indexes.sh "${PROJECT_ID}"
+
+      - name: Desplegar funciones, reglas y Storage
+        run: >-
+          firebase deploy --project prod
+          --only functions,firestore:rules,storage --non-interactive

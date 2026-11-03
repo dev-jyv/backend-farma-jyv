@@ -77,7 +77,15 @@ export type PermissionArea =
      * tiene en lectura para bajarlas con `GET /promotions/sync` y aplicarlas sin
      * red.
      */
-    | 'promotions';
+    | 'promotions'
+    /**
+     * Salud de cajas: leer el diagnóstico que sube cada POS (ventas bloqueadas,
+     * turnos y productos sin subir, bitácora de sincronización) y mandarle
+     * comandos remotos (reintentar, mandar a no conciliadas). Es supervisión, no
+     * mostrador: la caja *sube* su diagnóstico con `pos:write`, pero ver el de
+     * todas las cajas y operarlas a distancia es de gerencia/administración.
+     */
+    | 'posHealth';
 
 export type PermissionLevel = 'read' | 'write';
 
@@ -194,7 +202,13 @@ export type AuditAction =
     | 'promotion.created'
     | 'promotion.updated'
     | 'promotion.deactivated'
-    | 'promotion.reactivated';
+    | 'promotion.reactivated'
+    /**
+     * Comando remoto a una caja (reintentar venta/turno/producto, mandar una
+     * venta a no conciliadas). Se audita porque puede terminar moviendo dinero
+     * al servidor o sacando una venta del flujo normal.
+     */
+    | 'pos.command_created';
 
 export type AuditEntity =
     | 'pointOrder'
@@ -219,7 +233,8 @@ export type AuditEntity =
     | 'appointment'
     | 'directCharge'
     | 'unreconciledSale'
-    | 'promotion';
+    | 'promotion'
+    | 'posCommand';
 
 export interface AuditLog {
     id: string;
@@ -1811,4 +1826,114 @@ export interface ServiceProvider {
     isActive: boolean;
     createdAt: Timestamp;
     updatedAt: Timestamp;
+}
+
+/**
+ * Salud de cajas. Contrato compartido con el POS y el admin, que se implementan
+ * en paralelo: **no cambiar la forma** sin moverlos a los tres a la vez. Todas
+ * las fechas viajan como string ISO; en Firestore solo `receivedAt`,
+ * `createdAt` y `completedAt` son `Timestamp` (los que el servidor estampa y
+ * por los que se ordena). Las fechas que manda la caja se guardan tal cual:
+ * vienen de su reloj y el servidor no tiene con qué corregirlas.
+ */
+export type PosBlockerKind = 'cashSession' | 'product';
+
+export interface PosBlocker {
+    kind: PosBlockerKind;
+    localId: string;
+    remoteId: string | null;
+    label: string;
+    error: string | null;
+    missingLocally: boolean;
+}
+
+export interface PosBlockedSale {
+    localId: string;
+    folio: string;
+    total: number;
+    createdAt: string;
+    cashSessionId: string | null;
+    pushError: string;
+    waitingFor: 'turno' | 'catalogo' | 'servidor' | null;
+    blockers: PosBlocker[];
+}
+
+export interface PosDiagnosticsInput {
+    deviceId: string;
+    deviceName: string;
+    appVersion: string;
+    platform: string;
+    generatedAt: string;
+    pendingSalesCount: number;
+    blockedSales: PosBlockedSale[];
+    blockedCashSessions: Array<{
+        localId: string;
+        remoteId: string | null;
+        openedAt: string;
+        openedByLabel: string | null;
+        pushError: string | null;
+        closePushError: string | null;
+    }>;
+    unsyncedProducts: Array<{
+        localId: string;
+        name: string;
+        pushError: string | null;
+        catalogPushError: string | null;
+    }>;
+    recentSyncRuns: Array<{
+        entity: string;
+        direction: string;
+        status: string;
+        errorMessage: string | null;
+        startedAt: string;
+    }>;
+    syncLog: Array<{
+        at: string;
+        level: 'info' | 'warn' | 'error';
+        entity: string;
+        message: string;
+        ref: string | null;
+    }>;
+    /**
+     * Turno abierto en la caja; `null` sin turno. Ausente en cajas con un POS
+     * anterior a SPEC 44: esas no reciben aviso de silencio.
+     */
+    openCashSessionId?: string | null;
+    /**
+     * Última copia local de rutina de la base de la caja (ISO), `null` si no hay
+     * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
+     */
+    lastLocalBackupAt?: string | null;
+}
+
+export type PosCommandType =
+    | 'retrySale'
+    | 'retryCashSession'
+    | 'retryProduct'
+    | 'sendSaleToUnreconciled';
+
+export type PosCommandStatus = 'pending' | 'done' | 'failed';
+
+export interface PosCommand {
+    id: string;
+    deviceId: string;
+    type: PosCommandType;
+    targetLocalId: string;
+    note: string | null;
+    status: PosCommandStatus;
+    createdBy: string;
+    createdAt: string;
+    completedAt: string | null;
+    result: string | null;
+}
+
+export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
+    receivedAt: string;
+    reportedBy: string;
+    /**
+     * Cuándo se avisó por correo que la caja dejó de reportar (ISO), o `null`.
+     * Cada reporte nuevo lo limpia, así que una caída posterior vuelve a avisar.
+     */
+    silenceAlertedAt: string | null;
+    pendingCommands: number;
 }

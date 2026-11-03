@@ -22,6 +22,7 @@ export const ALL_PERMISSION_AREAS: PermissionArea[] = [
     'accounting',
     'pharmacyServices',
     'promotions',
+    'posHealth',
 ];
 
 export const buildAllWritePermissions = (): RolePermission[] =>
@@ -168,6 +169,11 @@ export const SYSTEM_ROLE_DEFINITIONS: Record<SystemRoleSlug, {
          * (precio y tasa de comisión de un servicio: cuánto se le paga al
          * doctor) es exclusiva de administrador; la lectura sí la necesita el
          * gerente para consultar el catálogo.
+         *
+         * `posHealth` (salud de cajas) **sí** se hereda en escritura, a
+         * propósito: cuando una caja deja ventas atoradas quien está en la
+         * farmacia para destrabarla es la gerencia, y los comandos remotos
+         * (reintentar, mandar a no conciliadas) no deciden precio ni comisión.
          */
         permissions: [
             ...buildAllWritePermissions().filter(

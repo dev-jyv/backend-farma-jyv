@@ -356,28 +356,10 @@ export class AccountingController {
 
     /**
      * Las descargas escriben la respuesta con `@Res()` a propósito: el
-     * interceptor de la app envuelve todo en `{ data }`, y un PDF envuelto en
-     * JSON no lo abre nadie.
+     * interceptor de la app envuelve todo en `{ data }`, y un archivo envuelto en
+     * JSON no lo abre nadie. Los PDF (`exports/*.pdf`) están en
+     * `AccountingPdfExportsController` porque lanzan Chromium (SPEC 38).
      */
-    @Get('exports/income-statement.pdf')
-    @RequirePermission('accounting', 'read')
-    async exportIncomeStatementPdf(
-        @Query(new ZodValidationPipe(incomeStatementQuerySchema)) query: IncomeStatementQuery,
-        @Res() res: Response,
-    ) {
-        const statement = await accountingService.getIncomeStatement({
-            from: query.from,
-            to: query.to,
-            compare: query.compare === 'true',
-        });
-        sendFile(
-            res,
-            await accountingExport.incomeStatementPdf(statement),
-            'application/pdf',
-            `estado-de-resultados-${query.from.slice(0, 10)}_${query.to.slice(0, 10)}.pdf`,
-        );
-    }
-
     @Get('exports/income-statement.csv')
     @RequirePermission('accounting', 'read')
     async exportIncomeStatementCsv(
@@ -393,21 +375,6 @@ export class AccountingController {
             Buffer.from(accountingExport.incomeStatementCsv(statement), 'utf8'),
             'text/csv; charset=utf-8',
             `estado-de-resultados-${query.from.slice(0, 10)}_${query.to.slice(0, 10)}.csv`,
-        );
-    }
-
-    @Get('exports/balance-sheet.pdf')
-    @RequirePermission('accounting', 'read')
-    async exportBalanceSheetPdf(
-        @Query(new ZodValidationPipe(balanceSheetQuerySchema)) query: BalanceSheetQuery,
-        @Res() res: Response,
-    ) {
-        const balance = await accountingService.getBalanceSheet(query);
-        sendFile(
-            res,
-            await accountingExport.balanceSheetPdf(balance),
-            'application/pdf',
-            `balance-general-${balance.asOf.slice(0, 10)}.pdf`,
         );
     }
 

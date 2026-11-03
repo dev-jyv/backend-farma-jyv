@@ -1,0 +1,54 @@
+{
+  "$comment": "Una política de fallo por función programada (SPEC 32). `retryCount` debe ser el de su onSchedule: la alerta salta cuando hay MÁS intentos fallidos que reintentos en una hora, así un primer intento fallido con reintento exitoso no avisa. functions/test/scheduled-job-log.spec.ts verifica que esta tabla y el código coincidan.",
+  "jobs": [
+    {
+      "name": "dailyFirestoreBackup",
+      "retryCount": 1,
+      "severity": "CRITICAL",
+      "schedule": "02:00 diario",
+      "action": "Sin este respaldo la copia externa y PITR son la única red. Revisar el log del intento fallido y lanzar un export manual (RUNBOOK §4 'Manual')."
+    },
+    {
+      "name": "dailySalesReport",
+      "retryCount": 0,
+      "severity": "ERROR",
+      "schedule": "00:10 diario",
+      "action": "Reenviar con POST /v1/internal/reports/daily?date=AAAA-MM-DD (x-migrate-secret)."
+    },
+    {
+      "name": "monthlySalesReport",
+      "retryCount": 0,
+      "severity": "ERROR",
+      "schedule": "00:20 día 1",
+      "action": "Reenviar con POST /v1/internal/reports/monthly?month=AAAA-MM (x-migrate-secret)."
+    },
+    {
+      "name": "dailyInventoryAlerts",
+      "retryCount": 0,
+      "severity": "WARNING",
+      "schedule": "07:00 diario",
+      "action": "Reenviar con POST /v1/internal/reports/inventory-alerts?force=true."
+    },
+    {
+      "name": "dailyPromotionsMaintenance",
+      "retryCount": 0,
+      "severity": "WARNING",
+      "schedule": "07:05 diario",
+      "action": "Promociones vencidas pueden seguir activas: revisar /v1/promotions y desactivar a mano si urge."
+    },
+    {
+      "name": "dailyStatsIntegrityCheck",
+      "retryCount": 0,
+      "severity": "WARNING",
+      "schedule": "07:10 diario",
+      "action": "La verificación de dailyStats no corrió: correr npm run backfill:daily-stats -- --dry-run."
+    },
+    {
+      "name": "hourlyPosSilenceCheck",
+      "retryCount": 0,
+      "severity": "WARNING",
+      "schedule": "cada hora (minuto 0)",
+      "action": "No se revisaron las cajas en silencio: ver /salud-cajas en el panel; la siguiente corrida (en 1 h) vuelve a revisar y avisa lo pendiente."
+    }
+  ]
+}

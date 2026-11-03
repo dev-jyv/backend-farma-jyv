@@ -1,5 +1,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { EMAIL_SECRETS } from '../config/secrets';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+import { monitoredJob } from './scheduled-job';
 
 /**
  * Los servicios de envío se importan **dentro** de cada handler, no arriba.
@@ -14,17 +16,18 @@ const SCHEDULE_OPTIONS = {
     timeZone: REPORTS_TIME_ZONE,
     memory: '1GiB',
     timeoutSeconds: 180,
+    secrets: EMAIL_SECRETS,
 } as const;
 
 export const dailySalesReport = onSchedule(
     { ...SCHEDULE_OPTIONS, schedule: '10 0 * * *' },
-    async () => {
+    monitoredJob('dailySalesReport', async () => {
         const { sendDailySalesReport } = await import(
             '../services/sales-report-sender.service'
         );
         const { date } = await sendDailySalesReport();
         console.log(`Reporte diario de ventas enviado (${date})`);
-    },
+    }),
 );
 
 /**
@@ -39,8 +42,9 @@ export const dailyInventoryAlerts = onSchedule(
         memory: '256MiB',
         timeoutSeconds: 120,
         schedule: '0 7 * * *',
+        secrets: EMAIL_SECRETS,
     },
-    async () => {
+    monitoredJob('dailyInventoryAlerts', async () => {
         const { sendInventoryAlertsReport } = await import(
             '../services/inventory-alerts-sender.service'
         );
@@ -50,16 +54,16 @@ export const dailyInventoryAlerts = onSchedule(
                 ? `Alertas de inventario enviadas (${JSON.stringify(totals)})`
                 : 'Sin alertas de inventario que reportar',
         );
-    },
+    }),
 );
 
 export const monthlySalesReport = onSchedule(
     { ...SCHEDULE_OPTIONS, schedule: '20 0 1 * *' },
-    async () => {
+    monitoredJob('monthlySalesReport', async () => {
         const { sendMonthlySalesReport } = await import(
             '../services/sales-report-sender.service'
         );
         const { year, month } = await sendMonthlySalesReport();
         console.log(`Reporte mensual de ventas enviado (${year}-${month})`);
-    },
+    }),
 );

@@ -1,0 +1,6 @@
+-- SPEC 41 · Filtro de Logs Explorer: cada petición a `api` sin App Check válido.
+-- Sirve para ver casos sueltos (ruta, uid, User-Agent); los conteos por día y por
+-- cliente salen de app-check-sin-token.sql en Log Analytics.
+resource.type="cloud_run_revision"
+resource.labels.service_name="api"
+jsonPayload.appCheck=("missing" OR "invalid")

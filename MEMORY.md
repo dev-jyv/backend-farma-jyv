@@ -6,7 +6,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 
 - **Proyecto Firebase:** `farma-jyv` (ver [.firebaserc](.firebaserc)).
 - **Runtime:** Node 22, TypeScript, **NestJS 11** sobre Express 5, Firebase Functions v2 (`onRequest`, región `us-central1`, **512MiB**).
-- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
+- **Entry point:** todo el código en [functions/](functions/); la función exportada es `api` en [functions/src/index.ts](functions/src/index.ts), más `reportsPdf` (SPEC 38: las 11 rutas PDF con Chromium, 1GiB/120s/concurrencia 1, misma configuración HTTP vía `common/http-pipeline.ts`; RUNBOOK §12). Bootstrap Nest en [functions/src/app.ts](functions/src/app.ts) (`logger: false`) + [functions/src/app.module.ts](functions/src/app.module.ts).
 - **Base de datos:** Firestore (`ignoreUndefinedProperties: true` global, ver `utils/firestore.ts`). **Auth:** Firebase Auth (ID tokens + custom claims). **Archivos:** Cloud Storage.
 - **Rama actual:** `feature/prducts`.
 
@@ -35,6 +35,8 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `medicalRecords` | Notas del expediente clínico (paciente/doctor denormalizados, `visitedAt`, `vitals` con `bmi` calculado en servidor, `attachments[]` con ruta de Storage) |
 | `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
 | `promotions` | Promociones por cantidad (`rule` inmutable: `tiered`/`nxm`/`percent`, `productIds[]`, `startsAt`/`endsAt`, `isActive`, `deactivatedAt`); baja lógica |
+| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor), `reportedBy`, `openCashSessionId` (lo informa el POS; ausente en POS viejo) y `silenceAlertedAt` (aviso de silencio dado; cada reporte lo pone en `null`); opcional `lastLocalBackupAt` (última copia local de rutina, SPEC 37; ausente se lee `null`). Solo API |
+| `posCommands` | Comandos remotos admin → caja (`retrySale`/`retryCashSession`/`retryProduct`/`sendSaleToUnreconciled`), `status` `pending`→`done`/`failed`, `completedBy`. Solo API |
 
 ## Endpoints (montados bajo `/v1`, servidos por controllers Nest en `src/modules/`)
 
@@ -64,6 +66,8 @@ Ticket imprimible: `GET /v1/sales/:id/receipt` y `GET /v1/sale-returns/:id/recei
 Promociones (área **`promotions`**: admin/manager escriben, cajero lee): `GET|POST /v1/promotions`, `GET /v1/promotions/sync?updatedSince` (sin paginar, incluye inactivas, para el POS), `GET|PATCH|DELETE /v1/promotions/:id` (PATCH no acepta `rule` ni `productIds`), `GET /v1/promotions/:id/performance` (desempeño vs ventana previa), `GET /v1/promotions/suggestions/expiring?days=90` (lotes por caducar con % sugerido), `POST /v1/promotions/:id/replace` (crea la nueva y luego da de baja la vieja). La venta acepta `items[].promotionId` y `soldAt`; `GET /v1/sales?promotionReview=true` lista las ventas offline aceptadas con promo fuera de vigencia. Cambiar el precio de un producto da de baja las promos que ese precio invalida.
 
 Asistente de análisis (`modules/assistant`, permiso **`dashboard:read`**): `POST /v1/assistant/chat` con `{ messages: [{ role, content }] }` (máx. 20, el último del usuario) → `{ data: { reply, model, toolsUsed } }`. Chat por OpenRouter (`OPENROUTER_CHAT_MODEL`, debe soportar tool calling) con herramientas de solo lectura sobre los reportes existentes (ventas, utilidad, top productos, cajeros, horas, dead stock, inventario, alertas, resurtido); máx. 4 rondas de herramientas, 15 mensajes/min por usuario, sin historial en servidor. Sin `OPENROUTER_API_KEY` responde 503.
+
+Salud de cajas (`modules/pos-health`): la caja usa **`pos:write`** — `POST /v1/pos/diagnostics` (sobrescribe su snapshot y responde `{ commands }` pendientes, una escritura + una consulta) y `POST /v1/pos/commands/:id/result` (`done`/`failed`, idempotente con el mismo status, 409 si cambia). El admin usa el área **`posHealth`** (admin/manager escritura, cajero nada): `GET /v1/pos/diagnostics`, `GET /v1/pos/diagnostics/:deviceId` (snapshot + últimos 50 comandos), `POST /v1/pos/commands` (exige snapshot, no duplica un pendiente igual, audita `pos.command_created`). Textos y listas del diagnóstico se **recortan**, no se rechazan; si el doc pasara de ~900 KB se recorta bitácora antes que ventas. Alertas por correo (SPEC 44): `reportDiagnostics` lee el `blockedSales` previo (1 lectura) y, si las bloqueadas aparecen o suben (`evaluateBlockedSalesAlert`), manda `Caja <n>: <k> ventas bloqueadas` con import diferido, error tragado y espera tope de 5 s. `hourlyPosSilenceCheck` (cada hora, 256MiB) avisa una sola vez por caída de cada caja con turno abierto (`openCashSessionId`) y más de 2 h sin reportar, marcando `silenceAlertedAt` con precondición antes de mandar. Destino `REPORTS_EMAIL_TO`.
 
 Alta canónica de personal: `POST /users`. `POST /auth/register-staff` es alias.
 
@@ -139,19 +143,30 @@ Staff read / Admin-SDK write (`allow write: if false`) para catálogo, inventari
 - Identidad y acceso: `test/auth-guard.spec.ts` (claims aceptados/descartados por `roleId` y `permissionsVersion`, sesión expirada, usuario desactivado, rutas públicas), `test/roles.spec.ts` (versionado de permisos, resincronización de claims, protecciones de `updateRole`), `test/users.spec.ts` (no desactivarse a sí mismo, no dejar la instalación sin admin, sellado de `permissionsVersion` al cambiar rol), `test/memory-cache.spec.ts` (TTL, `null` cacheado vs miss, tope de entradas).
 - `npm run test:coverage` aplica `coverageThreshold` de `jest.config.js`. Con las suites aisladas la cifra es reproducible (±0.02 entre corridas), así que el piso global va justo por debajo de lo medido en vez de los 2 puntos de holgura que hacían falta antes. Gates estrictos donde importa: `auth.guard.ts` y `memory-cache.ts` al 100% de líneas, `users.service.ts` al 80%. `src/scripts/**` excluido.
 - Resuelto (antes flake ~1/4): `sales.spec.ts › dos requests concurrentes con la misma llave produce una sola venta`. Era contención del emulador, no la lógica de idempotencia — confirmado forzando `maxAttempts: 1`, que lo hace fallar el 100% con `ABORTED: Transaction lock timeout`. Lo cerró el aislamiento entre suites; **no** se tocó `maxAttempts` en producción.
-- CI: `.github/workflows/ci.yml` — `npm ci` → `lint` → `build` → `test:coverage`, con JDK 21 (Temurin) porque el emulador necesita JVM. Cobertura como artefacto 14 días.
+- CI: `.github/workflows/ci.yml` — `npm ci` → `lint` → `build` → `test:coverage` → `test:rules` desde la raíz (SPEC 33), con JDK 21 (Temurin) porque el emulador necesita JVM. Cobertura como artefacto 14 días.
+- Deploy: `.github/workflows/deploy.yml` (SPEC 39) — CI verde en `main` → `farma-jyv-dev`; tag `v*` → CI de nuevo + resumen de PRs `requiere-paso-manual` + aprobación de `dev-jyv` (environment `production`) → `farma-jyv`. Índices primero con espera. WIF (sin llaves); variables por environment: `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `FUNCTIONS_ENV_FILE` (sin credenciales; bloquea hasta que SPEC 35 declare los siete `defineSecret`). Liberación: RUNBOOK §10.
+- `simulacro-restauracion.yml` (SPEC 43): día 1 de cada mes abre el issue del simulacro asignado a `dev-jyv` (checklist en `.github/simulacro-restauracion.md`).
 
-## Variables de entorno ([functions/.env](functions/.env), no versionado)
+## Secretos (Cloud Secret Manager, SPEC 35)
+
+Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leídos con `.value()` en tiempo de ejecución vía los getters de `config/env.ts`. Nunca en un `.env` desplegable (`check-env-split.mjs` lo bloquea; `check-secrets.mjs` frena el deploy si falta alguno en el proyecto). Crear/rotar/acceso: RUNBOOK §11. Local: `functions/.secret.local`.
+
+- `MIGRATE_SECRET` — protege `POST /v1/internal/*` (`api`).
+- `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes) (`api`).
+- `MERCADOPAGO_WEBHOOK_SECRET` — valida firmas `x-signature` del webhook `orders` (`api`). Sin valor todavía: el espacio reservado tiene un blanco y en producción el webhook se rechaza.
+- `RESEND_API_KEY` — reportes por correo (`api` + las 4 programadas que mandan correo).
+- `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` — token de R2 para facturas (`api`); sin ellas, `uploads/`.
+- `OPENROUTER_API_KEY` — asistente y facturas-RAG (`api`); sin ella, 503.
+
+## Variables de entorno ([functions/.env](functions/.env) / `.env.<proyecto>`, no versionados, sin secretos)
 
 - `CORS_ORIGINS` — allowlist separado por comas.
-- `MIGRATE_SECRET` — protege `POST /v1/internal/migrate-roles`.
+- `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §13).
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
-- `MERCADOPAGO_ACCESS_TOKEN` — Access Token de Mercado Pago (Point / órdenes).
 - `MERCADOPAGO_PUBLIC_KEY` — Public Key (frontend); el backend no la consume.
-- `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API).
-- `MERCADOPAGO_WEBHOOK_SECRET` — opcional; valida firmas `x-signature` del webhook `orders`.
+- `MERCADOPAGO_USER_ID` — User ID de la cuenta (crear sucursales vía API). Solo en `.env.<proyecto>`.
+- `R2_ACCOUNT_ID` / `R2_BUCKET` — cuenta y bucket de R2 (no secretos).
 - `RECEIPT_STORE_NAME` / `RECEIPT_STORE_RFC` / `RECEIPT_STORE_ADDRESS` / `RECEIPT_STORE_PHONE` / `RECEIPT_FOOTER` — encabezado y pie del ticket (opcionales; el nombre cae a `Farmacia JyV`).
-- `RESEND_API_KEY` — API key de Resend para reportes por correo.
 - `REPORTS_EMAIL_FROM` — remitente verificado en Resend (pruebas: `onboarding@resend.dev`).
 - `REPORTS_EMAIL_TO` — destinatarios de reportes, separados por comas.
 
@@ -201,6 +216,9 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 - **Retención fuera del código**: regla de ciclo de vida del bucket, 30 días, solo sobre el prefijo `firestore-backups/` — así los respaldos manuales (`manual/`, `pre-borrado-*`) sobreviven.
 - Se factura como una lectura por documento exportado: es un costo diario fijo proporcional al tamaño de la base. Un escalón de lecturas de madrugada es esto.
 - Restauración, permisos IAM y respaldo manual: [RUNBOOK.md](RUNBOOK.md) §4.
+- **SPEC 31/43 (declarado, sin aplicar):** PITR 7 días (`scripts/ops/31-pitr.sh`), copia diaria de `firestore-backups/` a un bucket de un proyecto aislado (`farma-jyv-respaldos`, nombre a confirmar) por Storage Transfer con rol sin `delete`, recuperación por PITR documento a documento (`npm run pitr:restore`, en seco por defecto) y simulacro mensual (`scripts/ops/restore-drill.mjs`, rechaza `farma-jyv`/`farma-jyv-dev` como destino).
+- **Log de funciones programadas:** todas van envueltas en `monitoredJob` (`schedules/scheduled-job.ts`) → `scheduled_job.finished` con `job`/`outcome`; de ahí salen las alertas de SPEC 32 (métrica `farmajyv_scheduled_job_runs`, `scripts/ops/scheduled-jobs.json`). RUNBOOK §7.
+- **SPEC 34/42:** consulta de arranques en frío y dashboard de instancias en `scripts/ops/`; reportes de solo lectura `node scripts/ops/reports.mjs cold-start|instances`. RUNBOOK §8–§9.
 
 ## Pendientes conocidos
 
@@ -214,7 +232,7 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 
 ## Hallazgos de seguridad abiertos (revisión 2026-08-04)
 
-- `verifyWebhookSignature` falla **abierto** si `MERCADOPAGO_WEBHOOK_SECRET` no está configurado; la ruta del webhook es `@Public()`.
+- `verifyWebhookSignature` sin `MERCADOPAGO_WEBHOOK_SECRET` (o con el espacio reservado en blanco) rechaza en producción y acepta sin firma solo fuera de producción; la ruta del webhook es `@Public()`.
 - El id de order de MP se interpola sin codificar en la ruta de la API (`mpRequest`); no explotable hoy porque `mapOrder` proyecta solo siete escalares, pero falta `encodeURIComponent` o regex en el schema.
 
 ## Decisiones cerradas

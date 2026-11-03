@@ -4,6 +4,7 @@
     "test:rules": "firebase emulators:exec --only firestore --project farma-jyv-rules \"npm --prefix functions run test:rules\"",
     "dev:all": "node scripts/dev-all.mjs",
     "emulators": "npm --prefix functions run emulators",
-    "seed:emulator": "npm --prefix functions run seed:emulator"
+    "seed:emulator": "npm --prefix functions run seed:emulator",
+    "test:ops": "node --test scripts/ops/test/*.test.mjs"
   }
 }
