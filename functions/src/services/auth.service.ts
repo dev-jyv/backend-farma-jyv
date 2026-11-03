@@ -9,7 +9,8 @@ export const registerStaff = async (input: {
     password: string;
     displayName: string;
     roleId: string;
-}): Promise<AuthUser> => {
+    monthlyReportEmail?: boolean;
+}): Promise<AuthUser & { monthlyReportEmail?: boolean }> => {
     const role = await getActiveRoleById(input.roleId);
 
     let userRecord: admin.auth.UserRecord;
@@ -36,6 +37,8 @@ export const registerStaff = async (input: {
             roleId: role.id,
             permissionsVersion: rolePermissionsVersion(role),
             isActive: true,
+            // Sin el campo en el cuerpo no se escribe: `undefined` lo omite.
+            monthlyReportEmail: input.monthlyReportEmail,
         });
     } catch (error) {
         try {
@@ -57,5 +60,8 @@ export const registerStaff = async (input: {
         },
         permissions: role.permissions,
         displayName: input.displayName,
+        ...(input.monthlyReportEmail !== undefined
+            ? { monthlyReportEmail: input.monthlyReportEmail }
+            : {}),
     };
 };

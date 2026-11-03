@@ -195,6 +195,8 @@ export type AuditAction =
     | 'role.permissions_changed'
     | 'user.role_changed'
     | 'user.status_changed'
+    /** Preferencias del usuario que deciden a dónde sale información (correo mensual). */
+    | 'user.updated'
     /**
      * Expediente clínico: la NOM-004 exige que el expediente sea íntegro y
      * rastreable, así que toda edición de una nota ya guardada se audita
@@ -1550,6 +1552,12 @@ export interface UserProfile {
      */
     permissionsVersion?: number;
     isActive: boolean;
+    /**
+     * Recibe el día 1 el correo con ventas y compras del mes anterior
+     * (`monthlyAccountantReport`, SPEC 45). Solo cuenta si además el rol del
+     * usuario concede `reportDownloads:read`; sin el campo equivale a `false`.
+     */
+    monthlyReportEmail?: boolean;
     createdAt: Timestamp;
 }
 

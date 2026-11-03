@@ -97,6 +97,7 @@ export const updateUser = async (
         displayName?: string;
         roleId?: string;
         isActive?: boolean;
+        monthlyReportEmail?: boolean;
     },
     actorUid: string,
     actorRoleSlug?: string | null,
@@ -148,7 +149,10 @@ export const updateUser = async (
     }
 
     const profileUpdate: Partial<
-        Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
+        Pick<
+            UserProfile,
+            'displayName' | 'roleId' | 'permissionsVersion' | 'isActive' | 'monthlyReportEmail'
+        >
     > = {};
     if (input.displayName !== undefined) {
         profileUpdate.displayName = input.displayName;
@@ -164,6 +168,9 @@ export const updateUser = async (
     }
     if (input.isActive !== undefined) {
         profileUpdate.isActive = input.isActive;
+    }
+    if (input.monthlyReportEmail !== undefined) {
+        profileUpdate.monthlyReportEmail = input.monthlyReportEmail;
     }
 
     if (Object.keys(profileUpdate).length > 0) {
@@ -197,6 +204,23 @@ export const updateUser = async (
             userId: actorUid,
             roleSlug: actorRoleSlug ?? null,
             changes: { isActive: { before: existing.isActive, after: updated.isActive } },
+        });
+    }
+    // Decide a quién le salen por correo las ventas y compras del mes: se audita
+    // como un acceso más. Sin el campo en el documento equivale a `false`.
+    const emailBefore = existing.monthlyReportEmail ?? false;
+    if (input.monthlyReportEmail !== undefined && input.monthlyReportEmail !== emailBefore) {
+        await recordAudit({
+            action: 'user.updated',
+            entity: 'user',
+            entityId: id,
+            summary: `Correo mensual de reportes ${input.monthlyReportEmail
+                ? 'activado' : 'desactivado'} para ${updated.email ?? id}`,
+            userId: actorUid,
+            roleSlug: actorRoleSlug ?? null,
+            changes: {
+                monthlyReportEmail: { before: emailBefore, after: input.monthlyReportEmail },
+            },
         });
     }
 

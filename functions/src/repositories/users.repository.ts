@@ -56,7 +56,10 @@ export const createUserProfile = async (
 export const updateUserProfile = async (
     uid: string,
     data: Partial<
-        Pick<UserProfile, 'displayName' | 'roleId' | 'permissionsVersion' | 'isActive'>
+        Pick<
+            UserProfile,
+            'displayName' | 'roleId' | 'permissionsVersion' | 'isActive' | 'monthlyReportEmail'
+        >
     >,
 ): Promise<void> => {
     await collection()
