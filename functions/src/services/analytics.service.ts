@@ -71,6 +71,8 @@ export interface SalesSummaryReport {
     discountTotal: number;
     /** Parte de `discountTotal` que vino de promociones. */
     promotionDiscountTotal: number;
+    /** Parte de `discountTotal` que vino de cupones (SPEC 47). */
+    couponDiscountTotal: number;
     refundTotal: number;
     netTotal: number;
     taxBase: number;
@@ -108,6 +110,7 @@ export const getSalesSummary = async (
     let grossCents = 0;
     let discountCents = 0;
     let promotionDiscountCents = 0;
+    let couponDiscountCents = 0;
     let baseCents = 0;
     let ivaCents = 0;
     let iepsCents = 0;
@@ -137,6 +140,7 @@ export const getSalesSummary = async (
 
         discountCents += toCents(sale.discountTotal);
         promotionDiscountCents += toCents(sale.promotionDiscountTotal ?? 0);
+        couponDiscountCents += toCents(sale.couponDiscountTotal ?? 0);
         baseCents += toCents(sale.taxSummary?.base ?? 0);
         ivaCents += toCents(sale.taxSummary?.ivaTotal ?? 0);
         iepsCents += toCents(sale.taxSummary?.iepsTotal ?? 0);
@@ -163,6 +167,7 @@ export const getSalesSummary = async (
         grossTotal: fromCents(grossCents),
         discountTotal: fromCents(discountCents),
         promotionDiscountTotal: fromCents(promotionDiscountCents),
+        couponDiscountTotal: fromCents(couponDiscountCents),
         refundTotal: fromCents(refundCents),
         netTotal: fromCents(grossCents - refundCents),
         taxBase: fromCents(baseCents),

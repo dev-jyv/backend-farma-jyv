@@ -97,6 +97,24 @@ describe('contrato: el payload del POS pasa el schema del backend', () => {
     });
 
     /**
+     * SPEC 47: el cupón viaja como `couponCode` a nivel venta; la parte de
+     * producto va en `discountAmount` y la de venta en `saleDiscountAmount`.
+     */
+    it('conserva el couponCode (normalizado) de la venta', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            saleDiscountAmount: 50,
+            couponCode: 'verano-50',
+            items: [partidaProducto],
+        });
+
+        expect(resultado.success).toBe(true);
+        if (resultado.success) {
+            expect(resultado.data.couponCode).toBe('VERANO-50');
+        }
+    });
+
+    /**
      * Si el schema dejara de aceptar `unitPrice`, Zod lo **descartaría en
      * silencio** (no es `strict`) y el backend volvería a tarifar con el catálogo
      * del momento del push: una venta cobrada horas antes se rechazaría por

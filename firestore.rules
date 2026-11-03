@@ -172,6 +172,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Cupones (SPEC 47): mismo criterio que las promociones. El código es el id
+    // del documento y `usedCount` lo mueve solo la transacción de la venta.
+    match /coupons/{couponCode} {
+      allow read, write: if false;
+    }
+
     // Dueño de una orden Point pendiente. Solo la API lo escribe al crearla,
     // para que cancelar no alcance órdenes ajenas.
     match /pointOrders/{orderId} {

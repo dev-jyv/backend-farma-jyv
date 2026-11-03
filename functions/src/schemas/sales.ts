@@ -12,6 +12,7 @@ import {
     usoCfdiSchema,
 } from './common';
 import { withMaxSpan } from '../utils/report-range';
+import { couponCodeSchema } from './coupons';
 
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
     schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
@@ -177,6 +178,12 @@ export const createSaleSchema = z.object({
      * la venta (`createdAt` sigue siendo la del servidor).
      */
     soldAt: nullable(parseableDate),
+    /**
+     * Cupón aplicado (SPEC 47), uno por venta. El servidor recalcula su monto:
+     * en alcance producto viene dentro de `discountAmount` de cada partida, en
+     * alcance venta dentro de `saleDiscountAmount`.
+     */
+    couponCode: nullable(couponCodeSchema),
 }).superRefine((data, ctx) => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&

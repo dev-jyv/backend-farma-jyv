@@ -137,6 +137,8 @@ describe('reporte de ventas: promociones por revisar', () => {
             voidedAmount: 0,
             promotionSalesCount: 0,
             promotionDiscountTotal: 0,
+            couponSalesCount: 0,
+            couponDiscountTotal: 0,
         },
         branches: {
             pharmacy: { salesCount: 0, total: 0, share: 0 },

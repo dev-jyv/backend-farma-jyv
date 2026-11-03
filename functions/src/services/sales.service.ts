@@ -2,12 +2,15 @@ import { createHash } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
     ControlledGroup,
+    Coupon,
     PaymentMethod,
     PointPaymentSnapshot,
     Product,
     Promotion,
     Sale,
     SaleBilling,
+    SaleCoupon,
+    SaleCouponReview,
     SaleItemPromotion,
     SaleLineItem,
     SalePrescription,
@@ -35,6 +38,9 @@ import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as customersRepo from '../repositories/customers.repository';
 import * as promotionsRepo from '../repositories/promotions.repository';
+import * as couponsRepo from '../repositories/coupons.repository';
+import { computeCouponDiscount, CouponEngineLine } from '../utils/coupons';
+import { toEngineCoupon } from './coupons.service';
 import {
     computePromotionDiscount,
     isPromotionOpenAt,
@@ -112,6 +118,7 @@ const buildRequestFingerprint = (input: {
     total: number;
     paymentMethod: PaymentMethod;
     cashSessionId: string;
+    couponCode?: string;
 }): string => createHash('sha256')
     .update(JSON.stringify({
         // La partida de mercancía conserva **exactamente** la forma de siempre:
@@ -149,6 +156,9 @@ const buildRequestFingerprint = (input: {
         total: toCents(input.total),
         paymentMethod: input.paymentMethod,
         cashSessionId: input.cashSessionId,
+        // Solo con cupón: sin él la huella es la de siempre. Cambiar el cupón con
+        // la misma llave es otro cobro, no un reintento.
+        ...(input.couponCode ? { couponCode: input.couponCode } : {}),
     }))
     .digest('hex');
 
@@ -388,6 +398,157 @@ const resolveLinePromotion = (input: {
     };
 };
 
+interface ResolvedSaleCoupon {
+    /** Documento leído antes de la transacción; `null` si el código no existe. */
+    coupon: Coupon | null;
+    /** Parte del cupón por índice de partida (alcance `product`), en pesos. */
+    lineParts: Map<number, number>;
+    /** Parte del cupón dentro de `saleDiscountAmount` (alcance `sale`), en pesos. */
+    salePart: number;
+    totalCents: number;
+    /** Rechazo en línea; se lanza **después** de la revisión de idempotencia. */
+    error: string | null;
+    /** Marca offline decidida antes de la transacción (`over_limit` se decide dentro). */
+    review: SaleCouponReview | null;
+}
+
+const isCouponExhausted = (coupon: Pick<Coupon, 'maxUses' | 'usedCount'>): boolean =>
+    coupon.maxUses !== null && coupon.maxUses !== undefined &&
+    (coupon.usedCount ?? 0) >= coupon.maxUses;
+
+/** Cerrado = inactivo sin fecha de baja, o fuera de vigencia a `atMs` (regla de promociones). */
+const isCouponClosed = (coupon: Coupon, atMs: number, graceMs: number): boolean =>
+    (!coupon.isActive && !coupon.deactivatedAt) ||
+    !isPromotionOpenAt(coupon, atMs, graceMs);
+
+/**
+ * Cupón de la venta (SPEC 47): montos calculados con el motor en centavos y
+ * con **tope en lo que mandó la caja**, igual que las promociones.
+ *
+ * - `product`: la parte de cada partida elegible (sin promoción) sale del motor
+ *   sobre `subtotal − promoción`; lo que la caja haya descontado de más en esa
+ *   partida queda como descuento manual y sigue topado.
+ * - `sale`: la parte del cupón es `min(motor, saleDiscountAmount)`; el resto
+ *   de `saleDiscountAmount`, si lo hay, es manual.
+ *
+ * Los montos se calculan aunque el cupón esté vencido o agotado: el reintento
+ * de una venta que ya se registró debe dar la misma huella y devolverla, no un
+ * 400. Los rechazos en línea viajan en `error`; offline nunca se rechaza por
+ * vigencia ni por usos, se marca para revisión.
+ */
+const resolveSaleCoupon = (input: {
+    code: string;
+    coupon: Coupon | null;
+    items: SaleLineItem[];
+    saleDiscountAmount: number;
+    offline: boolean;
+    atMs: number;
+    graceMs: number;
+}): ResolvedSaleCoupon => {
+    const { code, coupon } = input;
+    const empty = {
+        coupon,
+        lineParts: new Map<number, number>(),
+        salePart: 0,
+        totalCents: 0,
+    };
+    if (!coupon) {
+        return input.offline
+            ? { ...empty, error: null, review: { reason: 'not_found', code } }
+            : { ...empty, error: `El cupón ${code} no existe`, review: null };
+    }
+
+    const engineCoupon = toEngineCoupon(coupon);
+    const engineLines: CouponEngineLine[] = input.items.map((item) => {
+        const subtotalCents = toCents(item.subtotal);
+        if (isSaleServiceItem(item)) {
+            // Un servicio nunca es elegible en alcance producto; en venta cuenta
+            // en la base como cualquier partida (su neto ya trae su descuento).
+            return {
+                productId: `service:${item.serviceId}`,
+                pieces: item.quantity,
+                netCents: subtotalCents - toCents(item.discountAmount),
+                hasPromotion: false,
+            };
+        }
+        const promoCents = toCents(item.promotion?.discountAmount ?? 0);
+        return {
+            productId: item.productId,
+            pieces: item.quantity,
+            netCents: engineCoupon.scope === 'product'
+                ? subtotalCents - promoCents
+                : subtotalCents - toCents(item.discountAmount),
+            hasPromotion: Boolean(item.promotion),
+        };
+    });
+    const result = computeCouponDiscount(engineCoupon, engineLines);
+
+    const lineParts = new Map<number, number>();
+    let totalCents = 0;
+    let salePart = 0;
+    if (coupon.scope === 'product') {
+        input.items.forEach((item, index) => {
+            if (isSaleServiceItem(item) || result.lines[index] <= 0) {
+                return;
+            }
+            const sentCents = toCents(item.discountAmount) -
+                toCents(item.promotion?.discountAmount ?? 0);
+            const partCents = Math.max(0, Math.min(result.lines[index], sentCents));
+            if (partCents > 0) {
+                lineParts.set(index, fromCents(partCents));
+                totalCents += partCents;
+            }
+        });
+    } else {
+        const partCents = Math.max(
+            0,
+            Math.min(result.saleCents, toCents(input.saleDiscountAmount)),
+        );
+        salePart = fromCents(partCents);
+        totalCents = partCents;
+    }
+
+    const closed = isCouponClosed(coupon, input.atMs, input.graceMs);
+    const exhausted = isCouponExhausted(coupon);
+    const resolved = { coupon, lineParts, salePart, totalCents };
+
+    if (input.offline) {
+        // Sin efecto (la caja y el servidor no coinciden): el cupón se ignora y
+        // lo descontado queda como manual. No consume uso ni marca revisión.
+        return {
+            ...resolved,
+            error: null,
+            review: totalCents > 0 && closed ? { reason: 'out_of_window', code } : null,
+        };
+    }
+
+    let error: string | null = null;
+    if (closed) {
+        error = `El cupón ${code} no está vigente`;
+    } else if (exhausted) {
+        error = `El cupón ${code} ya alcanzó su límite de usos`;
+    } else if (result.totalCents <= 0) {
+        if (coupon.scope === 'sale') {
+            const baseCents = engineLines.reduce((sum, line) => sum + line.netCents, 0);
+            error = engineCoupon.minPurchaseCents !== null &&
+                baseCents < engineCoupon.minPurchaseCents
+                ? `La compra mínima para usar el cupón ${code} es ` +
+                    `$${fromCents(engineCoupon.minPurchaseCents).toFixed(2)}`
+                : `El cupón ${code} no tiene efecto en esta venta`;
+        } else {
+            const eligible = input.items.filter((item) =>
+                !isSaleServiceItem(item) && coupon.productIds.includes(item.productId));
+            error = eligible.length && eligible.every((item) =>
+                !isSaleServiceItem(item) && Boolean(item.promotion))
+                ? `Los productos del cupón ${code} ya tienen promoción`
+                : `El cupón ${code} no aplica a los productos de la venta`;
+        }
+    } else if (totalCents <= 0) {
+        error = `El cupón ${code} no tiene efecto en esta venta`;
+    }
+    return { ...resolved, error, review: null };
+};
+
 export const createSale = async (input: {
     idempotencyKey?: string;
     items: SaleItemInput[];
@@ -416,6 +577,8 @@ export const createSale = async (input: {
     offline?: boolean;
     /** Hora local del cobro que reporta la caja; solo cuenta en `offline`. */
     soldAt?: string;
+    /** Código de cupón ya normalizado (mayúsculas); uno por venta (SPEC 47). */
+    couponCode?: string;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -471,6 +634,11 @@ export const createSale = async (input: {
     const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
     let closedPromotionName: string | null = null;
     const outOfWindowPromotions: string[] = [];
+
+    // El cupón se lee una vez aquí (vigencia, productos, mínimo) y otra dentro
+    // de la transacción (`usedCount`), que es la que decide el último uso.
+    const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
+    const preloadedCoupon = couponCode ? await couponsRepo.getCouponByCode(couponCode) : null;
 
     // Lecturas previas en bloque: solo sirven para validar y armar el plan. La
     // transacción vuelve a leer lotes y productos y es la que decide.
@@ -728,6 +896,32 @@ export const createSale = async (input: {
         Math.max(0, input.saleDiscountAmount ?? 0),
         subtotal - lineDiscountTotal,
     );
+
+    const resolvedCoupon = couponCode
+        ? resolveSaleCoupon({
+            code: couponCode,
+            coupon: preloadedCoupon,
+            items: saleItems,
+            saleDiscountAmount,
+            offline: Boolean(input.offline),
+            atMs: promotionAtMs,
+            graceMs: promotionGraceMs,
+        })
+        : null;
+    // Solo un cupón que de verdad descontó algo se guarda y consume uso.
+    const appliedCoupon = resolvedCoupon?.coupon && resolvedCoupon.totalCents > 0
+        ? resolvedCoupon.coupon
+        : null;
+    if (appliedCoupon && appliedCoupon.scope === 'product') {
+        resolvedCoupon!.lineParts.forEach((discountAmount, index) => {
+            const item = saleItems[index];
+            if (isSaleProductItem(item)) {
+                item.coupon = { couponId: appliedCoupon.id, discountAmount };
+            }
+        });
+    }
+    const couponDiscountTotal = appliedCoupon ? fromCents(resolvedCoupon!.totalCents) : 0;
+    const couponError = resolvedCoupon?.error ?? null;
     // A centavos: `3 x 10.10` en flotante es 30.299999999999997 y eso se guardaba tal
     // cual en la venta, en los reportes y en el desglose fiscal.
     const discountTotal = fromCents(toCents(lineDiscountTotal) + toCents(saleDiscountAmount));
@@ -821,22 +1015,27 @@ export const createSale = async (input: {
     const promotionIds = [...new Set(saleItems.flatMap((item) => (
         !isSaleServiceItem(item) && item.promotion ? [item.promotion.promotionId] : []
     )))];
+    // El cupón tampoco es descuento manual: lo dio de alta la gerencia.
     const manualDiscount = (item: SaleLineItem): number => item.discountAmount -
-        (isSaleServiceItem(item) ? 0 : item.promotion?.discountAmount ?? 0);
+        (isSaleServiceItem(item)
+            ? 0
+            : (item.promotion?.discountAmount ?? 0) + (item.coupon?.discountAmount ?? 0));
     // La base del tope es lo que queda **después** de la promo: si fuera el
     // subtotal de lista, un cajero podría sumar 20 % del precio lleno encima de
     // un 2x1 y dejar la partida al 70 % sin administrador.
     const isLineOverCap = (item: SaleLineItem): boolean => toCents(manualDiscount(item)) >
         toCents((item.subtotal - (item.discountAmount - manualDiscount(item))) *
             MAX_NON_ADMIN_DISCOUNT_RATE);
-    const manualDiscountTotal = discountTotal - promotionDiscountTotal;
-    const manualCapBase = subtotal - promotionDiscountTotal;
+    const manualDiscountTotal = discountTotal - promotionDiscountTotal - couponDiscountTotal;
+    const manualCapBase = subtotal - promotionDiscountTotal - couponDiscountTotal;
 
     const overCapLines = saleItems.filter(isLineOverCap);
     const discountOverCap = overCapLines.length > 0 ||
         toCents(manualDiscountTotal) > toCents(manualCapBase * MAX_NON_ADMIN_DISCOUNT_RATE);
 
-    if (input.roleSlug !== 'admin') {
+    // Con un cupón que se va a rechazar no hay venta que topar: se omite para que
+    // el cajero reciba el motivo real (o el reintento su venta), no un 403.
+    if (input.roleSlug !== 'admin' && !couponError) {
         const lineOverCap = saleItems.find(isLineOverCap);
         if (lineOverCap) {
             throw forbidden(
@@ -860,6 +1059,7 @@ export const createSale = async (input: {
         total,
         paymentMethod: input.paymentMethod,
         cashSessionId: input.cashSessionId,
+        couponCode,
     });
     const idempotencyRef = input.idempotencyKey
         ? firestore
@@ -881,6 +1081,12 @@ export const createSale = async (input: {
     if (closedPromotionName) {
         throw badRequest(`La promoción "${closedPromotionName}" no está vigente`);
     }
+    if (couponError) {
+        throw badRequest(couponError);
+    }
+    const couponRef = appliedCoupon
+        ? couponsRepo.couponsCollection().doc(appliedCoupon.id)
+        : null;
 
     // La order Point se resuelve ANTES del tender: en pago mixto su monto es lo que
     // define cuánto falta cubrir en efectivo.
@@ -993,6 +1199,30 @@ export const createSale = async (input: {
             return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
         }
 
+        // Cupón: `usedCount` se lee aquí, antes de cualquier escritura. Dos ventas
+        // en línea sobre el último uso contienden por este documento y la segunda,
+        // al reintentar, ve el uso consumido y se rechaza. Offline nunca se
+        // rechaza: se acepta y queda marcada.
+        let couponReview: SaleCouponReview | null = resolvedCoupon?.review ?? null;
+        let couponUsedCount: number | null = null;
+        if (couponRef && appliedCoupon) {
+            const couponDoc = await transaction.get(couponRef);
+            const fresh = couponDoc.exists ? couponsRepo.toCoupon(couponDoc) : appliedCoupon;
+            couponUsedCount = fresh.usedCount ?? 0;
+            if (!input.offline) {
+                if (!couponDoc.exists || isCouponClosed(fresh, timestamp.toMillis(), 0)) {
+                    throw badRequest(`El cupón ${appliedCoupon.code} no está vigente`);
+                }
+                if (isCouponExhausted(fresh)) {
+                    throw badRequest(
+                        `El cupón ${appliedCoupon.code} ya alcanzó su límite de usos`,
+                    );
+                }
+            } else if (!couponReview && isCouponExhausted(fresh)) {
+                couponReview = { reason: 'over_limit', code: appliedCoupon.code };
+            }
+        }
+
         // Solo mercancía: los reportes resuelven cada id de `productIds` contra
         // `products`, así que un id de servicio aquí los revienta.
         const productIds = [...new Set(productItems.map((item) => item.productId))];
@@ -1063,6 +1293,26 @@ export const createSale = async (input: {
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
 
+        // El uso se consume en la misma transacción que la venta. `updatedAt`
+        // sube para que el pull del POS traiga el `usedCount` nuevo. Anular o
+        // devolver la venta no devuelve el uso.
+        if (couponRef && couponUsedCount !== null) {
+            transaction.update(couponRef, {
+                usedCount: couponUsedCount + 1,
+                updatedAt: timestamp,
+            });
+        }
+        const saleCoupon: SaleCoupon | null = appliedCoupon
+            ? {
+                couponId: appliedCoupon.id,
+                code: appliedCoupon.code,
+                name: appliedCoupon.name,
+                scope: appliedCoupon.scope,
+                discount: appliedCoupon.discount,
+                discountAmount: couponDiscountTotal,
+            }
+            : null;
+
         productIds.forEach((productId, index) => {
             const delta = stockDeltaByProduct.get(productId) ?? 0;
             const denorm = productDocs[index].data()?.totalStock;
@@ -1091,6 +1341,8 @@ export const createSale = async (input: {
                     ...(outOfWindowPromotions.length ? { promotionReview: true as const } : {}),
                 }
                 : {}),
+            ...(saleCoupon ? { coupon: saleCoupon, couponDiscountTotal } : {}),
+            ...(couponReview ? { couponReview } : {}),
             refundedTotal: 0,
             paymentMethod: input.paymentMethod,
             amountReceived: tender.amountReceived,
@@ -1177,6 +1429,31 @@ export const createSale = async (input: {
         );
         return { id: saleRef.id, ...saleData };
     });
+
+    if (sale.couponReview) {
+        const reasons: Record<SaleCouponReview['reason'], string> = {
+            out_of_window: 'fuera de vigencia',
+            over_limit: 'sin usos disponibles',
+            not_found: 'que el servidor no conoce (descuento tratado como manual)',
+        };
+        await recordAudit({
+            action: 'sale.coupon_review',
+            entity: 'sale',
+            entityId: sale.id,
+            summary: `Venta ${sale.folio} sincronizada con el cupón ${sale.couponReview.code} ` +
+                reasons[sale.couponReview.reason],
+            userId: input.cashierId,
+            roleSlug: input.roleSlug ?? null,
+            metadata: {
+                folio: sale.folio,
+                soldAt: input.soldAt ?? null,
+                soldAtTrusted: trustedSoldAt,
+                reason: sale.couponReview.reason,
+                couponCode: sale.couponReview.code,
+                couponDiscountTotal,
+            },
+        });
+    }
 
     if (outOfWindowPromotions.length) {
         await recordAudit({

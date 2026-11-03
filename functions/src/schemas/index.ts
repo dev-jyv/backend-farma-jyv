@@ -13,3 +13,4 @@ export * from './promotions';
 export * from './invoice-rag';
 export * from './assistant';
 export * from './pos-health';
+export * from './coupons';
