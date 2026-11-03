@@ -230,6 +230,18 @@ Al registrar venta `card`/`mixed`, `cardPaymentReference` **debe ser el id de la
 - Backfill de `totalStock` / `productIds` / `batches.supplierId`: script listo (`npm run backfill:denormalized`, idempotente, `--dry-run` / `--force` / `--only=`). **Falta ejecutarlo en producción** y luego quitar los fallbacks.
 - `products.service` lee `salesRepo`/`entriesRepo`/`invoicesRepo` para el historial de producto (frontera de dominio borrosa, sin ciclo). Extraer a `product-history.service.ts` si crece.
 
+### Tras specs 31–44 (desplegados el 2026-11-02)
+
+- **Rotar credenciales de producción (SPEC 35, RUNBOOK §11.3).** Las de Mercado Pago, Resend, R2 y OpenRouter se **copiaron** del `.env` a Secret Manager sin rotar; `MIGRATE_SECRET` sí es nuevo. Emitir valores nuevos en cada proveedor → `secrets:set` → deploy → verificar → revocar el viejo. SPEC 35 no queda cerrado hasta entonces.
+- **`TOKEN_API` en `functions/.env.farma-jyv`:** el código no lo usa y no está entre los siete secretos. Decidir si se borra o se migra.
+- **Publicar la actualización del POS a las cajas** (`release:win` / `release:mac`). Sin ella no llegan el diagnóstico (SPEC 36), la última copia local (SPEC 37) ni `openCashSessionId` (SPEC 44).
+- **App Check (SPEC 41, RUNBOOK §13):** crear la clave de reCAPTCHA Enterprise, registrar el panel en App Check, poner `appCheck.siteKey` en los `environment*.ts` del panel y guardar la consulta de Log Analytics.
+- **Arranque en frío (SPEC 34, RUNBOOK §8):** la medición de 14 días empezó el 2026-11-02; decidir `minInstances` al cerrarla (`node scripts/ops/reports.mjs cold-start`).
+- **Borrar las rutas PDF viejas de `api` (SPEC 38 req. 7, RUNBOOK §12):** cuando el panel con `pdfApiUrl` lleve días en producción, PR aparte con la prueba del grafo de imports.
+- **Primer simulacro de restauración (SPEC 43, RUNBOOK §4):** confirma que los respaldos sirven; con él, SPEC 31, 32 y 43 pasan a Implemented. El issue mensual lo abre `simulacro-restauracion.yml`.
+- **Canal de correo duplicado en `farma-jyv-respaldos`:** la alerta de la copia externa notifica dos veces al mismo correo; dejar un solo canal.
+- **Presupuesto en MXN 95** (≈ US$5; la cuenta factura en pesos): revisar el monto si el aviso del 50 % llega todos los meses.
+
 ## Hallazgos de seguridad abiertos (revisión 2026-08-04)
 
 - `verifyWebhookSignature` sin `MERCADOPAGO_WEBHOOK_SECRET` (o con el espacio reservado en blanco) rechaza en producción y acepta sin firma solo fuera de producción; la ruta del webhook es `@Public()`.
