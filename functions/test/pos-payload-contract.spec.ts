@@ -79,6 +79,24 @@ describe('contrato: el payload del POS pasa el schema del backend', () => {
     });
 
     /**
+     * SPEC 46: la partida por caja manda `saleUnit: 'box'`, con `quantity` en
+     * cajas y `unitPrice` por caja. Si el schema lo descartara, el backend
+     * cobraría 2 piezas al precio de una caja.
+     */
+    it('conserva saleUnit de una partida por caja', () => {
+        const resultado = createSaleSchema.safeParse({
+            ...base,
+            amountReceived: 360,
+            items: [{ ...partidaProducto, quantity: 2, unitPrice: 180, saleUnit: 'box' }],
+        });
+
+        expect(resultado.success).toBe(true);
+        if (resultado.success) {
+            expect(resultado.data.items[0]).toMatchObject({ saleUnit: 'box', quantity: 2 });
+        }
+    });
+
+    /**
      * Si el schema dejara de aceptar `unitPrice`, Zod lo **descartaría en
      * silencio** (no es `strict`) y el backend volvería a tarifar con el catálogo
      * del momento del push: una venta cobrada horas antes se rechazaría por

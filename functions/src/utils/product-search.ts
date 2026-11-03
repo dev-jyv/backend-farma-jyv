@@ -1,7 +1,10 @@
 import { Product } from '../types';
 
 export const matchesProductSearch = (
-    product: Pick<Product, 'name' | 'sku' | 'barcode' | 'activeIngredient' | 'concentration'>,
+    product: Pick<
+        Product,
+        'name' | 'sku' | 'barcode' | 'activeIngredient' | 'concentration'
+    > & { boxBarcode?: string },
     term: string,
 ): boolean => {
     const normalized = term.toLowerCase();
@@ -9,6 +12,7 @@ export const matchesProductSearch = (
         product.name.toLowerCase().includes(normalized) ||
         (product.sku?.toLowerCase().includes(normalized) ?? false) ||
         (product.barcode?.toLowerCase().includes(normalized) ?? false) ||
+        (product.boxBarcode?.toLowerCase().includes(normalized) ?? false) ||
         (product.activeIngredient?.toLowerCase().includes(normalized) ?? false) ||
         (product.concentration?.toLowerCase().includes(normalized) ?? false)
     );

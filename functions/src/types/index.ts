@@ -291,6 +291,16 @@ export interface Product {
      */
     iepsRate?: number;
     requiresPrescription?: boolean;
+    /**
+     * Venta por caja completa (SPEC 46). `boxQuantity` (piezas por caja, 2–1000)
+     * y `boxPrice` (precio de la caja, impuestos incluidos) van juntos y
+     * `boxPrice ≤ boxQuantity × salePrice`. El stock sigue en **piezas**: la
+     * caja solo cambia cuántas piezas baja una partida y a qué precio.
+     */
+    boxQuantity?: number;
+    boxPrice?: number;
+    /** Código de la caja; único contra `barcode`, `sku` y otros `boxBarcode`. */
+    boxBarcode?: string;
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
@@ -1015,12 +1025,29 @@ export interface SaleProductItem extends SaleItemCommon {
         quantity: number;
     }>;
     /**
+     * Partida vendida por caja completa (SPEC 46). `quantity` sigue en **piezas**
+     * (`boxes × piecesPerBox`) y `unitPrice` es el precio efectivo por pieza
+     * (`boxPrice / piecesPerBox`, sin redondear), así `unitPrice × quantity`
+     * sigue siendo el subtotal para quien lo lea. Esto es solo para mostrar:
+     * `boxPrice` es lo cobrado por caja y `catalogUnitPrice`, cuando aparece en
+     * una partida por caja, es el `boxPrice` del catálogo.
+     */
+    saleUnit?: SaleItemBoxUnit;
+    /**
      * Promoción aplicada a la partida, con **copia de la regla** (mismo criterio
      * que las tasas guardadas en `taxes`): la devolución recalcula el reembolso
      * con la regla vigente al vender, no con la del catálogo de hoy.
      * `discountAmount` de la partida sigue siendo el total (promo + manual).
      */
     promotion?: SaleItemPromotion;
+}
+
+export interface SaleItemBoxUnit {
+    type: 'box';
+    boxes: number;
+    piecesPerBox: number;
+    /** Precio cobrado por caja. */
+    boxPrice: number;
 }
 
 export type PromotionType = 'tiered' | 'nxm' | 'percent';
@@ -1294,6 +1321,8 @@ export interface ReceiptLine {
     promotionName?: string;
     /** Parte de `discountAmount` que vino de la promoción. */
     promotionDiscount?: number;
+    /** Partida por caja: el ticket imprime "N cajas × M pzas" (SPEC 46). */
+    saleUnit?: SaleItemBoxUnit;
 }
 
 export interface Receipt {

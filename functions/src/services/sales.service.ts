@@ -65,6 +65,8 @@ interface SaleProductItemInput {
      * el servidor con la regla guardada, nunca se toma del cliente.
      */
     promotionId?: string;
+    /** Con `'box'`, `quantity` son cajas y `unitPrice` el precio por caja (SPEC 46). */
+    saleUnit?: 'box';
 }
 
 interface SaleServiceItemInput {
@@ -131,6 +133,18 @@ const buildRequestFingerprint = (input: {
                 // Solo cuando viene: sin promo la huella queda idéntica a la de
                 // siempre y las llaves vivas siguen validando.
                 ...(item.promotion ? { promotionId: item.promotion.promotionId } : {}),
+                // Mismo criterio para la venta por caja: 1 caja de 10 y 10 piezas
+                // sueltas bajan lo mismo, pero no son el mismo cobro.
+                ...(item.saleUnit
+                    ? {
+                        saleUnit: {
+                            type: item.saleUnit.type,
+                            boxes: item.saleUnit.boxes,
+                            piecesPerBox: item.saleUnit.piecesPerBox,
+                            boxPrice: toCents(item.saleUnit.boxPrice),
+                        },
+                    }
+                    : {}),
             })),
         total: toCents(input.total),
         paymentMethod: input.paymentMethod,
@@ -537,6 +551,13 @@ export const createSale = async (input: {
             continue;
         }
 
+        // Las promociones son por pieza: sobre una caja el paquete no tiene
+        // sentido y la devolución no sabría recalcularlo (SPEC 46).
+        const isBox = item.saleUnit === 'box';
+        if (isBox && item.promotionId) {
+            throw badRequest('Las promociones no aplican a la venta por caja');
+        }
+
         let product = productCache.get(item.productId);
         if (!product) {
             product = preloadedProducts.get(item.productId) ?? null;
@@ -546,6 +567,14 @@ export const createSale = async (input: {
         if (!product || !product.isActive) {
             throw notFound(`Producto ${item.productId}`);
         }
+
+        if (isBox && !(product.boxQuantity && product.boxPrice)) {
+            throw badRequest(`${product.name} no tiene configurada la venta por caja`);
+        }
+        // Todo lo que toca inventario (FEFO, lotes, movimientos, libro de
+        // controlados, devoluciones) cuenta piezas; la caja solo decide cuántas.
+        const piecesPerBox = isBox ? product.boxQuantity as number : 1;
+        const pieces = item.quantity * piecesPerBox;
 
         // Un producto con IEPS y sin tasa haría un desglose fiscal inventado: se
         // corrige en el catálogo, no aquí (productos históricos pueden no tenerla).
@@ -569,7 +598,7 @@ export const createSale = async (input: {
 
         let allocations;
         try {
-            allocations = allocateFefo(batches, item.quantity, { excludeExpired: true });
+            allocations = allocateFefo(batches, pieces, { excludeExpired: true });
         } catch (error) {
             if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
                 throw badRequest(`El stock disponible de ${product.name} está vencido`);
@@ -589,8 +618,15 @@ export const createSale = async (input: {
         // con el nuevo dejaba el `amountReceived` corto y el backend rechazaba una
         // venta que el cliente ya había pagado. El catálogo solo manda cuando el
         // POS no informa precio (ventas anteriores a este campo).
-        const unitPrice = item.unitPrice ?? product.salePrice;
-        const itemSubtotal = fromCents(toCents(unitPrice * item.quantity));
+        //
+        // Por caja, `chargedPrice` es el precio de la caja y el subtotal es
+        // `cajas × precio de caja` al centavo. Se guarda el precio efectivo por
+        // pieza para que `unitPrice × quantity` (en piezas) siga dando el
+        // subtotal en reportes, analítica y devoluciones.
+        const catalogPrice = isBox ? product.boxPrice as number : product.salePrice;
+        const chargedPrice = item.unitPrice ?? catalogPrice;
+        const unitPrice = isBox ? chargedPrice / piecesPerBox : chargedPrice;
+        const itemSubtotal = fromCents(toCents(chargedPrice * item.quantity));
         const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
         subtotal += itemSubtotal;
         lineDiscountTotal += discountAmount;
@@ -629,12 +665,23 @@ export const createSale = async (input: {
             kind: 'product',
             productId: product.id,
             productName: product.name,
-            quantity: item.quantity,
+            quantity: pieces,
             unitPrice,
             // Precio de catálogo al momento de registrar. Se guarda solo cuando
             // difiere de lo cobrado: es la señal auditable de que el POS tarifó
-            // distinto, y evita que un precio manipulado pase inadvertido.
-            ...(unitPrice !== product.salePrice ? { catalogUnitPrice: product.salePrice } : {}),
+            // distinto, y evita que un precio manipulado pase inadvertido. En
+            // una partida por caja se compara el precio de caja.
+            ...(chargedPrice !== catalogPrice ? { catalogUnitPrice: catalogPrice } : {}),
+            ...(isBox
+                ? {
+                    saleUnit: {
+                        type: 'box' as const,
+                        boxes: item.quantity,
+                        piecesPerBox,
+                        boxPrice: chargedPrice,
+                    },
+                }
+                : {}),
             discountAmount,
             subtotal: itemSubtotal,
             batchAllocations: allocations,

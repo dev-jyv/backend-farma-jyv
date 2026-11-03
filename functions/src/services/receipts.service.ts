@@ -73,6 +73,7 @@ const buildSaleReceipt = (sale: Sale): Receipt => {
             ...(promotion
                 ? { promotionName: promotion.name, promotionDiscount: promotion.discountAmount }
                 : {}),
+            ...(isSaleProductItem(item) && item.saleUnit ? { saleUnit: item.saleUnit } : {}),
         };
     });
 
@@ -158,6 +159,20 @@ const buildReturnReceipt = (saleReturn: SaleReturn): Receipt => ({
 });
 
 /**
+ * Cantidad y precio del renglón. Por caja se imprime lo que se cobró —cajas al
+ * precio de caja— y cuántas piezas son, porque el inventario y la devolución
+ * cuentan piezas: "2 cajas × 10 pzas x $180.00".
+ */
+const formatQuantity = (line: ReceiptLine): string => {
+    if (line.saleUnit) {
+        const { boxes, piecesPerBox, boxPrice } = line.saleUnit;
+        return `${boxes} ${boxes === 1 ? 'caja' : 'cajas'} × ${piecesPerBox} pzas x ` +
+            formatCurrency(boxPrice);
+    }
+    return `${line.quantity} x ${formatCurrency(line.unitPrice)}`;
+};
+
+/**
  * HTML para rollo térmico. Sin dependencias ni assets externos: el frontend lo
  * inyecta y llama `window.print()`, o lo manda tal cual al driver de la impresora.
  * `@page { margin: 0 }` y el ancho fijo en milímetros son lo que evita que el
@@ -199,9 +214,7 @@ export const renderReceiptHtml = (receipt: Receipt, width: ReceiptWidth): string
 }${promo}${discount}</td>
                 </tr>
                 <tr>
-                    <td class="muted">${line.quantity} x ${
-    escapeHtml(formatCurrency(line.unitPrice))
-}</td>
+                    <td class="muted">${escapeHtml(formatQuantity(line))}</td>
                     <td class="num">${escapeHtml(formatCurrency(line.amount))}</td>
                 </tr>`;
         })

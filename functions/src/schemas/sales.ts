@@ -99,6 +99,12 @@ const saleProductItemSchema = z.object({
     unitPrice: positiveMoney.optional(),
     /** Promoción aplicada; el servidor recalcula el monto con su regla. */
     promotionId: z.string().min(1).optional(),
+    /**
+     * Venta por caja completa (SPEC 46). Con `'box'`, `quantity` cuenta cajas y
+     * `unitPrice` es el precio por caja; el servidor baja `cajas × boxQuantity`
+     * piezas. Sin el campo la partida es por pieza, como siempre.
+     */
+    saleUnit: z.literal('box').optional(),
 });
 
 const saleServiceItemSchema = z.object({

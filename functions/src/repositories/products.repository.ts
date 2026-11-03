@@ -1,19 +1,24 @@
+import { FieldValue } from 'firebase-admin/firestore';
 import { Product } from '../types';
-import { conflict } from '../utils/errors';
+import { badRequest, conflict } from '../utils/errors';
 import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
+import { boxConfigProblem } from '../utils/box-sale';
 
 const collection = () => db().collection('products');
 
-const UNIQUE_FIELD_LABELS: Record<'sku' | 'name' | 'barcode', string> = {
+type UniqueField = 'sku' | 'name' | 'barcode' | 'boxBarcode';
+
+const UNIQUE_FIELD_LABELS: Record<UniqueField, string> = {
     sku: 'SKU',
     name: 'nombre',
     barcode: 'código de barras',
+    boxBarcode: 'código de barras de caja',
 };
 
 const findDuplicate = async (
     transaction: FirebaseFirestore.Transaction,
-    field: 'sku' | 'name' | 'barcode',
+    field: UniqueField,
     value: string,
 ): Promise<Product | null> => {
     const snapshot = await transaction.get(collection().where(field, '==', value).limit(1));
@@ -26,25 +31,57 @@ const findDuplicate = async (
 
 // Corre dentro de la misma transacción que la escritura para evitar que dos
 // altas/ediciones concurrentes con el mismo sku/nombre/barcode pasen ambas.
+//
+// Los códigos de barras comparten espacio: un escaneo tiene que resolver a un
+// solo producto y a una sola unidad (pieza o caja). Por eso `boxBarcode` se
+// busca contra `barcode`, `sku` y otros `boxBarcode`, y un `barcode` nuevo
+// también contra los `boxBarcode` de los demás.
 const assertNoDuplicate = async (
     transaction: FirebaseFirestore.Transaction,
-    data: { sku?: string; name?: string; barcode?: string },
+    data: { sku?: string; name?: string; barcode?: string; boxBarcode?: string | null },
     excludeId?: string,
 ): Promise<void> => {
-    const checks: Array<['sku' | 'name' | 'barcode', string | undefined]> = [
-        ['sku', data.sku],
-        ['name', data.name],
-        ['barcode', data.barcode],
+    const checks: Array<[UniqueField, UniqueField, string | null | undefined]> = [
+        ['sku', 'sku', data.sku],
+        ['name', 'name', data.name],
+        ['barcode', 'barcode', data.barcode],
+        ['barcode', 'boxBarcode', data.barcode],
+        ['boxBarcode', 'boxBarcode', data.boxBarcode],
+        ['boxBarcode', 'barcode', data.boxBarcode],
+        ['boxBarcode', 'sku', data.boxBarcode],
     ];
 
-    for (const [field, value] of checks) {
+    for (const [field, against, value] of checks) {
         if (!value) {
             continue;
         }
-        const duplicate = await findDuplicate(transaction, field, value);
+        const duplicate = await findDuplicate(transaction, against, value);
         if (duplicate && duplicate.id !== excludeId) {
             throw conflict(`Ya existe un producto con ese ${UNIQUE_FIELD_LABELS[field]}`);
         }
+    }
+};
+
+/** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
+const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;
+/** Lo que cambia la validez de la caja: si un update no toca nada de esto, no se revisa. */
+const BOX_DEPENDENCIES = ['salePrice', 'sku', 'barcode', ...BOX_FIELDS] as const;
+
+type BoxPatch = {
+    boxQuantity?: number | null;
+    boxPrice?: number | null;
+    boxBarcode?: string | null;
+};
+
+export type ProductPatch = Partial<Omit<
+    Product,
+    'id' | 'createdAt' | 'updatedAt' | typeof BOX_FIELDS[number]
+>> & BoxPatch;
+
+const assertBoxConfig = (product: Parameters<typeof boxConfigProblem>[0]): void => {
+    const problem = boxConfigProblem(product);
+    if (problem) {
+        throw badRequest(problem);
     }
 };
 
@@ -190,6 +227,7 @@ export const getProductsByIds = async (ids: string[]): Promise<Map<string, Produ
 export const createProduct = async (
     data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Product> => db().runTransaction(async (transaction) => {
+    assertBoxConfig(data);
     await assertNoDuplicate(transaction, data);
 
     const timestamp = now();
@@ -201,7 +239,7 @@ export const createProduct = async (
 
 export const updateProduct = async (
     id: string,
-    data: Partial<Omit<Product, 'id' | 'createdAt' | 'updatedAt'>>,
+    data: ProductPatch,
 ): Promise<Product> => db().runTransaction(async (transaction) => {
     await assertNoDuplicate(transaction, data, id);
 
@@ -211,7 +249,29 @@ export const updateProduct = async (
         throw new Error('Producto no encontrado tras actualizar');
     }
 
+    // `null` en un campo de caja lo quita del documento; `undefined` no lo toca.
+    const merged: Record<string, unknown> = { ...snapshot.data() };
+    const write: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (value === undefined) {
+            continue;
+        }
+        if (value === null && (BOX_FIELDS as readonly string[]).includes(key)) {
+            delete merged[key];
+            write[key] = FieldValue.delete();
+            continue;
+        }
+        merged[key] = value;
+        write[key] = value;
+    }
+
+    // La caja se valida contra el documento leído aquí, no contra una lectura
+    // previa: bajar `salePrice` puede dejar una caja más cara que sus piezas.
+    if (BOX_DEPENDENCIES.some((field) => field in write)) {
+        assertBoxConfig(merged as unknown as Product);
+    }
+
     const timestamp = now();
-    transaction.update(docRef, { ...data, updatedAt: timestamp });
-    return { ...snapshot.data(), ...data, id, updatedAt: timestamp } as Product;
+    transaction.update(docRef, { ...write, updatedAt: timestamp });
+    return { ...merged, id, updatedAt: timestamp } as Product;
 });
