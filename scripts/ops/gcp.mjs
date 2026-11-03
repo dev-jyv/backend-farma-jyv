@@ -104,7 +104,9 @@ const ensureEmailChannels = async (client, project, channels) => {
         });
         names.push(channel.name);
     }
-    return names;
+    // Si ops y dueño son el mismo correo, es un solo canal: el API de presupuestos
+    // rechaza un canal repetido con un 400 sin detalle.
+    return [...new Set(names)];
 };
 
 // --- Recursos de Monitoring --------------------------------------------------

@@ -99,7 +99,10 @@ describe('plantillas', () => {
         assert.ok(query.includes(`logging_googleapis_com:user_${metric.name}`));
         assert.ok(query.includes('function="dailyFirestoreBackup"'));
         assert.ok(query.includes('outcome="succeeded"'));
-        assert.ok(query.includes('[26h]'));
+        // Monitoring no acepta ventanas PromQL de más de 25 h sobre métricas de log:
+        // 25 h de ausencia sostenidas 1 h (`duration`) son las 26 h del spec.
+        assert.ok(query.includes('[25h]'));
+        assert.equal(absent.conditions[0].conditionPrometheusQueryLanguage.duration, '3600s');
     });
 
     it('el uptime check revisa cada 5 min y la política espera 5 min y 2 regiones', () => {

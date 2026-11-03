@@ -4,10 +4,10 @@
   "severity": "CRITICAL",
   "conditions": [
     {
-      "displayName": "Ningún scheduled_job.finished succeeded de dailyFirestoreBackup en 26 h",
+      "displayName": "Ningún scheduled_job.finished succeeded de dailyFirestoreBackup en 26 h (ventana de 25 h sostenida 1 h)",
       "conditionPrometheusQueryLanguage": {
-        "query": "absent_over_time(logging_googleapis_com:user_farmajyv_scheduled_job_runs{monitored_resource=\"cloud_run_revision\",function=\"dailyFirestoreBackup\",outcome=\"succeeded\"}[26h])",
-        "duration": "0s",
+        "query": "absent_over_time(logging_googleapis_com:user_farmajyv_scheduled_job_runs{monitored_resource=\"cloud_run_revision\",function=\"dailyFirestoreBackup\",outcome=\"succeeded\"}[25h])",
+        "duration": "3600s",
         "evaluationInterval": "300s"
       }
     }
