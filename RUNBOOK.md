@@ -820,8 +820,11 @@ vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
 3. En **cada repo** (backend y panel), environments de GitHub:
    - `dev`: rama de despliegue `main`. Variables `GCP_WORKLOAD_IDENTITY_PROVIDER`,
      `GCP_DEPLOY_SERVICE_ACCOUNT` (las de `farma-jyv-dev`).
-   - `production`: **revisor requerido `dev-jyv`**, reglas de despliegue solo
-     tags `v*`. Las mismas dos variables con los valores de `farma-jyv`.
+   - `production`: reglas de despliegue solo tags `v*` y las mismas dos variables
+     con los valores de `farma-jyv`. En el backend, además, **revisor requerido
+     `dev-jyv`**. El panel no lleva revisor: es un repo privado en el plan
+     gratuito de GitHub, que no admite revisores ahí; crear el tag es la
+     aprobación (§10.4).
    - Solo backend, en los dos environments: variable `FUNCTIONS_ENV_FILE` con el
      contenido de `functions/.env.<proyecto>` **sin credenciales** (CORS, RECEIPT_*,
      REPORTS_EMAIL_*, R2_ACCOUNT_ID/R2_BUCKET, FIRESTORE_BACKUP_BUCKET…).
@@ -893,8 +896,15 @@ proyecto: Firebase serializa, pero el estado final es el del último en terminar
 
 `farma-jyv-admin/.github/workflows/deploy.yml` sigue el mismo flujo para Hosting
 (`hosting:admin-dev` en dev, `hosting:admin` en prod), con sus propios tags `v*`,
-su environment `production` (revisor `dev-jyv`) y su propio resumen de PRs con
+su environment `production` y su propio resumen de PRs con
 `requiere-paso-manual`. No despliega índices: el panel no tiene.
+
+**El panel no espera aprobación**: el repo es privado y el plan gratuito de
+GitHub no admite revisores requeridos en repos privados. El job `prod` corre en
+cuanto el CI del tag y `pasos-manuales` terminan, así que **crear el tag es la
+aprobación**: revisar antes el resumen de PRs con `requiere-paso-manual` (con
+`gh pr list -R dev-jyv/farma-jyv-admin --label requiere-paso-manual --state merged`)
+y hacer los pasos que van antes del código.
 
 ### 10.5 Despliegue manual (GitHub Actions caído o `dev-jyv` no disponible)
 
