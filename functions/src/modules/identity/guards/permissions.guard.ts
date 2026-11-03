@@ -8,6 +8,7 @@ import {
     ANY_AUTHENTICATED,
     PERMISSION_KEY,
     PermissionMetadata,
+    isAnyOfPermissions,
 } from '../decorators/require-permission.decorator';
 
 @Injectable()
@@ -50,11 +51,11 @@ export class PermissionsGuard implements CanActivate {
             return true;
         }
 
-        const allowed = hasPermission(
-            req.authUser.permissions,
-            required.area,
-            required.level,
-            req.authUser.role.slug,
+        const { permissions, role } = req.authUser;
+        const options = isAnyOfPermissions(required) ? required.anyOf : [required];
+        // Una lista vacía no deja pasar a nadie: `some` sobre [] es `false`.
+        const allowed = options.some((option) =>
+            hasPermission(permissions, option.area, option.level, role.slug),
         );
         if (!allowed) {
             throw forbidden();
