@@ -8,6 +8,7 @@ import {
     sendAccountantMonthlyReport,
 } from '../src/services/accountant-report-sender.service';
 import { exportReportBundle } from '../src/services/report-export/export-report';
+import { sendReportEmail } from '../src/services/email.service';
 import { getPreviousMonth } from '../src/services/sales-reports.service';
 import { RolePermission } from '../src/types';
 import { db } from '../src/utils/firestore';
@@ -225,6 +226,26 @@ describe('sendAccountantMonthlyReport', () => {
         const { year, month } = getPreviousMonth();
         const result = await sendAccountantMonthlyReport();
         expect(result.month).toBe(`${year}-${String(month).padStart(2, '0')}`);
+    });
+});
+
+describe('sendReportEmail', () => {
+    it('rechaza una lista de destinatarios vacía en vez de mandar a la lista fija', async () => {
+        await expect(sendReportEmail({ to: [], subject: 's', react: <p /> }))
+            .rejects.toThrow('vacía');
+        expect(mockSend).not.toHaveBeenCalled();
+    });
+
+    it('sin `to` va a REPORTS_EMAIL_TO con su adjunto, como siempre', async () => {
+        await sendReportEmail({
+            subject: 's',
+            react: <p />,
+            attachment: { filename: 'a.pdf', content: Buffer.from('x') },
+        });
+        expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({
+            to: ['dueno@farmajyv.test'],
+            attachments: [{ filename: 'a.pdf', content: Buffer.from('x') }],
+        }));
     });
 });
 

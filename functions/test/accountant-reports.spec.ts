@@ -12,6 +12,7 @@ import { ReportsPdfModule } from '../src/reports-pdf.module';
 import { createHttpApp } from '../src/common/http-pipeline';
 import { SYSTEM_ROLE_DEFINITIONS, hasPermission } from '../src/constants/permissions';
 import { seedSystemRoles } from '../src/services/roles.service';
+import { exportReportBundle } from '../src/services/report-export/export-report';
 import { RolePermission } from '../src/types';
 import { db } from '../src/utils/firestore';
 
@@ -294,5 +295,34 @@ describe('descargas del contador en reportsPdf', () => {
             'contador',
         );
         expect(res.status).toBe(400);
+    });
+});
+
+describe('exportReportBundle', () => {
+    it('una carga, varios formatos y los totales del periodo', async () => {
+        const { files, preview } = await exportReportBundle({
+            report: 'facturas',
+            formats: ['pdf', 'xlsx'],
+            query: { month: MES },
+            generatedBy: 'Sistema',
+            roleSlug: 'admin',
+        });
+        expect(files.map((file) => file.fileName)).toEqual([
+            `facturas-${MES}.pdf`,
+            `facturas-${MES}.xlsx`,
+        ]);
+        expect(files[0].body.equals(PDF_FALSO)).toBe(true);
+        expect(preview).toMatchObject({ rowCount: 2, totals: { total: 1250.3 } });
+    });
+
+    it('aplica la misma autorización que la descarga', async () => {
+        await expect(exportReportBundle({
+            report: 'utilidad',
+            formats: ['pdf'],
+            query: { month: MES },
+            generatedBy: 'x',
+            roleSlug: 'accountant',
+            permissions: [{ area: 'reportDownloads', level: 'read' }],
+        })).rejects.toMatchObject({ statusCode: 403 });
     });
 });
