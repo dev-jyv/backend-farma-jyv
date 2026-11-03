@@ -533,7 +533,8 @@ export const monthlyExportQuerySchema = z.object({
  * (`date`) o un mes (`month`), en ese orden de prioridad.
  */
 export const reportExportQuerySchema = z.object({
-    format: z.enum(['pdf', 'xlsx', 'csv']).default('pdf'),
+    /** `json` es la vista previa del panel (SPEC 45); solo en `api`, nunca en `reportsPdf`. */
+    format: z.enum(['pdf', 'xlsx', 'csv', 'json']).default('pdf'),
     from: ymdDate.optional(),
     to: ymdDate.optional(),
     date: ymdDate.optional(),

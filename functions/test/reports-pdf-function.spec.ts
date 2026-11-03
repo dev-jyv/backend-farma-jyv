@@ -193,19 +193,20 @@ describe('reportsPdf: las 11 rutas PDF', () => {
                     Reflect.getMetadata(METHOD_METADATA, handler) === undefined) {
                     continue;
                 }
-                const permiso = Reflect.getMetadata(PERMISSION_KEY, handler) as {
-                    area: string;
-                    level: string;
-                };
+                const permiso = Reflect.getMetadata(PERMISSION_KEY, handler) as
+                    | { area: string; level: string }
+                    | { anyOf: { area: string; level: string }[] };
+                // `:report` entra con dashboard o reportDownloads (SPEC 45).
+                const opciones = 'anyOf' in permiso ? permiso.anyOf : [permiso];
                 rutas.push(`${prefijo}/${Reflect.getMetadata(PATH_METADATA, handler)} ` +
-                    `${permiso.area}:${permiso.level}`);
+                    opciones.map((p) => `${p.area}:${p.level}`).join('|'));
             }
         }
 
         expect(rutas.sort()).toEqual([
             'accounting/exports/balance-sheet.pdf accounting:read',
             'accounting/exports/income-statement.pdf accounting:read',
-            'reports/exports/:report dashboard:read',
+            'reports/exports/:report dashboard:read|reportDownloads:read',
             'reports/exports/expenses-monthly.pdf dashboard:read',
             'reports/exports/expiring.pdf dashboard:read',
             'reports/exports/inventory.pdf dashboard:read',
