@@ -1,0 +1,108 @@
+name: Security
+
+on:
+  pull_request:
+    branches: [<AJUSTAR: lista de branches detectadas en el Paso 2, ej. develop, main>]
+
+  # Una vulnerabilidad nueva no aparece porque cambie el codigo, sino porque
+  # alguien la publica. Sin este schedule, un CVE divulgado hoy queda invisible
+  # hasta que alguien abra un PR cualquiera — y entonces bloquea ESE PR, que no
+  # tiene nada que ver. Corriendolo semanalmente, el hallazgo llega en su propio
+  # run y se atiende aparte.
+  schedule:
+    - cron: '0 14 * * 1' # lunes 14:00 UTC — ajustar si el equipo opera en otra zona horaria
+
+  # Permite correr el escaneo a mano: es la unica forma de verificar que
+  # SNYK_TOKEN quedo bien configurado sin abrir un PR de prueba.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Necesario para que el run programado pueda abrir/comentar la issue de
+  # aviso (ver el ultimo paso). En los runs de pull_request no se usa.
+  issues: write
+
+jobs:
+  snyk:
+    name: Snyk dependency scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # --- AJUSTAR ESTE BLOQUE SEGUN EL PACKAGE MANAGER DETECTADO ---
+      # Ver references/package-manager-detection.md para las variantes
+      # (npm, yarn classic, yarn berry, pnpm, bun). Bloque de ejemplo (npm):
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: <AJUSTAR: version de Node detectada>
+          cache: npm
+
+      # Snyk resuelve el arbol real desde node_modules, no solo desde el
+      # lockfile, asi que la instalacion tiene que ocurrir antes del escaneo.
+      - name: Install dependencies
+        run: npm ci
+      # --- FIN DEL BLOQUE AJUSTABLE ---
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      # Bloqueante a proposito: un PR que introduzca una vulnerabilidad high o
+      # critical en dependencias de PRODUCCION no debe poder mergearse. Snyk no
+      # escanea devDependencies por omision, que es justo el alcance que importa
+      # para el riesgo en runtime.
+      #
+      # --exclude=.worktrees: sin el, los git worktrees bajo .worktrees/ hacen
+      # que se escanee el mismo package.json varias veces y el conteo se
+      # multiplique. En CI no existen, pero se deja para que el comando sea
+      # identico al que se corre en local.
+      #
+      # Si algo queda sin version que lo corrija, va en .snyk con expiracion y
+      # justificacion — nunca bajando el umbral de este paso.
+      - name: Run Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        # `pipefail` para que el `tee` no se trague el codigo de salida de snyk
+        # (sin el, el paso pasaria siempre). La salida se guarda para que la
+        # issue del paso siguiente diga QUE paquete esta afectado, y no solo
+        # "algo fallo, ve a buscar".
+        run: |
+          set -o pipefail
+          snyk test --all-projects --detection-depth=4 --severity-threshold=high --exclude=.worktrees \
+            | tee snyk-output.txt
+
+      # Sin esto, un escaneo programado que falla es solo una marca roja en la
+      # pestana Actions: no hay PR que bloquear, y GitHub unicamente avisa por
+      # correo a quien haya tocado el `cron` por ultima vez — un solo
+      # destinatario, y sujeto a su configuracion personal de notificaciones.
+      # Una issue es visible para el equipo, se asigna y se cierra.
+      #
+      # Solo corre en el run programado: en un PR el check rojo ya es visible y
+      # abrir una issue por cada push seria ruido.
+      - name: Abrir issue si el escaneo programado encuentra algo
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE='Snyk: vulnerabilidad high/critical en dependencias de producción'
+
+          # El detalle se trunca: el cuerpo de una issue admite ~65k caracteres
+          # y la salida de snyk puede ser larga si hay muchas rutas afectadas.
+          DETALLE=$(head -c 30000 snyk-output.txt 2>/dev/null || echo '(sin salida capturada)')
+
+          # Se busca por titulo exacto en vez de por etiqueta para no depender
+          # de que la etiqueta exista en el repo.
+          EXISTENTE=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+
+          if [ -n "$EXISTENTE" ]; then
+            # Ya hay una abierta: se comenta en vez de acumular una issue nueva
+            # cada semana.
+            gh issue comment "$EXISTENTE" --body "$(printf 'El escaneo programado volvió a fallar.\n\nRun: %s\n\n```\n%s\n```\n' "$RUN_URL" "$DETALLE")"
+          else
+            gh issue create --title "$TITLE" --body "$(printf 'El escaneo semanal de Snyk encontró una vulnerabilidad **high** o **critical** en dependencias de producción.\n\nRun: %s\n\nPara reproducirlo en local:\n\n```bash\nsnyk test --all-projects --detection-depth=4 --severity-threshold=high --exclude=.worktrees\n```\n\nSi no hay versión que lo corrija, va en `.snyk` con expiración y justificación — nunca bajando el umbral del workflow.\n\n<details><summary>Salida del escaneo</summary>\n\n```\n%s\n```\n\n</details>\n' "$RUN_URL" "$DETALLE")"
+          fi

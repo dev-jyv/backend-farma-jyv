@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "skills": {
+    "bambu-e2e-test-matrix": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-e2e-test-matrix/SKILL.md",
+      "computedHash": "cce2e03e948fcb1c650908f2086bc1bc410bf91d12cac13da01ab6be36c9466c"
+    },
+    "bambu-git-flow": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-git-flow/SKILL.md",
+      "computedHash": "6296498769ce1840b4770f0ee077ba3b11e3053ee156e7b8dd667f63886587c3"
+    },
+    "bambu-nest-api-guide": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-nest-api-guide/SKILL.md",
+      "computedHash": "c64da19b631ccd8ad800ee47cb754b4e30ca6635dacc1280f8290107486342e8"
+    },
+    "bambu-nest-rules": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-nest-rules/SKILL.md",
+      "computedHash": "49596881492d0e7091f9c0f6e3c48fc46cfa187cffa8515e0f2f91528dbddf8f"
+    },
+    "bambu-nest-test": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-nest-test/SKILL.md",
+      "computedHash": "2a4469cba2b671387dcdaca0469b9aaba2ea073cf5eb55268279067587fb5549"
+    },
+    "bambu-playwright-qa-e2e": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-playwright-qa-e2e/SKILL.md",
+      "computedHash": "c9904eae66fd079046b74e3fb0f8db12556b9a3e671f623fbbc306cac9da090f"
+    },
+    "bambu-readme-generator": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-readme-generator/SKILL.md",
+      "computedHash": "3013a27fd71e09fcc5fdf5a2f37747895576fa0ca84665b9cf75f0916088f31b"
+    },
+    "bambu-security-setup": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-security-setup/SKILL.md",
+      "computedHash": "9fad4db643f4c79c792b954ce0ad3db78d930b9a9e69f3850574101088925d38"
+    },
+    "bambu-snyk-dependency-hardening": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-snyk-dependency-hardening/SKILL.md",
+      "computedHash": "435a4a383d58686e199c1444e5f5a5e15cfcb499c2245b1ac37acafd6a2829b1"
+    },
+    "bambu-spec-define": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-spec-define/SKILL.md",
+      "computedHash": "1e550a63cc136f05a8dda04d93e195221682c1a932e0b8a0fa570c316b74cdca"
+    },
+    "bambu-spec-implement": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-spec-implement/SKILL.md",
+      "computedHash": "4764605c16f043de9fc7182447204fb8c606a9a0c27b62bc0afbd2d859932986"
+    },
+    "bambu-terraform-aws": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-terraform-aws/SKILL.md",
+      "computedHash": "8d3a9eb6acad03cf30e188d681f7d4495ed74de5d3f9b9732a0a1eb03bfd0a14"
+    },
+    "bambu-worktree": {
+      "source": "Bambu-Developers/skills",
+      "sourceType": "github",
+      "skillPath": "bambu-worktree/SKILL.md",
+      "computedHash": "49c50fb63cee5e4a7287628ada37b266c8905f256353afdd6da682522fc0705c"
+    }
+  }
+}
