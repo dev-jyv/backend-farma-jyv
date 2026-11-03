@@ -1,0 +1,5 @@
+# Cualquier cambio a .snyk (exclusiones de vulnerabilidades) requiere
+# aprobación del equipo de seguridad, para que ignorar un hallazgo de
+# Snyk sea una decisión revisada y no un atajo unilateral para
+# destrabar un PR. Ver .github/workflows/security.yml.
+/.snyk @<AJUSTAR: org>/<AJUSTAR: team-slug>
