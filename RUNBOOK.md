@@ -669,7 +669,7 @@ con los ids reales: **pegarla aquí** al aplicar en producción.
 | falló dailyPromotionsMaintenance | `15354933137577699141` | 1 intento fallido | ops + dueño |
 | falló dailyStatsIntegrityCheck | `9663636852653746300` | 1 intento fallido | ops + dueño |
 | dailyFirestoreBackup sin ejecución exitosa en 26 h | `15249784735070526972` | ningún `succeeded` del respaldo en 26 h (schedule pausado, función borrada) | ops + dueño |
-| falló la copia externa (proyecto de respaldos) | _al aplicar_ | un mensaje `FAILED`/`ABORTED` del job de Storage Transfer | ops + dueño |
+| falló la copia externa (proyecto de respaldos) | `89153530632118187` | un mensaje `FAILED`/`ABORTED` del job de Storage Transfer | ops + dueño |
 | Presupuesto mensual `farma-jyv` (facturación, no Monitoring) | `35aacec8-73c0-4a21-8bf2-b0e86b64c637` | gasto del mes ≥ 50 %, 90 % y 100 % de MXN 95 (≈ US$5; la cuenta factura en MXN) | ops + dueño + admins de facturación |
 
 Notas:
