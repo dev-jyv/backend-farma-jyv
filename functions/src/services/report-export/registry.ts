@@ -5,6 +5,7 @@ import { financialDefinitions } from './definitions/financial';
 import { inventoryDefinitions } from './definitions/inventory';
 import { purchasingDefinitions } from './definitions/purchasing';
 import { salesDefinitions } from './definitions/sales';
+import { taxDefinitions } from './definitions/tax-by-product';
 
 /**
  * Única lista de reportes exportables. La ruta valida `:report` contra `REPORT_KEYS`,
@@ -17,6 +18,7 @@ const ALL: ReportDefinition[] = [
     ...complianceDefinitions,
     ...clinicDefinitions,
     ...purchasingDefinitions,
+    ...taxDefinitions,
 ];
 
 export const REPORT_REGISTRY: ReadonlyMap<string, ReportDefinition> = new Map(

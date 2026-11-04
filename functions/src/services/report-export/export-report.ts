@@ -29,9 +29,10 @@ export interface ExportedReport {
 
 /**
  * Reportes que abre `reportDownloads:read` sin `dashboard:read` (SPEC 45): ventas
- * de farmacia, ventas de consultorio y compras. Es lo único que ve el contador.
+ * de farmacia, ventas de consultorio, compras y el IVA por producto. Es lo único
+ * que ve el contador; el IVA por producto no expone costo ni utilidad.
  */
-export const REPORT_DOWNLOAD_KEYS: readonly string[] = ['ventas', 'facturas'];
+export const REPORT_DOWNLOAD_KEYS: readonly string[] = ['ventas', 'facturas', 'iva-por-producto'];
 
 /** `scope` de `ventas` que abre `reportDownloads`: nunca `financial` (el agregado). */
 const REPORT_DOWNLOAD_SALES_SCOPES: readonly string[] = ['pharmacy', 'clinic'];
@@ -48,8 +49,9 @@ export interface ExportAccess {
 /**
  * Qué reportes puede sacar cada quien. Con `dashboard:read` (o admin), todos,
  * sujetos al `authorize` de cada reporte. Sin él —el contador, o un rol
- * personalizado con `reportDownloads`— solo `ventas` de farmacia o consultorio y
- * `facturas`; `ventas` sin `scope` cae en `financial` y también se rechaza.
+ * personalizado con `reportDownloads`— solo `ventas` de farmacia o consultorio,
+ * `facturas` e `iva-por-producto`; `ventas` sin `scope` cae en `financial` y
+ * también se rechaza.
  *
  * Vive aquí y no en el controller para que `api` y `reportsPdf`, que comparten
  * `exportReport`, no puedan divergir. El guard de la ruta ya exigió una de las
@@ -161,16 +163,17 @@ export interface ReportPreview {
     rows: ReportRow[];
     /** Suma de cada columna numérica sobre **todas** las filas, no solo las mostradas. */
     totals: Record<string, number>;
-    /** `true` cuando el periodo tiene más de `REPORT_PREVIEW_MAX_ROWS` filas. */
+    /** `true` cuando el periodo tiene más filas que el tope de la vista previa. */
     truncated: boolean;
     /** Filas del periodo completo; `rows.length` se queda en el tope. */
     rowCount: number;
 }
 
 export const buildReportPreview = (
-    definition: Pick<ReportDefinition, 'columns'>,
+    definition: Pick<ReportDefinition, 'columns' | 'previewMaxRows'>,
     rows: readonly ReportRow[],
 ): ReportPreview => {
+    const maxRows = definition.previewMaxRows ?? REPORT_PREVIEW_MAX_ROWS;
     const totals: Record<string, number> = {};
     for (const column of definition.columns) {
         if (SUMMABLE_TYPES.includes(column.type)) {
@@ -183,9 +186,9 @@ export const buildReportPreview = (
             label: column.header,
             type: column.type,
         })),
-        rows: rows.slice(0, REPORT_PREVIEW_MAX_ROWS),
+        rows: rows.slice(0, maxRows),
         totals,
-        truncated: rows.length > REPORT_PREVIEW_MAX_ROWS,
+        truncated: rows.length > maxRows,
         rowCount: rows.length,
     };
 };

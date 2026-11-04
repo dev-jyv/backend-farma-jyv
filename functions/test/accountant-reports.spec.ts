@@ -136,6 +136,7 @@ const PERMITIDOS = [
     `ventas?scope=pharmacy&month=${MES}`,
     `ventas?scope=clinic&month=${MES}`,
     `facturas?month=${MES}`,
+    `iva-por-producto?month=${MES}`,
 ];
 
 describe('rol de sistema accountant', () => {
