@@ -60,6 +60,11 @@ export interface ReportDefinition {
     columns: ReportColumn[];
     /** Verificación adicional a `dashboard:read`; lanza `AppError` si no procede. */
     authorize?: (context: ExportContext) => void;
+    /**
+     * Tope de filas de la vista previa cuando el general (`REPORT_PREVIEW_MAX_ROWS`)
+     * se queda corto: un reporte por producto que el panel deja buscar.
+     */
+    previewMaxRows?: number;
     load: (context: ExportContext) => Promise<ReportData>;
 }
 
