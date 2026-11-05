@@ -14,7 +14,9 @@ import { getPreviousMonth } from './sales-reports.service';
 
 /**
  * Correo mensual del contador (SPEC 45): el día 1, las ventas de farmacia, las
- * ventas de consultorio y las compras del mes anterior, cada una en PDF y XLSX.
+ * ventas de consultorio y las compras del mes anterior, cada una en PDF y XLSX,
+ * más el IVA por producto solo en XLSX (es para capturar la declaración, y su
+ * PDF de un renglón por producto sería largo y lanzaría Chromium otra vez).
  *
  * Este módulo arrastra Resend, React Email y Chromium: **solo se importa con
  * `await import()`** desde la función programada y desde el disparo manual. Un
@@ -26,7 +28,7 @@ import { getPreviousMonth } from './sales-reports.service';
  * copias, para que nadie vea a quién más le llega.
  */
 
-const FORMATS: readonly ExportFormat[] = ['pdf', 'xlsx'];
+const PDF_AND_XLSX: readonly ExportFormat[] = ['pdf', 'xlsx'];
 
 /** Quien "genera" los archivos del correo: no hay usuario detrás. */
 const GENERATED_BY = 'Sistema';
@@ -37,6 +39,11 @@ interface ReportSpec {
     /** Nombre del archivo sin periodo ni extensión. */
     baseName: string;
     label: string;
+    formats: readonly ExportFormat[];
+    /** Columna cuyo total va al cuerpo del correo. */
+    amountKey: string;
+    /** Texto bajo el renglón del cuerpo; sin él, el conteo de operaciones. */
+    detail?: (count: number) => string;
 }
 
 const REPORTS: readonly ReportSpec[] = [
@@ -45,14 +52,33 @@ const REPORTS: readonly ReportSpec[] = [
         scope: 'pharmacy',
         baseName: 'ventas-farmacia',
         label: 'Ventas de farmacia',
+        formats: PDF_AND_XLSX,
+        amountKey: 'amount',
     },
     {
         report: 'ventas',
         scope: 'clinic',
         baseName: 'ventas-consultorio',
         label: 'Ventas de consultorio',
+        formats: PDF_AND_XLSX,
+        amountKey: 'amount',
     },
-    { report: 'facturas', baseName: 'compras', label: 'Compras (facturas de proveedores)' },
+    {
+        report: 'facturas',
+        baseName: 'compras',
+        label: 'Compras (facturas de proveedores)',
+        formats: PDF_AND_XLSX,
+        amountKey: 'total',
+    },
+    {
+        report: 'iva-por-producto',
+        baseName: 'iva-por-producto',
+        label: 'IVA por producto',
+        formats: ['xlsx'],
+        // El importe del renglón es el IVA trasladado, no lo cobrado.
+        amountKey: 'iva',
+        detail: (count) => `IVA trasladado · ${count === 1 ? '1 concepto' : `${count} conceptos`}`,
+    },
 ];
 
 export interface AccountantReportResult {
@@ -111,24 +137,24 @@ export const sendAccountantMonthlyReport = async (
     const summary: AccountantReportSummary[] = [];
     for (const spec of REPORTS) {
         // Como admin por slug: el sistema genera para quien ya tiene el área, y
-        // los tres reportes son justo los que `reportDownloads` abre.
+        // los cuatro reportes son justo los que `reportDownloads` abre.
         const { files, preview } = await exportReportBundle({
             report: spec.report,
-            formats: FORMATS,
+            formats: spec.formats,
             query: { month: monthKey, ...(spec.scope ? { scope: spec.scope } : {}) },
             generatedBy: GENERATED_BY,
             roleSlug: 'admin',
         });
         files.forEach((file, index) => {
-            const filename = `${spec.baseName}-${monthKey}.${FORMATS[index]}`;
+            const filename = `${spec.baseName}-${monthKey}.${spec.formats[index]}`;
             attachments.push({ filename, content: file.body });
             listed.push({ filename, label: spec.label });
         });
-        const amountKey = spec.report === 'facturas' ? 'total' : 'amount';
         summary.push({
             label: spec.label,
             count: preview.rowCount,
-            amount: preview.totals[amountKey] ?? 0,
+            amount: preview.totals[spec.amountKey] ?? 0,
+            ...(spec.detail ? { detail: spec.detail(preview.rowCount) } : {}),
         });
     }
 
@@ -140,7 +166,7 @@ export const sendAccountantMonthlyReport = async (
         try {
             await sendReportEmail({
                 to: [recipient.email],
-                subject: `Ventas y compras — ${periodLabel}`,
+                subject: `Ventas, compras e IVA — ${periodLabel}`,
                 react: AccountantReportEmail({
                     recipientName: recipient.displayName,
                     periodLabel,

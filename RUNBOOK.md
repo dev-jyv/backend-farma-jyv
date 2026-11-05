@@ -1252,7 +1252,7 @@ sobre `posDiagnostics.receivedAt`.
 Rol de sistema `accountant` («Contador») con solo `reportDownloads:read`: ve y
 descarga ventas de farmacia, ventas de consultorio y compras desde el panel
 (`/reportes-contables`), y quien tenga `monthlyReportEmail` recibe el día 1 a las
-00:40 un correo con los 6 archivos del mes anterior (PDF y XLSX de cada uno).
+00:40 un correo con los 7 archivos del mes anterior (PDF y XLSX de ventas de farmacia, ventas de consultorio y compras; XLSX del IVA por producto).
 Sin índices nuevos.
 
 1. **Funciones:** `npm run deploy:dev` primero. Crea `monthlyAccountantReport`
@@ -1275,7 +1275,7 @@ Sin índices nuevos.
    correo con ventas y compras del mes».
 6. **Prueba en dev:** con un usuario contador con el correo activado,
    `curl -X POST -H "x-migrate-secret: $MIGRATE_SECRET" "https://<api-dev>/v1/internal/reports/accountant?month=AAAA-MM"`
-   → `{ data: { month, recipients, sent, failed } }` y un correo con 6 adjuntos.
+   → `{ data: { month, recipients, sent, failed } }` y un correo con 7 adjuntos.
    El disparo manual **reenvía a todos** los destinatarios.
 
 Diagnóstico: `firebase functions:log --only monthlyAccountantReport`; un envío

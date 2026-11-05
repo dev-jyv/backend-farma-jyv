@@ -67,10 +67,13 @@ beforeEach(async () => {
             rows: [],
             totals: (input.report === 'facturas'
                 ? { total: 800 }
-                : { amount: input.query.scope === 'pharmacy' ? 1500.5 : 300 }) as
+                : input.report === 'iva-por-producto'
+                    ? { base16: 1000, total: 1460.5, iva: 160 }
+                    : { amount: input.query.scope === 'pharmacy' ? 1500.5 : 300 }) as
                 Record<string, number>,
             truncated: false,
-            rowCount: input.report === 'facturas' ? 4 : 10,
+            rowCount: ({ facturas: 4, 'iva-por-producto': 37 } as Record<string, number>)[
+                input.report] ?? 10,
         },
     }));
 });
@@ -130,7 +133,7 @@ describe('sendAccountantMonthlyReport', () => {
         expect(mockSend).not.toHaveBeenCalled();
     });
 
-    it('un correo por destinatario con 6 adjuntos, ignorando inactivos y roles sin el área',
+    it('un correo por destinatario con 7 adjuntos, ignorando inactivos y roles sin el área',
         async () => {
             const contador = await usuario(contadorId, {
                 monthlyReportEmail: true,
@@ -153,7 +156,7 @@ describe('sendAccountantMonthlyReport', () => {
             for (const [payload] of mockSend.mock.calls) {
                 // Nunca la lista fija del negocio ni copias entre destinatarios.
                 expect(payload.to).toHaveLength(1);
-                expect(payload.subject).toBe('Ventas y compras — octubre de 2026');
+                expect(payload.subject).toBe('Ventas, compras e IVA — octubre de 2026');
                 expect(payload.attachments.map((a: { filename: string }) => a.filename))
                     .toEqual([
                         'ventas-farmacia-2026-10.pdf',
@@ -162,12 +165,14 @@ describe('sendAccountantMonthlyReport', () => {
                         'ventas-consultorio-2026-10.xlsx',
                         'compras-2026-10.pdf',
                         'compras-2026-10.xlsx',
+                        // El IVA por producto va solo en Excel: no lanza Chromium.
+                        'iva-por-producto-2026-10.xlsx',
                     ]);
                 expect(payload.attachments[0].content.toString()).toBe('ventas-pharmacy-pdf');
             }
 
             // Los archivos se generan una vez, no una por destinatario.
-            expect(bundle).toHaveBeenCalledTimes(3);
+            expect(bundle).toHaveBeenCalledTimes(4);
             expect(bundle.mock.calls.map(([input]) => ({
                 report: input.report,
                 query: input.query,
@@ -195,6 +200,13 @@ describe('sendAccountantMonthlyReport', () => {
                     roleSlug: 'admin',
                     generatedBy: 'Sistema',
                     formats: ['pdf', 'xlsx'],
+                },
+                {
+                    report: 'iva-por-producto',
+                    query: { month: '2026-10' },
+                    roleSlug: 'admin',
+                    generatedBy: 'Sistema',
+                    formats: ['xlsx'],
                 },
             ]);
         });
@@ -265,6 +277,12 @@ describe('AccountantReportEmail', () => {
             summary={[
                 { label: 'Ventas de farmacia', count: 10, amount: 1500.5 },
                 { label: 'Compras (facturas de proveedores)', count: 1, amount: 800 },
+                {
+                    label: 'IVA por producto',
+                    count: 37,
+                    amount: 160,
+                    detail: 'IVA trasladado · 37 conceptos',
+                },
             ]}
             attachments={[
                 { filename: 'ventas-farmacia-2026-10.pdf', label: 'Ventas de farmacia' },
@@ -281,5 +299,7 @@ describe('AccountantReportEmail', () => {
         expect(html).toContain('1 operación');
         expect(html).toContain('ventas-farmacia-2026-10.xlsx');
         expect(html).toContain('Excel');
+        expect(html).toContain('IVA trasladado · 37 conceptos');
+        expect(html).not.toContain('37 operaciones');
     });
 });
