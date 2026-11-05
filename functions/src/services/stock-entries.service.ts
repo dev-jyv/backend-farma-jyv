@@ -1,9 +1,15 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { ControlledGroup, InventoryEntryWithDetails, InvoiceWithDetails, Product } from '../types';
+import {
+    ControlledGroup,
+    InventoryEntry,
+    InventoryEntryWithDetails,
+    InvoiceWithDetails,
+    Product,
+} from '../types';
 import { db } from '../utils/firestore';
 import { AppError, conflict, notFound } from '../utils/errors';
 import { AuditActor } from './audit.service';
-import * as batchesRepo from '../repositories/batches.repository';
+import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as productsRepo from '../repositories/products.repository';
 import * as invoicesService from '../services/invoices.service';
@@ -96,24 +102,49 @@ export const createStockEntry = async (input: {
         if (previo.exists) {
             const entryId = previo.data()?.entryId as string | undefined;
             if (!entryId) {
-                // Se reservó la llave y el intento no terminó. Solo se retoma si ya
-                // no puede seguir en curso y ningún lote de ese número existe: con
-                // la duda, duplicar existencias es peor que pedir que alguien revise.
-                leftoverProduct = input.productId
+                // Se reservó la llave y el intento no terminó. Una reserva reciente
+                // puede seguir en curso: no se toca.
+                const reservedAt = previo.data()?.createdAt as Timestamp | undefined;
+                if (!reservedAt || Date.now() - reservedAt.toMillis() <= STALE_RESERVATION_MS) {
+                    throw halfRecorded();
+                }
+
+                // Solo cuenta como sobrante de este intento un producto dado de alta
+                // **después** de reservar la llave. Uno anterior con ese SKU es
+                // otro producto, y `createProduct` debe decir que el SKU choca.
+                const bySku = input.productId
                     ? null
                     : await productsRepo.findProductBySku(input.product!.sku);
+                leftoverProduct = bySku &&
+                    bySku.createdAt.toMillis() >= reservedAt.toMillis()
+                    ? bySku
+                    : null;
                 const productId = input.productId ?? leftoverProduct?.id;
-                const createdAt = previo.data()?.createdAt as Timestamp | undefined;
-                const isStale = createdAt !== undefined &&
-                    Date.now() - createdAt.toMillis() > STALE_RESERVATION_MS;
-                const lotExists = productId !== undefined && (
-                    await batchesRepo.listBatchesByProduct(productId)
-                ).some((batch) => batch.lotNumber === input.lotNumber.trim());
-                if (!isStale || lotExists) {
-                    throw conflict(
-                        'Esta entrada quedó a medio registrar en un intento anterior. ' +
-                            'Revisa el lote en inventario antes de volver a capturarla.',
+
+                // Lo que importa es si **esta** partida ya está en el servidor, no
+                // si el lote existe: el mismo lote llega en otras facturas, y la
+                // caja pide recapturar a mano lo que se atora. Se busca en esta
+                // factura, desde la reserva.
+                const applied = productId === undefined
+                    ? { match: null, ambiguous: false }
+                    : await findAppliedEntry({
+                        invoiceId: input.invoiceId,
+                        productId,
+                        lotNumber: input.lotNumber,
+                        quantity: input.quantity,
+                        since: reservedAt,
+                    });
+                if (applied.ambiguous) {
+                    throw halfRecorded();
+                }
+                if (applied.match) {
+                    // Ya se aplicó (por este intento o recapturada a mano): se cierra
+                    // la llave con esa entrada y se devuelve, sin sumar existencias.
+                    await idempotencyRef.update(
+                        { entryId: applied.match.id },
+                        { lastUpdateTime: previo.updateTime! },
                     );
+                    return replayEntry(applied.match.id);
                 }
                 // La precondición deja pasar a uno solo de dos reintentos simultáneos.
                 await idempotencyRef.update(
@@ -121,13 +152,7 @@ export const createStockEntry = async (input: {
                     { lastUpdateTime: previo.updateTime! },
                 );
             } else {
-                const replay = await inventoryService.getEntry(entryId);
-                const producto = await productsService.getProduct(replay.items[0]!.productId);
-                return {
-                    entry: replay,
-                    product: producto as unknown as Product,
-                    stock: producto.stock,
-                };
+                return replayEntry(entryId);
             }
         } else {
             // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
@@ -179,6 +204,43 @@ export const createStockEntry = async (input: {
     const stock = await productsService.getProduct(product.id);
 
     return { entry, product, stock: stock.stock };
+};
+
+const halfRecorded = () => conflict(
+    'Esta entrada quedó a medio registrar en un intento anterior. ' +
+        'Revisa el lote en inventario antes de volver a capturarla.',
+);
+
+const replayEntry = async (entryId: string): Promise<StockEntryResult> => {
+    const entry = await inventoryService.getEntry(entryId);
+    const product = await productsService.getProduct(entry.items[0]!.productId);
+    return { entry, product: product as unknown as Product, stock: product.stock };
+};
+
+/**
+ * Busca, en la factura y desde la reserva, una entrada con la misma partida
+ * (producto, lote y cantidad). Si hay partidas de ese producto y lote pero con
+ * otra cantidad, no se sabe si es esta corregida o una distinta: `ambiguous`.
+ */
+const findAppliedEntry = async (params: {
+    invoiceId: string;
+    productId: string;
+    lotNumber: string;
+    quantity: number;
+    since: Timestamp;
+}): Promise<{ match: InventoryEntry | null; ambiguous: boolean }> => {
+    const lot = params.lotNumber.trim();
+    const entries = (await entriesRepo.listInventoryEntries({ invoiceId: params.invoiceId }))
+        .filter((entry) => entry.createdAt.toMillis() >= params.since.toMillis());
+    const sameLot = entries.filter((entry) => entry.items.some(
+        (item) => item.productId === params.productId && item.lotNumber === lot,
+    ));
+    const match = sameLot.find((entry) => entry.items.some(
+        (item) => item.productId === params.productId &&
+            item.lotNumber === lot &&
+            item.quantity === params.quantity,
+    )) ?? null;
+    return { match, ambiguous: !match && sameLot.length > 0 };
 };
 
 /**

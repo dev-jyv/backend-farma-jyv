@@ -189,14 +189,75 @@ describe('createStockEntry: llave reservada sin entrada', () => {
         expect((await productsService.getProduct(product.id)).stock).toBe(5);
     });
 
-    it('reserva vieja con ese lote en el servidor: no duplica y pide revisar', async () => {
-        const { entrada, product } = await entradaCon('LOTE-APLICADO');
-        await stockEntriesService.createStockEntry({ ...entrada, idempotencyKey: unique('otra') });
+    it('reserva vieja y la partida ya recapturada en esa factura: la devuelve sin duplicar',
+        async () => {
+            const { entrada, product } = await entradaCon('LOTE-APLICADO');
+            await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+            const aMano = await stockEntriesService.createStockEntry({
+                ...entrada,
+                idempotencyKey: unique('otra'),
+            });
+
+            const reintento = await stockEntriesService.createStockEntry(entrada);
+            const otraVez = await stockEntriesService.createStockEntry(entrada);
+
+            expect(reintento.entry.id).toBe(aMano.entry.id);
+            expect(otraVez.entry.id).toBe(aMano.entry.id);
+            expect((await productsService.getProduct(product.id)).stock).toBe(5);
+        });
+
+    it('reserva vieja y el mismo lote en otra factura: no es esta partida, se registra',
+        async () => {
+            const { entrada, product } = await entradaCon('LOTE-REPETIDO');
+            const { invoice: otraFactura } = await fixtures();
+            await stockEntriesService.createStockEntry({
+                ...entrada,
+                invoiceId: otraFactura.id,
+                idempotencyKey: unique('otra'),
+            });
+            await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+
+            await stockEntriesService.createStockEntry(entrada);
+
+            expect((await productsService.getProduct(product.id)).stock).toBe(10);
+        });
+
+    it('reserva vieja y ese lote en la factura con otra cantidad: pide revisar', async () => {
+        const { entrada, product } = await entradaCon('LOTE-DUDOSO');
         await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+        await stockEntriesService.createStockEntry({
+            ...entrada,
+            quantity: 3,
+            idempotencyKey: unique('otra'),
+        });
 
         await expect(stockEntriesService.createStockEntry(entrada))
             .rejects.toThrow(MEDIO_REGISTRAR);
-        expect((await productsService.getProduct(product.id)).stock).toBe(5);
+        expect((await productsService.getProduct(product.id)).stock).toBe(3);
+    });
+
+    it('reserva vieja y un producto con ese SKU anterior a ella: no lo adopta', async () => {
+        const { entrada, product } = await entradaCon('LOTE-SKU-AJENO');
+        const { productId: _sinProductId, ...sinId } = entrada;
+        await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+        await db().collection('products').doc(product.id)
+            .update({ createdAt: Timestamp.fromDate(new Date(Date.now() - 2 * 60 * 60 * 1000)) });
+
+        await expect(stockEntriesService.createStockEntry({
+            ...sinId,
+            product: {
+                name: unique('Otro'),
+                sku: product.sku,
+                categoryId: product.categoryId,
+                unit: product.unit,
+                salePrice: product.salePrice,
+                minStock: product.minStock,
+                hasIva: product.hasIva,
+                hasIvaZero: product.hasIvaZero,
+                hasIeps: product.hasIeps,
+            } as never,
+        })).rejects.not.toThrow(MEDIO_REGISTRAR);
+        expect((await productsService.getProduct(product.id)).stock).toBe(0);
     });
 
     it('reserva reciente: puede seguir en curso y no se toca', async () => {
