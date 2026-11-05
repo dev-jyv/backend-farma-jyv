@@ -4,8 +4,10 @@ import * as productsRepo from '../src/repositories/products.repository';
 import * as suppliersRepo from '../src/repositories/suppliers.repository';
 import * as invoicesRepo from '../src/repositories/invoices.repository';
 import * as batchesRepo from '../src/repositories/batches.repository';
+import * as inventoryService from '../src/services/inventory.service';
 import * as productsService from '../src/services/products.service';
 import * as stockEntriesService from '../src/services/stock-entries.service';
+import { db } from '../src/utils/firestore';
 
 const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -109,5 +111,123 @@ describe('createStockEntry: idempotencia', () => {
         await stockEntriesService.createStockEntry({ ...base, idempotencyKey: unique('b') });
 
         expect((await productsService.getProduct(product.id)).stock).toBe(4);
+    });
+});
+
+/**
+ * Regresión: la llave se reserva antes de validar y nadie la liberaba. Cualquier
+ * rechazo normal dejaba la entrada para siempre en 409 "quedó a medio registrar",
+ * con "Reintentar" reenviando la misma llave, aunque no se hubiera aplicado nada.
+ */
+describe('createStockEntry: llave reservada sin entrada', () => {
+    const MEDIO_REGISTRAR = /medio registrar/;
+    const HACE_UNA_HORA = new Date(Date.now() - 60 * 60 * 1000);
+
+    const entradaCon = async (lotNumber: string) => {
+        const { product, invoice } = await fixtures();
+        return {
+            product,
+            entrada: {
+                invoiceId: invoice.id,
+                lotNumber,
+                expiryDate: '2030-01-31',
+                quantity: 5,
+                productId: product.id,
+                userId: 'uid-cajero',
+                roleSlug: 'cashier',
+                idempotencyKey: unique('entrada'),
+            },
+        };
+    };
+
+    const reservar = (key: string, createdAt: Date) => db()
+        .collection('stockEntryIdempotencyKeys')
+        .doc(`uid-cajero:${key}`)
+        .set({ userId: 'uid-cajero', createdAt });
+
+    it('un rechazo de validación libera la llave: el reintento dice el motivo real', async () => {
+        const { entrada } = await entradaCon('LOTE-RECHAZO');
+        const invalida = { ...entrada, quantity: 0 };
+
+        await expect(stockEntriesService.createStockEntry(invalida))
+            .rejects.toThrow('La cantidad debe ser mayor a cero');
+        await expect(stockEntriesService.createStockEntry(invalida))
+            .rejects.toThrow('La cantidad debe ser mayor a cero');
+    });
+
+    it('tras un rechazo, la misma llave registra la entrada una sola vez', async () => {
+        const { entrada, product } = await entradaCon('LOTE-CORREGIDO');
+
+        await expect(stockEntriesService.createStockEntry({ ...entrada, quantity: 0 }))
+            .rejects.toThrow('La cantidad debe ser mayor a cero');
+        await stockEntriesService.createStockEntry(entrada);
+        await stockEntriesService.createStockEntry(entrada);
+
+        expect((await productsService.getProduct(product.id)).stock).toBe(5);
+    });
+
+    it('un error que no es de negocio conserva la reserva: pudo haberse aplicado', async () => {
+        const { entrada } = await entradaCon('LOTE-AMBIGUO');
+        const spy = jest.spyOn(inventoryService, 'recordEntry')
+            .mockRejectedValueOnce(new Error('DEADLINE_EXCEEDED'));
+
+        await expect(stockEntriesService.createStockEntry(entrada))
+            .rejects.toThrow('DEADLINE_EXCEEDED');
+        spy.mockRestore();
+
+        await expect(stockEntriesService.createStockEntry(entrada))
+            .rejects.toThrow(MEDIO_REGISTRAR);
+    });
+
+    it('reserva vieja sin lote en el servidor: nunca se aplicó y se registra', async () => {
+        const { entrada, product } = await entradaCon('LOTE-HUERFANO');
+        await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+
+        await stockEntriesService.createStockEntry(entrada);
+        await stockEntriesService.createStockEntry(entrada);
+
+        expect((await productsService.getProduct(product.id)).stock).toBe(5);
+    });
+
+    it('reserva vieja con ese lote en el servidor: no duplica y pide revisar', async () => {
+        const { entrada, product } = await entradaCon('LOTE-APLICADO');
+        await stockEntriesService.createStockEntry({ ...entrada, idempotencyKey: unique('otra') });
+        await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+
+        await expect(stockEntriesService.createStockEntry(entrada))
+            .rejects.toThrow(MEDIO_REGISTRAR);
+        expect((await productsService.getProduct(product.id)).stock).toBe(5);
+    });
+
+    it('reserva reciente: puede seguir en curso y no se toca', async () => {
+        const { entrada, product } = await entradaCon('LOTE-EN-CURSO');
+        await reservar(entrada.idempotencyKey, new Date());
+
+        await expect(stockEntriesService.createStockEntry(entrada))
+            .rejects.toThrow(MEDIO_REGISTRAR);
+        expect((await productsService.getProduct(product.id)).stock).toBe(0);
+    });
+
+    it('alta que dejó el producto sin lote: lo reutiliza, no choca por SKU', async () => {
+        const { entrada, product } = await entradaCon('LOTE-ALTA');
+        const { productId: _sinProductId, ...sinId } = entrada;
+        await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
+
+        await stockEntriesService.createStockEntry({
+            ...sinId,
+            product: {
+                name: product.name,
+                sku: product.sku,
+                categoryId: product.categoryId,
+                unit: product.unit,
+                salePrice: product.salePrice,
+                minStock: product.minStock,
+                hasIva: product.hasIva,
+                hasIvaZero: product.hasIvaZero,
+                hasIeps: product.hasIeps,
+            } as never,
+        });
+
+        expect((await productsService.getProduct(product.id)).stock).toBe(5);
     });
 });
