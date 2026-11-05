@@ -1,6 +1,9 @@
+import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { EMAIL_SECRETS } from '../config/secrets';
+import { EMAIL_SECRETS, MIGRATE_SECRET } from '../config/secrets';
 import { REPORTS_TIME_ZONE } from '../services/sales-reports.service';
+import { AppError, badRequest } from '../utils/errors';
+import { assertMigrateSecret } from '../utils/migrate-secret';
 import { monitoredJob } from './scheduled-job';
 
 /**
@@ -13,8 +16,7 @@ import { monitoredJob } from './scheduled-job';
  * arranque en frío de `api`.
  *
  * Sin `retryCount`: reintentar volvería a mandar el correo a quienes ya lo
- * recibieron. Si falla, la alerta avisa y se reenvía con
- * `POST /v1/internal/reports/accountant`.
+ * recibieron. Si falla, la alerta avisa y se reenvía con `accountantReportTrigger`.
  */
 export const monthlyAccountantReport = onSchedule(
     {
@@ -36,4 +38,69 @@ export const monthlyAccountantReport = onSchedule(
                 : `Correo del contador (${month}): sin destinatarios`,
         );
     }),
+);
+
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+const firstValue = (value: unknown): string | undefined =>
+    typeof value === 'string' ? value : undefined;
+
+/**
+ * Disparo manual del correo del contador: `POST ?month=YYYY-MM` con
+ * `x-migrate-secret`; sin `month`, el mes anterior como la programada. Reenvía a
+ * **todos** los destinatarios.
+ *
+ * Es una función aparte y no una ruta de `api` porque hace el mismo trabajo que
+ * la programada —tres PDF con Chromium— y en los 512 MiB / 60 s de `api` la
+ * instancia se caía con un `Internal Server Error` sin cuerpo. Mismos 1 GiB y
+ * 300 s; `maxInstances: 1` y `concurrency: 1` para que dos disparos seguidos no
+ * se repartan la memoria ni manden el correo dos veces en paralelo.
+ */
+export const accountantReportTrigger = onRequest(
+    {
+        region: 'us-central1',
+        memory: '1GiB',
+        timeoutSeconds: 300,
+        concurrency: 1,
+        maxInstances: 1,
+        secrets: [...EMAIL_SECRETS, MIGRATE_SECRET],
+    },
+    async (req, res) => {
+        try {
+            if (req.method !== 'POST') {
+                throw new AppError(405, 'METHOD_NOT_ALLOWED', 'Usa POST');
+            }
+            assertMigrateSecret(firstValue(req.get('x-migrate-secret')));
+            const month = firstValue(req.query.month);
+            if (month !== undefined && !MONTH_PATTERN.test(month)) {
+                throw badRequest('El mes debe tener formato YYYY-MM');
+            }
+
+            const { sendAccountantMonthlyReport } = await import(
+                '../services/accountant-report-sender.service'
+            );
+            // `{ month, recipients, sent, failed }`; si algún envío falla, el sender lanza.
+            const result = month
+                ? await sendAccountantMonthlyReport(
+                    Number(month.slice(0, 4)),
+                    Number(month.slice(5, 7)),
+                )
+                : await sendAccountantMonthlyReport();
+            res.status(200).json({ data: result });
+        } catch (error) {
+            if (error instanceof AppError) {
+                res.status(error.statusCode).json({
+                    error: { code: error.code, message: error.message },
+                });
+                return;
+            }
+            console.error('accountantReportTrigger falló', error);
+            res.status(500).json({
+                error: {
+                    code: 'INTERNAL_ERROR',
+                    message: 'No se pudo enviar el correo del contador',
+                },
+            });
+        }
+    },
 );
