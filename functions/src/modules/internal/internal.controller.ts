@@ -1,25 +1,8 @@
 import { Controller, Headers, Post, Query } from '@nestjs/common';
-import { timingSafeEqual } from 'crypto';
-import { getMigrateSecret } from '../../config/env';
 import { runRoleMigration } from '../../services/roles.service';
-import { badRequest, forbidden } from '../../utils/errors';
+import { badRequest } from '../../utils/errors';
+import { assertMigrateSecret } from '../../utils/migrate-secret';
 import { Public } from '../identity/decorators/public.decorator';
-
-const secretMatches = (provided: string, expected: string): boolean => {
-    const providedBuffer = Buffer.from(provided);
-    const expectedBuffer = Buffer.from(expected);
-    if (providedBuffer.length !== expectedBuffer.length) {
-        return false;
-    }
-    return timingSafeEqual(providedBuffer, expectedBuffer);
-};
-
-const assertMigrateSecret = (providedSecret?: string): void => {
-    const secret = getMigrateSecret();
-    if (!secret || !providedSecret || !secretMatches(providedSecret, secret)) {
-        throw forbidden();
-    }
-};
 
 @Controller('internal')
 export class InternalController {
@@ -90,34 +73,5 @@ export class InternalController {
         );
         const result = await sendMonthlySalesReport(period?.year, period?.month);
         return { data: { sent: true, ...result } };
-    }
-
-    /**
-     * Disparo manual del correo del contador (SPEC 45). `month` (`YYYY-MM`) elige
-     * el periodo; sin él, el mes anterior como la función programada. Reenvía a
-     * **todos** los destinatarios. `force` se acepta por simetría con las alertas
-     * y no cambia nada: este correo no tiene un "sin novedades" que saltarse —sin
-     * destinatarios no se envía, haya o no `force`.
-     */
-    @Public()
-    @Post('reports/accountant')
-    async triggerAccountantReport(
-        @Headers('x-migrate-secret') providedSecret?: string,
-        @Query('month') month?: string,
-    ) {
-        assertMigrateSecret(providedSecret);
-        if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-            throw badRequest('El mes debe tener formato YYYY-MM');
-        }
-
-        const period = month
-            ? { year: Number(month.slice(0, 4)), month: Number(month.slice(5, 7)) }
-            : undefined;
-        const { sendAccountantMonthlyReport } = await import(
-            '../../services/accountant-report-sender.service'
-        );
-        const result = await sendAccountantMonthlyReport(period?.year, period?.month);
-        // `{ month, recipients, sent, failed }`; si algún envío falla, el sender lanza.
-        return { data: result };
     }
 }

@@ -1274,9 +1274,11 @@ Sin índices nuevos.
 5. **Panel:** crear el usuario con rol Contador y activar «Recibir el día 1 el
    correo con ventas y compras del mes».
 6. **Prueba en dev:** con un usuario contador con el correo activado,
-   `curl -X POST -H "x-migrate-secret: $MIGRATE_SECRET" "https://<api-dev>/v1/internal/reports/accountant?month=AAAA-MM"`
+   `curl -X POST -H "x-migrate-secret: $MIGRATE_SECRET" "$(gcloud functions describe accountantReportTrigger --gen2 --region us-central1 --project <proyecto> --format 'value(serviceConfig.uri)')?month=AAAA-MM"`
    → `{ data: { month, recipients, sent, failed } }` y un correo con 7 adjuntos.
-   El disparo manual **reenvía a todos** los destinatarios.
+   El disparo manual **reenvía a todos** los destinatarios. Es la función
+   `accountantReportTrigger` (1 GiB, 300 s), no una ruta de `api`: en los
+   512 MiB / 60 s de `api` los tres PDF tiraban la instancia.
 
 Diagnóstico: `firebase functions:log --only monthlyAccountantReport`; un envío
 fallido deja `Correo del contador AAAA-MM: no se pudo enviar a <correo>` y el

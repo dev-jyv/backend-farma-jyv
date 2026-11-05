@@ -269,7 +269,6 @@ describe('cobertura de autorización de las rutas', () => {
         expect(publicos.sort()).toEqual([
             'HealthController.getHealth',
             'InternalController.migrateRoles',
-            'InternalController.triggerAccountantReport',
             'InternalController.triggerDailyReport',
             'InternalController.triggerInventoryAlerts',
             'InternalController.triggerMonthlyReport',
