@@ -1,8 +1,11 @@
+import { Timestamp } from 'firebase-admin/firestore';
 import { ControlledGroup, InventoryEntryWithDetails, InvoiceWithDetails, Product } from '../types';
 import { db } from '../utils/firestore';
-import { conflict, notFound } from '../utils/errors';
+import { AppError, conflict, notFound } from '../utils/errors';
 import { AuditActor } from './audit.service';
+import * as batchesRepo from '../repositories/batches.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
+import * as productsRepo from '../repositories/products.repository';
 import * as invoicesService from '../services/invoices.service';
 import * as inventoryService from './inventory.service';
 import * as productsService from './products.service';
@@ -53,6 +56,12 @@ const IDEMPOTENCY_COLLECTION = 'stockEntryIdempotencyKeys';
 
 const buildIdempotencyDocId = (userId: string, key: string): string => `${userId}:${key}`;
 
+/**
+ * Antigüedad desde la que una reserva sin `entryId` ya no puede seguir en curso:
+ * holgadamente más que el tope de una petición de la API (120 s).
+ */
+const STALE_RESERVATION_MS = 10 * 60 * 1000;
+
 export const createStockEntry = async (input: {
     invoiceId: string;
     lotNumber: string;
@@ -79,61 +88,95 @@ export const createStockEntry = async (input: {
             .doc(buildIdempotencyDocId(input.userId, input.idempotencyKey))
         : null;
 
+    // Producto que dejó un intento que murió entre el alta y la entrada.
+    let leftoverProduct: Product | null = null;
+
     if (idempotencyRef) {
         const previo = await idempotencyRef.get();
         if (previo.exists) {
             const entryId = previo.data()?.entryId as string | undefined;
             if (!entryId) {
-                // Se reservó la llave y el proceso murió antes de terminar. No se
-                // reintenta solo: la entrada pudo quedar aplicada a medias y
-                // duplicarla es peor que pedir que alguien la revise.
-                throw conflict(
-                    'Esta entrada quedó a medio registrar en un intento anterior. ' +
-                        'Revisa el lote en inventario antes de volver a capturarla.',
+                // Se reservó la llave y el intento no terminó. Solo se retoma si ya
+                // no puede seguir en curso y ningún lote de ese número existe: con
+                // la duda, duplicar existencias es peor que pedir que alguien revise.
+                leftoverProduct = input.productId
+                    ? null
+                    : await productsRepo.findProductBySku(input.product!.sku);
+                const productId = input.productId ?? leftoverProduct?.id;
+                const createdAt = previo.data()?.createdAt as Timestamp | undefined;
+                const isStale = createdAt !== undefined &&
+                    Date.now() - createdAt.toMillis() > STALE_RESERVATION_MS;
+                const lotExists = productId !== undefined && (
+                    await batchesRepo.listBatchesByProduct(productId)
+                ).some((batch) => batch.lotNumber === input.lotNumber.trim());
+                if (!isStale || lotExists) {
+                    throw conflict(
+                        'Esta entrada quedó a medio registrar en un intento anterior. ' +
+                            'Revisa el lote en inventario antes de volver a capturarla.',
+                    );
+                }
+                // La precondición deja pasar a uno solo de dos reintentos simultáneos.
+                await idempotencyRef.update(
+                    { createdAt: new Date() },
+                    { lastUpdateTime: previo.updateTime! },
                 );
+            } else {
+                const replay = await inventoryService.getEntry(entryId);
+                const producto = await productsService.getProduct(replay.items[0]!.productId);
+                return {
+                    entry: replay,
+                    product: producto as unknown as Product,
+                    stock: producto.stock,
+                };
             }
-            const replay = await inventoryService.getEntry(entryId);
-            const producto = await productsService.getProduct(replay.items[0]!.productId);
-            return {
-                entry: replay,
-                product: producto as unknown as Product,
-                stock: producto.stock,
-            };
+        } else {
+            // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
+            // paralelo no pueden aplicar la misma entrada dos veces.
+            await idempotencyRef.create({ userId: input.userId, createdAt: new Date() });
         }
-        // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
-        // paralelo no pueden aplicar la misma entrada dos veces.
-        await idempotencyRef.create({ userId: input.userId, createdAt: new Date() });
     }
 
     const actor: AuditActor = { userId: input.userId, roleSlug: input.roleSlug ?? null };
-    const product = input.productId
-        ? await resolveExistingProduct(input.productId, input.productUpdate, actor)
-        // `createProduct` recibe el actor dentro del mismo objeto de entrada.
-        : await productsService.createProduct({ ...input.product!, actor });
+    let product: Product;
+    let entry: InventoryEntryWithDetails;
+    try {
+        product = input.productId
+            ? await resolveExistingProduct(input.productId, input.productUpdate, actor)
+            // `createProduct` recibe el actor dentro del mismo objeto de entrada.
+            : leftoverProduct ?? await productsService.createProduct({ ...input.product!, actor });
 
-    const entry = await inventoryService.recordEntry({
-        invoiceId: input.invoiceId,
-        items: [
-            {
-                productId: product.id,
-                lotNumber: input.lotNumber,
-                expiryDate: input.expiryDate,
-                quantity: input.quantity,
-                costPrice: input.costPrice,
-            },
-        ],
-        userId: input.userId,
-    });
+        entry = await inventoryService.recordEntry({
+            invoiceId: input.invoiceId,
+            items: [
+                {
+                    productId: product.id,
+                    lotNumber: input.lotNumber,
+                    expiryDate: input.expiryDate,
+                    quantity: input.quantity,
+                    costPrice: input.costPrice,
+                },
+            ],
+            userId: input.userId,
+        });
+    } catch (error) {
+        // Un rechazo de negocio no registró ninguna entrada: se libera la llave para
+        // que el reintento diga el motivo real. Cualquier otro error (p. ej. un
+        // timeout tras el commit) pudo haberla aplicado, así que la reserva se queda.
+        if (idempotencyRef && error instanceof AppError && error.statusCode < 500) {
+            await idempotencyRef.delete().catch(() => undefined);
+        }
+        throw error;
+    }
+
+    if (idempotencyRef) {
+        // Cierra la llave en cuanto existe la entrada: de aquí en adelante el
+        // reintento la devuelve en vez de crear otra.
+        await idempotencyRef.set({ entryId: entry.id }, { merge: true });
+    }
 
     // `recordEntry` ya incrementó `totalStock` dentro de su transacción; se relee
     // para devolver la cifra con la que la caja pinta "quedará en N".
     const stock = await productsService.getProduct(product.id);
-
-    if (idempotencyRef) {
-        // Cierra la llave: de aquí en adelante el reintento devuelve esta entrada
-        // en vez de crear otra.
-        await idempotencyRef.set({ entryId: entry.id }, { merge: true });
-    }
 
     return { entry, product, stock: stock.stock };
 };
