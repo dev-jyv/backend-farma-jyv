@@ -19,9 +19,11 @@ import { DataTable, ReportSection, palette, text } from './components/report-ui'
 
 export interface AccountantReportSummary {
     label: string;
-    /** Ventas o facturas del periodo. */
+    /** Ventas, facturas o conceptos del periodo. */
     count: number;
     amount: number;
+    /** Sustituye al conteo de operaciones bajo el renglón (el IVA cuenta conceptos). */
+    detail?: string;
 }
 
 export interface AccountantReportAttachment {
@@ -48,7 +50,9 @@ export const AccountantReportEmail = ({
 }: AccountantReportEmailProps) => (
     <Html lang="es">
         <Head />
-        <Preview>{`Ventas y compras de ${periodLabel}: ${attachments.length} archivos`}</Preview>
+        <Preview>
+            {`Ventas, compras e IVA de ${periodLabel}: ${attachments.length} archivos`}
+        </Preview>
         <Body
             style={{
                 backgroundColor: palette.canvas,
@@ -71,7 +75,8 @@ export const AccountantReportEmail = ({
                 <Text style={text.period}>{periodLabel}</Text>
                 {recipientName ? (
                     <Text style={{ ...text.label, margin: '16px 0 0', fontSize: '13px' }}>
-                        {`Hola, ${recipientName}. Te compartimos las ventas y compras del mes.`}
+                        {`Hola, ${recipientName}. Te compartimos las ventas, compras e IVA `
+                            + 'por producto del mes.'}
                     </Text>
                 ) : null}
 
@@ -80,7 +85,7 @@ export const AccountantReportEmail = ({
                         rows={summary.map((item) => ({
                             key: item.label,
                             label: item.label,
-                            sublabel: countLabel(item.count),
+                            sublabel: item.detail ?? countLabel(item.count),
                             value: formatCurrency(item.amount),
                         }))}
                     />
@@ -100,8 +105,11 @@ export const AccountantReportEmail = ({
                 <Hr style={{ borderColor: palette.line, margin: '26px 0 0' }} />
                 <Text style={text.note}>
                     Las ventas anuladas no se incluyen. Una venta con productos y servicios
-                    aparece en farmacia y en consultorio con el importe de su parte. Para otro
-                    periodo, entra al panel en «Reportes para contabilidad».
+                    aparece en farmacia y en consultorio con el importe de su parte. En el IVA
+                    por producto, la suma de las columnas Base 16 %, Base 0 % y Exento son los
+                    renglones de la declaración; las devoluciones se restan en el mes en que se
+                    reembolsaron. Para otro periodo, entra al panel en «Reportes para
+                    contabilidad».
                 </Text>
             </Container>
         </Body>
