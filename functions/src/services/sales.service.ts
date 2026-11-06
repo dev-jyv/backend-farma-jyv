@@ -2168,9 +2168,12 @@ const applyVoid = async (
                 throw notFound('Lote');
             }
             const currentQty = batchDoc.data()?.quantity as number;
+            // `updatedAt` de lotes y productos es el cursor del pull de las cajas:
+            // siempre hora del servidor (SPEC 56). Con la hora reportada de una
+            // anulación offline quedaba en el pasado y las cajas se la saltaban.
             transaction.update(entry.batchRef, {
                 quantity: currentQty + entry.quantity,
-                updatedAt: timestamp,
+                updatedAt: serverNow,
             });
         });
 
@@ -2183,7 +2186,9 @@ const applyVoid = async (
                 quantity: -allocation.quantity,
                 referenceId: saleRef.id,
                 userId: author,
+                // La hora reportada es la del hecho; la de registro, la del servidor.
                 createdAt: timestamp,
+                recordedAt: serverNow,
             });
         });
 
@@ -2204,7 +2209,7 @@ const applyVoid = async (
             const baseline = typeof denorm === 'number' ? denorm : 0;
             transaction.update(firestore.collection('products').doc(productId), {
                 totalStock: Math.max(0, baseline + delta),
-                updatedAt: timestamp,
+                updatedAt: serverNow,
             });
         });
 
@@ -2231,6 +2236,7 @@ const applyVoid = async (
                 customerName: existing.customerName,
                 userId: author,
                 createdAt: timestamp,
+                recordedAt: serverNow,
             });
         }
 
