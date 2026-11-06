@@ -17,6 +17,11 @@ import {
 } from '../types';
 import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
 import { writeAuditInTransaction } from './audit.service';
+import {
+    ledgerGroupOf,
+    readEntryLedgerRowsInTransaction,
+    writeStockLedgerEntryInTransaction,
+} from './controlled.service';
 import { matchesProductSearch } from '../utils/product-search';
 import {
     buildListMeta,
@@ -400,6 +405,9 @@ const persistEntryItems = async (input: {
     notes?: string;
     /** Llave con la que la caja registró la partida (SPEC 55). */
     idempotencyKey?: string;
+    /** Para el libro de controlados (SPEC 61). */
+    supplierName?: string;
+    invoiceFolio?: string;
 }): Promise<{ entry: InventoryEntry; warnings: EntryWarning[] }> => {
     const firestore = db();
     const batches = firestore.collection('batches');
@@ -489,6 +497,15 @@ const persistEntryItems = async (input: {
             }
         }));
 
+        // Productos de la entrada, leídos aquí para asentar en el libro de
+        // controlados con el grupo vigente al recibir (SPEC 61).
+        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
+        const productDocs = await transaction.getAll(
+            ...uniqueProductIds.map((id) => firestore.collection('products').doc(id)),
+        );
+        const productById = new Map(productDocs.map((doc) =>
+            [doc.id, doc.exists ? ({ id: doc.id, ...doc.data() } as Product) : null]));
+
         // --- Escrituras -----------------------------------------------------------
         const entryItems: InventoryEntryItem[] = [];
 
@@ -554,6 +571,30 @@ const persistEntryItems = async (input: {
             };
             transaction.set(movementRef, movementData);
 
+            // Libro de control (SPEC 61): un renglón por partida de un grupo que
+            // lo lleva, en la misma transacción que la entrada.
+            const product = productById.get(item.productId);
+            const ledgerGroup = ledgerGroupOf(product);
+            if (product && ledgerGroup) {
+                writeStockLedgerEntryInTransaction(transaction, {
+                    type: 'entry',
+                    productId: item.productId,
+                    productName: product.name,
+                    controlledGroup: ledgerGroup,
+                    quantity: item.quantity,
+                    lotNumber: item.lotNumber,
+                    batchId: batch.id,
+                    expiryDate: item.expiryDate,
+                    supplierId: input.supplierId,
+                    supplierName: input.supplierName ?? null,
+                    invoiceId: input.invoiceId ?? null,
+                    invoiceFolio: input.invoiceFolio ?? null,
+                    entryId: entryRef.id,
+                    userId: input.userId,
+                    createdAt: timestamp,
+                });
+            }
+
             entryItems.push({
                 productId: item.productId,
                 lotNumber: item.lotNumber,
@@ -564,7 +605,6 @@ const persistEntryItems = async (input: {
             });
         }
 
-        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
         const entryData: Omit<InventoryEntry, 'id'> = {
             supplierId: input.supplierId,
             source: input.source,
@@ -634,7 +674,7 @@ export const recordEntry = async (input: {
         throw notFound('Factura');
     }
 
-    await assertActiveSupplier(invoice.supplierId);
+    const supplier = await assertActiveSupplier(invoice.supplierId);
     const normalizedItems = await normalizeAndValidateItems(input.items);
     const recorded = await persistEntryItems({
         supplierId: invoice.supplierId,
@@ -643,6 +683,8 @@ export const recordEntry = async (input: {
         source: 'invoice',
         invoiceId: input.invoiceId,
         idempotencyKey: input.idempotencyKey,
+        supplierName: supplier.name,
+        invoiceFolio: invoice.invoiceNumber,
     });
 
     return withWarnings(recorded);
@@ -668,7 +710,7 @@ export const recordDirectEntry = async (input: {
     }
 
     assertValidExpiryAndQuantity(input.items);
-    await assertActiveSupplier(input.supplierId);
+    const supplier = await assertActiveSupplier(input.supplierId);
 
     // Todas las altas se revisan antes de crear la primera: si la segunda choca
     // por SKU, la primera ya no queda huérfana en el catálogo (SPEC 55).
@@ -706,6 +748,7 @@ export const recordDirectEntry = async (input: {
         userId: input.userId,
         source: 'direct',
         notes: input.notes,
+        supplierName: supplier.name,
     });
 
     return withWarnings(recorded);
@@ -774,8 +817,10 @@ export const recordExit = async (input: {
     const movementRef = firestore.collection('stockMovements').doc();
     const timestamp = now();
 
+    const productRef = firestore.collection('products').doc(input.productId);
+
     const result = await firestore.runTransaction(async (transaction) => {
-        const batchDoc = await transaction.get(batchRef);
+        const [batchDoc, productDoc] = await transaction.getAll(batchRef, productRef);
         if (!batchDoc.exists) {
             throw notFound('Lote');
         }
@@ -809,6 +854,27 @@ export const recordExit = async (input: {
             createdAt: timestamp,
         };
         transaction.set(movementRef, movementData);
+
+        // Libro de control (SPEC 61): la merma o caducidad de un controlado se
+        // asienta con cantidad negativa en la misma transacción.
+        const ledgerProduct = productDoc.exists
+            ? ({ id: productDoc.id, ...productDoc.data() } as Product)
+            : product;
+        const ledgerGroup = ledgerGroupOf(ledgerProduct);
+        if (ledgerGroup) {
+            writeStockLedgerEntryInTransaction(transaction, {
+                type: movementType,
+                productId: input.productId,
+                productName: ledgerProduct.name,
+                controlledGroup: ledgerGroup,
+                quantity: -input.quantity,
+                lotNumber: current.lotNumber,
+                batchId: batch.id,
+                expiryDate: current.expiryDate ? calendarDayOf(current.expiryDate) : null,
+                userId: input.userId,
+                createdAt: timestamp,
+            });
+        }
 
         return {
             batch: {
@@ -902,6 +968,11 @@ export const cancelEntry = async (input: {
             );
         }
 
+        // Renglones que la entrada asentó en el libro de controlados (SPEC 61): se
+        // contra-asientan tal cual, aunque el producto haya cambiado de grupo. Una
+        // entrada anterior al libro de entradas no tiene renglones que cancelar.
+        const ledgerRows = await readEntryLedgerRowsInTransaction(transaction, entry.id);
+
         // --- Escrituras ---------------------------------------------------------
         batchDocs.forEach((doc, index) => {
             transaction.update(doc.ref, {
@@ -932,6 +1003,26 @@ export const cancelEntry = async (input: {
             transaction.update(firestore.collection('products').doc(productId), {
                 totalStock: FieldValue.increment(-removed),
                 updatedAt: timestamp,
+            });
+        }
+
+        for (const row of ledgerRows) {
+            writeStockLedgerEntryInTransaction(transaction, {
+                type: 'entry_cancel',
+                productId: row.productId,
+                productName: row.productName,
+                controlledGroup: row.controlledGroup,
+                quantity: -row.quantity,
+                lotNumber: row.lotNumbers[0] ?? '',
+                batchId: row.batchId ?? '',
+                expiryDate: row.expiryDate ?? null,
+                supplierId: row.supplierId ?? null,
+                supplierName: row.supplierName ?? null,
+                invoiceId: row.invoiceId ?? null,
+                invoiceFolio: row.invoiceFolio ?? null,
+                entryId: entry.id,
+                userId: input.userId,
+                createdAt: timestamp,
             });
         }
 

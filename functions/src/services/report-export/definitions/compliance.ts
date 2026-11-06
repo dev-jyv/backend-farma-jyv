@@ -1,19 +1,15 @@
 import { CONTROLLED_GROUP_RULES } from '../../../constants/controlled';
 import * as auditRepo from '../../../repositories/audit-logs.repository';
 import * as ledgerRepo from '../../../repositories/controlled-ledger.repository';
-import { ControlledLedgerType } from '../../../types';
-import { assertCanExportControlledLedger } from '../../controlled.service';
+import {
+    assertCanExportControlledLedger,
+    LEDGER_TYPE_LABELS,
+} from '../../controlled.service';
 import { NO_CASHIER, resolveUserNames } from '../../module-reports.service';
 import { ReportDefinition } from '../report-definition';
 import { getMaxReportSpanDays } from '../../../utils/report-range';
 import { resolveReportPeriod } from '../period';
 import { MAX_ROWS, stampDate, stampTime } from './shared';
-
-const LEDGER_TYPE_LABELS: Record<ControlledLedgerType, string> = {
-    sale: 'Venta',
-    void: 'Anulación',
-    return: 'Devolución',
-};
 
 export const libroControlados: ReportDefinition = {
     key: 'libro-controlados',
@@ -34,6 +30,9 @@ export const libroControlados: ReportDefinition = {
         { key: 'retained', header: 'Receta retenida', type: 'text' },
         { key: 'customer', header: 'Cliente', type: 'text' },
         { key: 'user', header: 'Usuario', type: 'text' },
+        // SPEC 61: al final, para no mover las columnas existentes.
+        { key: 'supplier', header: 'Proveedor', type: 'text' },
+        { key: 'invoice', header: 'Factura', type: 'text' },
     ],
     // Vuelca el nombre de cada paciente y la cédula de cada médico del periodo, así
     // que lleva la misma restricción que el CSV del libro: administrador o gerente.
@@ -62,14 +61,17 @@ export const libroControlados: ReportDefinition = {
                 retained: entry.prescriptionRetained ? 'Sí' : 'No',
                 customer: entry.customerName ?? '',
                 user: names.get(entry.userId) ?? NO_CASHIER,
+                supplier: entry.supplierName ?? '',
+                invoice: entry.invoiceFolio ?? '',
             }));
         return {
             subtitle: range.label,
             slug: range.slug,
             rows,
             emptyMessage: 'Sin movimientos de medicamentos controlados en el periodo.',
-            notes: ['Anulaciones y devoluciones se asientan con cantidad negativa; '
-                + 'no se borra ningún renglón.'],
+            notes: ['Entradas de mercancía con cantidad positiva; mermas, caducidades, '
+                + 'cancelaciones de entrada, anulaciones y devoluciones con cantidad '
+                + 'negativa. No se borra ningún renglón.'],
         };
     },
 };

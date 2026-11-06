@@ -369,12 +369,31 @@ export interface SalePrescription {
     folio?: string;
 }
 
-/** Movimiento del libro de control de medicamentos controlados. */
-export type ControlledLedgerType = 'sale' | 'void' | 'return';
+/**
+ * Movimiento del libro de control de medicamentos controlados. Salidas por venta
+ * (`sale`, contra-asentada por `void`/`return`) y, desde SPEC 61, entradas de
+ * mercancía (`entry`, contra-asentada por `entry_cancel`) y salidas por merma o
+ * caducidad (`exit_waste`/`exit_expiry`).
+ */
+export type ControlledLedgerType =
+    | 'sale'
+    | 'void'
+    | 'return'
+    | 'entry'
+    | 'entry_cancel'
+    | 'exit_waste'
+    | 'exit_expiry';
+
+/** Movimientos del libro que no vienen de una venta (SPEC 61). */
+export type ControlledStockLedgerType = Extract<
+    ControlledLedgerType,
+    'entry' | 'entry_cancel' | 'exit_waste' | 'exit_expiry'
+>;
 
 export interface ControlledLedgerEntry {
     id: string;
     type: ControlledLedgerType;
+    /** Vacío (`''`) en los movimientos que no son de una venta (SPEC 61). */
     saleId: string;
     saleFolio: string;
     /** Folio de la devolución cuando `type` es `return`. */
@@ -382,7 +401,11 @@ export interface ControlledLedgerEntry {
     productId: string;
     productName: string;
     controlledGroup: ControlledGroup;
-    /** Con signo: negativa en `void` y `return` (el producto regresa). */
+    /**
+     * Con signo. Venta: positiva, y negativa en `void` y `return` (el producto
+     * regresa). Entrada: positiva, y negativa en `entry_cancel`. Merma y
+     * caducidad: negativas (SPEC 61).
+     */
     quantity: number;
     lotNumbers: string[];
     prescription: SalePrescription | null;
@@ -390,6 +413,17 @@ export interface ControlledLedgerEntry {
     customerName: string | null;
     userId: string;
     createdAt: Timestamp;
+    /** Movimientos de inventario (SPEC 61); ausentes en los de venta. */
+    supplierId?: string | null;
+    supplierName?: string | null;
+    invoiceId?: string | null;
+    /** Folio de la factura del proveedor (`invoices.invoiceNumber`). */
+    invoiceFolio?: string | null;
+    batchId?: string;
+    /** Caducidad del lote, `YYYY-MM-DD`. */
+    expiryDate?: string | null;
+    /** Entrada de inventario que asentó o canceló el renglón. */
+    entryId?: string;
 }
 
 export interface SaleBilling {
