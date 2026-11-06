@@ -42,6 +42,7 @@ export class CashSessionsController {
             to: query.to,
             openedBy: query.openedBy,
             adjustmentStatus: query.adjustmentStatus,
+            needsReview: query.needsReview,
             page: query.page ? Number(query.page) : undefined,
             limit: query.limit ? Number(query.limit) : undefined,
         });
@@ -216,7 +217,12 @@ export class CashSessionsController {
         @Body(new ZodValidationPipe(openCashSessionSchema)) body: OpenCashSessionInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const session = await cashSessionsService.openSession(user.uid, body.openingAmount);
+        const session = await cashSessionsService.openSession(user.uid, body.openingAmount, {
+            openingCounted: body.openingCounted,
+            inheritedFloat: body.inheritedFloat,
+            openingNote: body.openingNote,
+            roleSlug: user.role.slug,
+        });
         return { data: session };
     }
 

@@ -139,7 +139,12 @@ export type StockMovementType =
      * encontró más de lo registrado, negativa si encontró menos. No usar merma
      * (`exit_waste`) para descuadres: falsea el reporte de mermas.
      */
-    | 'adjustment_count';
+    | 'adjustment_count'
+    /**
+     * Contramovimiento de una entrada cancelada (SPEC 58). Cantidad **negativa**:
+     * las piezas que esa entrada había sumado al lote.
+     */
+    | 'entry_cancel';
 
 /** Acciones auditadas en `auditLogs`. Ver `services/audit.service.ts`. */
 export type AuditAction =
@@ -151,18 +156,59 @@ export type AuditAction =
      * (SPEC 46). Se acepta —el POS sube precios sin red— y queda para revisión.
      */
     | 'product.box_price_review'
+    /**
+     * Cambió el grupo COFEPRIS del producto, incluida la desclasificación a
+     * `null` (SPEC 64). La caja puede hacerlo; queda aparte para el correo diario.
+     */
+    | 'product.controlled_group_changed'
     | 'product.deactivated'
+    /**
+     * Una entrada de la caja traía un producto nuevo que ya existía y se usó el
+     * existente (SPEC 60): los datos capturados en la caja se ignoraron.
+     */
+    | 'product.adopted_on_entry'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
+    /** Venta no conciliada registrada como venta o descartada con motivo (SPEC 53). */
+    | 'sale.unreconciled_resolved'
     | 'sale.discount_override'
     /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
     | 'sale.promotion_out_of_window'
     /** Venta offline aceptada con un cupón vencido, agotado o desconocido; pide revisión. */
     | 'sale.coupon_review'
+    /**
+     * `soldAt` de una venta offline descartado por anterior a la apertura del
+     * turno o por tener más de 7 días (SPEC 51): la venta queda con la fecha de
+     * recepción.
+     */
+    | 'sale.sold_at_untrusted'
+    /**
+     * Venta de controlados que llegó en un mes posterior al de su cobro (SPEC 51):
+     * el libro del mes del cobro cambió y quizá haya que reexportarlo.
+     */
+    | 'sale.late_ledger_entry'
+    /** Venta offline registrada con faltante de stock (SPEC 52); pide revisión. */
+    | 'sale.stock_shortfall'
+    /** Venta offline registrada con productos o servicios inactivos (SPEC 52). */
+    | 'sale.catalog_review'
+    /** Venta offline registrada en un turno ya cerrado (SPEC 52); el turno pide ajuste. */
+    | 'sale.late_sync'
+    /** Venta cobrada por un cajero y subida por otro usuario (SPEC 54). */
+    | 'sale.synced_by_other'
+    /**
+     * El `soldBy` que mandó la caja no es quien abrió el turno (SPEC 54): se
+     * ignoró y la venta quedó a nombre de quien la subió.
+     */
+    | 'sale.sold_by_ignored'
     | 'sale.returned'
     /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
     | 'pointOrder.refunded'
+    /**
+     * Al abrir turno el efectivo contado no coincidió con el fondo heredado del
+     * cierre anterior (SPEC 63); el turno anterior queda marcado.
+     */
+    | 'cash.opening_difference'
     | 'cash_session.closed_with_difference'
     | 'cash_session.adjustment_reviewed'
     /** Entrada o salida de efectivo hecha por un admin desde la caja de la farmacia. */
@@ -197,6 +243,8 @@ export type AuditAction =
     /** Cierre o reapertura de periodos contables. */
     | 'accountingPeriod.closed'
     | 'inventory.count_adjusted'
+    /** Entrada de mercancía cancelada con contramovimiento (SPEC 58). */
+    | 'inventory.entry_cancelled'
     | 'role.created'
     | 'role.updated'
     | 'role.permissions_changed'
@@ -248,6 +296,7 @@ export type AuditEntity =
     | 'bankMovement'
     | 'accountingSettings'
     | 'inventoryCount'
+    | 'inventoryEntry'
     | 'role'
     | 'user'
     | 'medicalRecord'
@@ -289,6 +338,12 @@ export interface Category {
 export interface Product {
     id: string;
     name: string;
+    /**
+     * Nombre + concentración normalizados (SPEC 60, `utils/product-match.ts`). Único
+     * entre productos activos; ausente en productos anteriores al backfill, que se
+     * siguen comparando por nombre exacto.
+     */
+    nameKey?: string;
     sku: string;
     barcode?: string;
     activeIngredient?: string;
@@ -326,6 +381,15 @@ export interface Product {
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
+    /**
+     * Última vez que cambió `salePrice` / `isActive` (SPEC 56). `updatedAt` no
+     * sirve para eso: sube con cada venta y cada entrada. Con ellos un PATCH de la
+     * caja que trae `baseUpdatedAt` sabe si el panel cambió el precio o el estado
+     * después de su copia. Ausentes en productos que no los han cambiado desde
+     * que existe el campo: entonces no hay conflicto que declarar.
+     */
+    salePriceChangedAt?: Timestamp;
+    isActiveChangedAt?: Timestamp;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }
@@ -350,12 +414,31 @@ export interface SalePrescription {
     folio?: string;
 }
 
-/** Movimiento del libro de control de medicamentos controlados. */
-export type ControlledLedgerType = 'sale' | 'void' | 'return';
+/**
+ * Movimiento del libro de control de medicamentos controlados. Salidas por venta
+ * (`sale`, contra-asentada por `void`/`return`) y, desde SPEC 61, entradas de
+ * mercancía (`entry`, contra-asentada por `entry_cancel`) y salidas por merma o
+ * caducidad (`exit_waste`/`exit_expiry`).
+ */
+export type ControlledLedgerType =
+    | 'sale'
+    | 'void'
+    | 'return'
+    | 'entry'
+    | 'entry_cancel'
+    | 'exit_waste'
+    | 'exit_expiry';
+
+/** Movimientos del libro que no vienen de una venta (SPEC 61). */
+export type ControlledStockLedgerType = Extract<
+    ControlledLedgerType,
+    'entry' | 'entry_cancel' | 'exit_waste' | 'exit_expiry'
+>;
 
 export interface ControlledLedgerEntry {
     id: string;
     type: ControlledLedgerType;
+    /** Vacío (`''`) en los movimientos que no son de una venta (SPEC 61). */
     saleId: string;
     saleFolio: string;
     /** Folio de la devolución cuando `type` es `return`. */
@@ -363,14 +446,35 @@ export interface ControlledLedgerEntry {
     productId: string;
     productName: string;
     controlledGroup: ControlledGroup;
-    /** Con signo: negativa en `void` y `return` (el producto regresa). */
+    /**
+     * Con signo. Venta: positiva, y negativa en `void` y `return` (el producto
+     * regresa). Entrada: positiva, y negativa en `entry_cancel`. Merma y
+     * caducidad: negativas (SPEC 61).
+     */
     quantity: number;
     lotNumbers: string[];
     prescription: SalePrescription | null;
     prescriptionRetained: boolean;
     customerName: string | null;
     userId: string;
+    /**
+     * Fecha del hecho. En una venta es su fecha de negocio (`Sale.businessAt`,
+     * SPEC 51): la del cobro offline confiable, no la de llegada al servidor.
+     */
     createdAt: Timestamp;
+    /** Hora del servidor al registrar el renglón; ausente en renglones anteriores. */
+    recordedAt?: Timestamp;
+    /** Movimientos de inventario (SPEC 61); ausentes en los de venta. */
+    supplierId?: string | null;
+    supplierName?: string | null;
+    invoiceId?: string | null;
+    /** Folio de la factura del proveedor (`invoices.invoiceNumber`). */
+    invoiceFolio?: string | null;
+    batchId?: string;
+    /** Caducidad del lote, `YYYY-MM-DD`. */
+    expiryDate?: string | null;
+    /** Entrada de inventario que asentó o canceló el renglón. */
+    entryId?: string;
 }
 
 export interface SaleBilling {
@@ -665,6 +769,11 @@ export interface Batch {
     id: string;
     productId: string;
     lotNumber: string;
+    /**
+     * Lote en mayúsculas y sin espacios (SPEC 59): la llave con la que se reconoce
+     * el mismo lote escrito distinto. Ausente en lotes anteriores.
+     */
+    lotKey?: string;
     expiryDate: Timestamp;
     quantity: number;
     costPrice?: number;
@@ -687,7 +796,10 @@ export interface StockMovement {
     reason?: string;
     referenceId?: string;
     userId: string;
+    /** Fecha del hecho; en la salida de una venta es `Sale.businessAt` (SPEC 51). */
     createdAt: Timestamp;
+    /** Hora del servidor al registrar el movimiento; ausente en los anteriores. */
+    recordedAt?: Timestamp;
 }
 
 export interface StockMovementWithDetails extends StockMovement {
@@ -864,6 +976,12 @@ export interface Invoice {
     outstanding?: boolean;
     supplierId: string;
     invoiceNumber: string;
+    /**
+     * Folio normalizado (SPEC 58): mayúsculas, sin espacios ni guiones y sin ceros
+     * a la izquierda en lo numérico. La unicidad por proveedor se valida sobre él.
+     * Ausente en facturas anteriores, que se siguen comparando por texto.
+     */
+    folioKey?: string;
     invoiceDate: Timestamp;
     /** Vencimiento pactado con el proveedor; ausente = sin plazo registrado. */
     dueDate?: Timestamp | null;
@@ -954,6 +1072,18 @@ export interface InventoryEntry {
     notes?: string;
     productIds?: string[];
     items: InventoryEntryItem[];
+    /**
+     * Llave con la que la caja registró la partida (SPEC 55). Un reintento solo
+     * reconoce como suya una entrada con su misma llave o sin llave.
+     */
+    idempotencyKey?: string;
+    /**
+     * Cancelación con contramovimiento (SPEC 58): las piezas se restaron de sus
+     * lotes con movimientos `entry_cancel`. La entrada no se borra.
+     */
+    cancelledAt?: Timestamp;
+    cancelledBy?: string;
+    cancelReason?: string;
     createdAt: Timestamp;
     createdBy: string;
     updatedAt: Timestamp;
@@ -1046,6 +1176,12 @@ export interface SaleProductItem extends SaleItemCommon {
         batchId: string;
         quantity: number;
     }>;
+    /**
+     * Piezas cobradas en una venta offline que el servidor no tenía en ningún
+     * lote vendible (SPEC 52). `batchAllocations` suma `quantity − stockShortfall`;
+     * ausente cuando se asignó todo.
+     */
+    stockShortfall?: number;
     /**
      * Partida vendida por caja completa (SPEC 46). `quantity` sigue en **piezas**
      * (`boxes × piecesPerBox`) y `unitPrice` es el precio efectivo por pieza
@@ -1188,10 +1324,18 @@ export interface PointPaymentSnapshot {
  * en `sales` descuadraría el inventario, así que vive aquí hasta que alguien la
  * concilie a mano.
  */
+export type UnreconciledSaleResolution = 'register' | 'discard';
+
 export interface UnreconciledSale {
+    /**
+     * `<deviceId|cashierId>:<localId>` (SPEC 53). Los documentos anteriores usan
+     * el `localId` solo y se listan y resuelven igual.
+     */
     id: string;
     /** Id de la venta en el SQLite de la caja: la liga entre las dos bases. */
     localId: string;
+    /** Caja que la cobró; `null` en POS viejos y documentos anteriores. */
+    deviceId: string | null;
     /** Folio provisional con el que se imprimió el ticket (`PENDIENTE-…`). */
     localFolio: string | null;
     /** Motivo con el que el backend rechazó la venta. */
@@ -1205,7 +1349,18 @@ export interface UnreconciledSale {
     occurredAt: Timestamp | null;
     resolvedAt: Timestamp | null;
     resolvedBy: string | null;
+    /** Cómo se resolvió; `null` pendiente o resuelta antes de SPEC 53. */
+    resolution: UnreconciledSaleResolution | null;
+    resolutionReason: string | null;
+    /** Venta creada al registrarla (`register`). */
+    resolvedSaleId: string | null;
     createdAt: Timestamp;
+}
+
+/** Fila del listado: con nombres para que el panel no muestre uids. */
+export interface UnreconciledSaleListItem extends UnreconciledSale {
+    cashierName: string | null;
+    deviceName: string | null;
 }
 
 export interface Sale {
@@ -1246,6 +1401,18 @@ export interface Sale {
      * hora del cobro, sin usos disponibles, o que el servidor no conoce.
      */
     couponReview?: SaleCouponReview;
+    /**
+     * Faltante de stock de una venta offline (SPEC 52): se registró con lo que
+     * había y el resto queda medido por partida. Ausente si no faltó nada.
+     */
+    stockReview?: SaleStockReview;
+    /** Venta offline con productos o servicios inactivos (SPEC 52). */
+    catalogReview?: SaleCatalogReview;
+    /**
+     * Venta offline registrada en un turno que ya estaba cerrado (SPEC 52): su
+     * efectivo no está en el corte congelado, va en `CashSession.lateSales`.
+     */
+    lateSync?: true;
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;
@@ -1260,7 +1427,12 @@ export interface Sale {
     cardPaymentReference: string | null;
     pointPayment: PointPaymentSnapshot | null;
     cashSessionId: string | null;
+    /** Quien **cobró** la venta (SPEC 54: el `soldBy` válido de la caja, o quien la subió). */
     cashierId: string;
+    /** Quien subió la venta cuando no es quien la cobró (SPEC 54); ausente si es el mismo. */
+    syncedBy?: string;
+    /** Quien autorizó el descuento en la caja (SPEC 54); informativo. */
+    discountAuthorizedBy?: string;
     customerId: string | null;
     customerName: string | null;
     prescription: SalePrescription | null;
@@ -1296,8 +1468,61 @@ export interface Sale {
     invoiceStatus: 'pending' | null;
     voidedAt: Timestamp | null;
     voidedBy: string | null;
+    /**
+     * Motivo de la anulación (SPEC 62). Ausente en ventas vigentes y en las
+     * anuladas antes de que fuera obligatorio.
+     */
+    voidReason?: string;
+    /** Fecha de **recepción** en el servidor. */
     createdAt: Timestamp;
+    /**
+     * Fecha de negocio (SPEC 51): el `soldAt` de una venta offline cuando es
+     * confiable; si no, `createdAt`. Es la que usan reportes de periodo,
+     * `dailyStats`, el libro de controlados y FEFO. Las ventas anteriores no la
+     * traen: léela con `saleBusinessAt(sale)`.
+     */
+    businessAt?: Timestamp;
+    /** Hora del cobro que reportó la caja (solo offline); `null` si no vino. */
+    soldAt?: Timestamp | null;
+    /** `true` si `soldAt` se usó como fecha de negocio. */
+    soldAtTrusted?: boolean;
+    /**
+     * Desfase del reloj de la caja contra el servidor al cobrar, en ms
+     * (`servidor − local`, SPEC 65). Informativo; ausente si la caja no lo midió.
+     */
+    clockSkewMs?: number;
 }
+
+export interface SaleStockReviewItem {
+    productId: string;
+    /** Piezas cobradas. */
+    requested: number;
+    /** Piezas que sí salieron de lotes. */
+    allocated: number;
+    shortfall: number;
+}
+
+export interface SaleStockReview {
+    items: SaleStockReviewItem[];
+}
+
+export interface SaleCatalogReview {
+    /** Ids de productos y servicios que estaban inactivos al registrar. */
+    inactive: string[];
+}
+
+/** Marcas de revisión de una venta offline (SPEC 52), para `GET /sales?review=`. */
+export type SaleReviewKind = 'stock' | 'catalog' | 'late';
+
+export const SALE_REVIEW_FILTERS: Record<SaleReviewKind, (sale: Sale) => boolean> = {
+    stock: (sale) => Boolean(sale.stockReview?.items.length),
+    catalog: (sale) => Boolean(sale.catalogReview?.inactive.length),
+    late: (sale) => sale.lateSync === true,
+};
+
+/** Fecha de negocio de la venta, con la de recepción para las anteriores a SPEC 51. */
+export const saleBusinessAt = (sale: Pick<Sale, 'createdAt' | 'businessAt'>): Timestamp =>
+    sale.businessAt ?? sale.createdAt;
 
 export type RefundMethod = 'cash' | 'card' | 'transfer';
 
@@ -1410,6 +1635,12 @@ export type CashAdjustmentStatus = 'pending' | 'approved' | 'rejected';
 export interface CashSession {
     id: string;
     openedBy: string;
+    /**
+     * Rol de quien abrió el turno al abrirlo (SPEC 54). Con él, el tope de
+     * descuento de una venta subida por otro usuario se mide con el rol de quien
+     * cobró sin otra lectura. Ausente en turnos anteriores.
+     */
+    openedByRoleSlug?: string;
     openingAmount: number;
     /** Efectivo esperado **de farmacia**; el de servicios va aparte. */
     expectedCashAmount: number | null;
@@ -1436,6 +1667,34 @@ export interface CashSession {
      * sin cajero presente.
      */
     autoClosedByExpiry?: boolean;
+    /**
+     * Cierre automático por expiración (SPEC 63): `true` junto con
+     * `needsReview`. Nadie contó el cajón, así que un admin debe revisarlo.
+     */
+    autoClosed?: boolean;
+    /** Autocierre sin arqueo pendiente de revisión (SPEC 63). */
+    needsReview?: boolean;
+    /**
+     * Arqueo de apertura (SPEC 63). `openingCounted` es lo que el cajero contó al
+     * abrir y es el fondo del turno (`openingAmount` lo copia); `inheritedFloat`
+     * lo que dejó el cierre anterior; `openingDifference = contado − heredado`.
+     * Ausentes en turnos de un POS anterior.
+     */
+    openingCounted?: number;
+    inheritedFloat?: number;
+    openingDifference?: number;
+    openingNote?: string;
+    /**
+     * Diferencia que encontró el turno **siguiente** al abrir con el fondo que
+     * dejó este (SPEC 63): el faltante o sobrante es de este turno, no de aquel.
+     */
+    followingOpeningDifference?: number;
+    /**
+     * Ventas offline que llegaron con el turno ya cerrado (SPEC 52). El corte
+     * congelado no las incluye: `cashTotal` es el efectivo que entró al cajón y
+     * no está en `expectedCashAmount`.
+     */
+    lateSales?: { count: number; cashTotal: number };
 }
 
 /**
@@ -1514,6 +1773,14 @@ export interface CashSessionSummary {
     cashInDrawer: number;
     /** Corte de servicios; solo presente si el turno cobró alguno. */
     services?: CashServicesTotals;
+    /**
+     * Efectivo de las ventas **no conciliadas pendientes** de este turno
+     * (SPEC 53): se cobró y está en el cajón, pero no es una venta registrada.
+     * Informativo: no entra a `cashInDrawer`. En un turno cerrado se calcula al
+     * consultar (puede llegar una después del cierre); los cortes congelados
+     * antes de SPEC 53 no lo traen.
+     */
+    unreconciledCash: number;
 }
 
 export type PointOperatingMode = 'PDV' | 'STANDALONE' | 'UNDEFINED';
@@ -2063,6 +2330,46 @@ export interface PosDiagnosticsInput {
      * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
      */
     lastLocalBackupAt?: string | null;
+    /**
+     * Desfase del reloj de la caja en ms (SPEC 65): servidor − caja, positivo si
+     * la caja va atrasada. Ausente en cajas anteriores; al leer se normaliza a `null`.
+     */
+    clockSkewMs?: number | null;
+    /**
+     * Muestra diaria del stock local (SPEC 67). Solo viaja en la entrada: el
+     * snapshot guarda `stockDrift`, no la muestra.
+     */
+    stockSample?: PosStockSampleItem[];
+    /** Último error del actualizador automático (SPEC 67); `null` si no hubo. */
+    updateError?: string | null;
+    /** Última revisión de actualizaciones (reloj de la caja). */
+    updateCheckedAt?: string | null;
+}
+
+export interface PosStockSampleItem {
+    /** Id remoto del producto (Firestore). */
+    productId: string;
+    localStock: number;
+}
+
+/** Un producto con stock distinto en la caja y en el servidor (SPEC 67). */
+export interface PosStockDivergence {
+    productId: string;
+    /** `null` si el producto ya no existe en el servidor. */
+    name: string | null;
+    local: number;
+    /** `products.totalStock`; `null` si el producto ya no existe. */
+    server: number | null;
+}
+
+/** Resultado de comparar la muestra de stock de la caja con el servidor (SPEC 67). */
+export interface PosStockDrift {
+    /** Cuándo comparó el servidor (ISO, hora del servidor). */
+    checkedAt: string;
+    /** Productos comparados. */
+    compared: number;
+    /** Hasta 50 productos divergentes, en el orden de la muestra. */
+    diverging: PosStockDivergence[];
 }
 
 export type PosCommandType =
@@ -2091,7 +2398,14 @@ export interface PosCommand {
     result: string | null;
 }
 
-export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
+export interface PosDiagnosticsSnapshot extends Omit<PosDiagnosticsInput, 'stockSample'> {
+    /**
+     * Última comparación de stock (SPEC 67), arrastrada entre reportes hasta la
+     * siguiente muestra. `null` si la caja nunca mandó una (POS viejo).
+     */
+    stockDrift?: PosStockDrift | null;
+    /** Versión menor a `POS_MIN_VERSION` (SPEC 67); calculado al leer, no se guarda. */
+    belowMinVersion?: boolean;
     receivedAt: string;
     reportedBy: string;
     /** Nombre del cajero que reportó, resuelto al leer. `null` si ya no existe. */

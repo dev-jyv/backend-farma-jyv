@@ -2,8 +2,9 @@ import { createUnreconciledSaleSchema } from '../src/schemas/sales';
 
 /**
  * Venta cobrada en caja que el backend no pudo registrar. El POS la manda para
- * que el movimiento no se pierda; el documento se guarda con el `localId` como
- * id, así que reintentar el mismo push no duplica nada.
+ * que el movimiento no se pierda; el documento se guarda con
+ * `<deviceId|cashierId>:<localId>` como id (SPEC 53), así que reintentar el
+ * mismo push no duplica nada.
  */
 describe('createUnreconciledSaleSchema', () => {
     const base = {

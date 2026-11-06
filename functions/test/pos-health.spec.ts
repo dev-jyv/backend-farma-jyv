@@ -249,6 +249,28 @@ describe('reportDiagnostics', () => {
         expect(snapshot.lastLocalBackupAt).toBe(iso);
     });
 
+    it('SPEC 65: acepta y guarda clockSkewMs; sin él (caja vieja) se lee null', async () => {
+        expect(posDiagnosticsSchema.parse(diagnostico({ clockSkewMs: -180_000 })).clockSkewMs)
+            .toBe(-180_000);
+        expect(posDiagnosticsSchema.parse(diagnostico({ clockSkewMs: null })).clockSkewMs)
+            .toBeNull();
+        expect(posDiagnosticsSchema.safeParse({ ...diagnostico(), clockSkewMs: '5' }).success)
+            .toBe(false);
+
+        await posHealthService.reportDiagnostics(
+            posDiagnosticsSchema.parse(diagnostico({ clockSkewMs: 10 * 60_000 })), CAJERO,
+        );
+        await posHealthService.reportDiagnostics(
+            posDiagnosticsSchema.parse(diagnostico({ deviceId: 'caja-vieja' })), CAJERO,
+        );
+
+        const lista = await posHealthService.listDiagnostics();
+        expect(lista.find((item) => item.deviceId === 'caja-01')?.clockSkewMs).toBe(600_000);
+        expect(lista.find((item) => item.deviceId === 'caja-vieja')?.clockSkewMs).toBeNull();
+        const { snapshot } = await posHealthService.getDeviceDiagnostics('caja-01');
+        expect(snapshot.clockSkewMs).toBe(600_000);
+    });
+
     it('sobrescribe el snapshot: lo que la caja ya no reporta desaparece', async () => {
         await posHealthService.reportDiagnostics(diagnostico(), CAJERO);
         await posHealthService.reportDiagnostics(diagnostico({ blockedSales: [] }), CAJERO);

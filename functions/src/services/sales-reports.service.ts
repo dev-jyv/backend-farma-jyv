@@ -5,14 +5,21 @@ import {
     Sale,
     isSaleProductItem,
     isSaleServiceItem,
+    saleBusinessAt,
+    SALE_REVIEW_FILTERS,
 } from '../types';
 import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORY_ORDER } from '../constants/expenses';
+import { getPriceDeviationAlertMxn } from '../config/env';
+import { priceDeviationLines } from '../utils/price-deviation';
 import { fromCents, toCents } from '../utils/taxes';
 import { APP_TIME_ZONE } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as dailyStatsRepo from '../repositories/daily-stats.repository';
+import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
+import * as auditRepo from '../repositories/audit-logs.repository';
+import * as usersRepo from '../repositories/users.repository';
 
 export const REPORTS_TIME_ZONE = APP_TIME_ZONE;
 const MX_UTC_OFFSET = '-06:00';
@@ -136,6 +143,51 @@ export interface ReportPromotionReview {
     folios: string[];
 }
 
+/**
+ * Ventas offline registradas con marca de revisión (SPEC 52): con faltante de
+ * stock, con catálogo inactivo o cobradas con el turno ya cerrado. Se aceptaron
+ * porque el cliente ya pagó; el correo da el conteo y los folios de cada una.
+ */
+export interface ReportSaleReview {
+    stock: ReportPromotionReview;
+    catalog: ReportPromotionReview;
+    late: ReportPromotionReview;
+}
+
+/**
+ * Ventas no conciliadas **pendientes** de cualquier fecha (SPEC 53): dinero
+ * cobrado que no está en las cifras de arriba ni en el corte hasta que alguien
+ * lo resuelva en el panel.
+ */
+export interface ReportUnreconciledPending {
+    count: number;
+    total: number;
+}
+
+/**
+ * Partidas del día cobradas **por debajo** del precio de catálogo (SPEC 64). El
+ * detalle, con las cobradas por encima, está en el reporte `precio-distinto`.
+ */
+export interface ReportPriceDeviation {
+    count: number;
+    /** Pesos dejados de cobrar contra el catálogo; positivo. */
+    amount: number;
+    /** `PRICE_DEVIATION_ALERT_MXN` al armar el reporte. */
+    threshold: number;
+    /** `amount > threshold`: el correo destaca la línea. */
+    alert: boolean;
+}
+
+/** Cambio de grupo COFEPRIS del día (`product.controlled_group_changed`, SPEC 64). */
+export interface ReportControlledGroupChange {
+    time: string;
+    productName: string;
+    /** `null`: sin grupo. */
+    before: string | null;
+    after: string | null;
+    userLabel: string;
+}
+
 export interface DailySalesReport {
     kind: 'daily';
     title: string;
@@ -153,6 +205,10 @@ export interface DailySalesReport {
     sales: ReportSaleRow[];
     topProducts: ReportTopProduct[];
     promotionReview: ReportPromotionReview;
+    saleReview: ReportSaleReview;
+    unreconciledPending: ReportUnreconciledPending;
+    priceDeviation: ReportPriceDeviation;
+    controlledGroupChanges: ReportControlledGroupChange[];
 }
 
 export interface MonthlySalesReport {
@@ -180,6 +236,7 @@ export interface MonthlySalesReport {
     topProducts: ReportTopProduct[];
     topServices: ReportServiceRow[];
     promotionReview: ReportPromotionReview;
+    saleReview: ReportSaleReview;
 }
 
 export type SalesReport = DailySalesReport | MonthlySalesReport;
@@ -257,12 +314,84 @@ const buildTotals = (sales: Sale[]): SalesReportTotals => {
     };
 };
 
+/** Orden de cobro: fecha de negocio, con la de recepción en ventas anteriores. */
+const byBusinessTime = (a: Sale, b: Sale): number =>
+    saleBusinessAt(a).toMillis() - saleBusinessAt(b).toMillis();
+
 /** Las anuladas no: ya no hay precio que revisar. */
 const buildPromotionReview = (sales: Sale[]): ReportPromotionReview => {
     const flagged = sales
         .filter((sale) => !sale.voidedAt && sale.promotionReview === true)
-        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+        .sort(byBusinessTime);
     return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
+};
+
+/** Conteo y folios por marca de revisión; las anuladas no cuentan. */
+const buildSaleReview = (sales: Sale[]): ReportSaleReview => {
+    const active = sales.filter((sale) => !sale.voidedAt).sort(byBusinessTime);
+    const of = (kind: keyof ReportSaleReview): ReportPromotionReview => {
+        const flagged = active.filter(SALE_REVIEW_FILTERS[kind]);
+        return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
+    };
+    return { stock: of('stock'), catalog: of('catalog'), late: of('late') };
+};
+
+/** Las anuladas no cuentan: ese precio ya no se cobró. */
+const buildPriceDeviation = (sales: Sale[], threshold: number): ReportPriceDeviation => {
+    let count = 0;
+    let cents = 0;
+    for (const sale of sales) {
+        if (sale.voidedAt) {
+            continue;
+        }
+        for (const line of priceDeviationLines(sale)) {
+            if (line.difference < 0) {
+                count += 1;
+                cents += toCents(-line.difference);
+            }
+        }
+    }
+    const amount = fromCents(cents);
+    return { count, amount, threshold, alert: amount > threshold };
+};
+
+const groupOf = (value: unknown): string | null =>
+    (typeof value === 'string' && value ? value : null);
+
+/**
+ * Cambios de grupo controlado del día, en orden. La bitácora se lee por el rango
+ * del día (índice de un campo) y se filtra la acción en memoria: un día de
+ * bitácora es poco y así no hace falta un índice compuesto.
+ */
+const listControlledGroupChanges = async (
+    fromIso: string,
+    toIso: string,
+): Promise<ReportControlledGroupChange[]> => {
+    const logs = (await auditRepo.listAuditLogs({
+        action: 'product.controlled_group_changed',
+        from: fromIso,
+        to: toIso,
+    })).sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+    const uids = [...new Set(logs.map((log) => log.userId))];
+    const profiles = await Promise.all(
+        uids.map((uid) => usersRepo.getUserProfile(uid).catch(() => null)),
+    );
+    const names = new Map(uids.map((uid, index) => [
+        uid,
+        profiles[index]?.displayName?.trim() || profiles[index]?.email?.trim() || uid,
+    ]));
+    return logs.map((log) => {
+        const change = log.changes?.controlledGroup;
+        return {
+            time: timeFormatter.format(log.createdAt.toDate()),
+            productName: typeof log.metadata?.productName === 'string'
+                ? log.metadata.productName
+                : log.entityId,
+            before: groupOf(change?.before),
+            after: groupOf(change?.after),
+            userLabel: log.userId === 'system' ? 'Sistema' : names.get(log.userId) ?? log.userId,
+        };
+    });
 };
 
 const buildTopProducts = (sales: Sale[], limit = 10): ReportTopProduct[] => {
@@ -435,11 +564,16 @@ const netResultOf = (totalAmount: number, refundTotal: number, expenses: number)
 const averageTicket = (totalAmount: number, salesCount: number): number =>
     salesCount === 0 ? 0 : fromCents(Math.round(toCents(totalAmount) / salesCount));
 
+/**
+ * Ventas del periodo por **fecha de negocio** (SPEC 51): la venta offline del 31
+ * a las 23:50 que sincroniza el 1 sale en el reporte del 31.
+ */
 const listSalesBetween = async (fromIso: string, toIso: string): Promise<Sale[]> => {
     const { items } = await salesRepo.listSales({
         from: fromIso,
         to: toIso,
         includeVoided: true,
+        byBusinessDate: true,
     });
     return items;
 };
@@ -447,18 +581,26 @@ const listSalesBetween = async (fromIso: string, toIso: string): Promise<Sale[]>
 export const buildDailyReport = async (isoDate: string): Promise<DailySalesReport> => {
     const from = `${isoDate}T00:00:00.000${MX_UTC_OFFSET}`;
     const to = `${isoDate}T23:59:59.999${MX_UTC_OFFSET}`;
-    const [sales, expenseMovements, refundTotal] = await Promise.all([
+    const [
+        sales,
+        expenseMovements,
+        refundTotal,
+        unreconciledPending,
+        controlledGroupChanges,
+    ] = await Promise.all([
         listSalesBetween(from, to),
         listExpensesBetween(from, to),
         sumRefunds(from, to),
+        unreconciledRepo.summarizePendingUnreconciledSales(),
+        listControlledGroupChanges(from, to),
     ]);
 
     const rows: ReportSaleRow[] = sales
         .filter((sale) => !sale.voidedAt)
-        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis())
+        .sort(byBusinessTime)
         .map((sale) => ({
             folio: sale.folio,
-            time: timeFormatter.format(sale.createdAt.toDate()),
+            time: timeFormatter.format(saleBusinessAt(sale).toDate()),
             paymentMethodLabel: PAYMENT_METHOD_LABELS[sale.paymentMethod],
             total: sale.total,
         }));
@@ -482,6 +624,10 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
         sales: rows,
         topProducts: buildTopProducts(sales),
         promotionReview: buildPromotionReview(sales),
+        saleReview: buildSaleReview(sales),
+        unreconciledPending,
+        priceDeviation: buildPriceDeviation(sales, getPriceDeviationAlertMxn()),
+        controlledGroupChanges,
     };
 };
 
@@ -521,7 +667,7 @@ export const buildMonthlyReport = async (
         if (sale.voidedAt) {
             continue;
         }
-        const dateLabel = dateFormatter.format(sale.createdAt.toDate());
+        const dateLabel = dateFormatter.format(saleBusinessAt(sale).toDate());
         const entry = byDayMap.get(dateLabel) ?? { dateLabel, count: 0, amount: 0 };
         entry.count += 1;
         entry.amount += sale.total;
@@ -571,5 +717,6 @@ export const buildMonthlyReport = async (
         topProducts: buildTopProducts(sales),
         topServices: buildTopServices(sales),
         promotionReview: buildPromotionReview(sales),
+        saleReview: buildSaleReview(sales),
     };
 };

@@ -2,6 +2,7 @@ import { Invoice, SupplierPayment } from '../types';
 import { db, fromDate, now } from '../utils/firestore';
 import { toRangeEnd, toRangeStart } from '../utils/calendar-date';
 import { badRequest, conflict, notFound } from '../utils/errors';
+import { normalizeInvoiceFolio } from '../utils/invoice-folio';
 
 const collection = () => db().collection('invoices');
 
@@ -88,8 +89,10 @@ export const createInvoice = async (
 ): Promise<Invoice> => {
     const firestore = db();
     const timestamp = now();
+    const folioKey = normalizeInvoiceFolio(data.invoiceNumber);
     const payload = {
         ...data,
+        ...(folioKey ? { folioKey } : {}),
         // Solo las facturas con control de saldo llevan el marcador; las `legacy`
         // (sin `paidTotal`) no deben aparecer como deuda.
         ...(data.paidTotal !== undefined
@@ -102,13 +105,17 @@ export const createInvoice = async (
     };
 
     await firestore.runTransaction(async (transaction) => {
-        const existingSnap = await transaction.get(
-            collection()
-                .where('supplierId', '==', data.supplierId)
-                .where('invoiceNumber', '==', data.invoiceNumber)
-                .limit(1),
-        );
-        if (!existingSnap.empty) {
+        // Por folio normalizado (SPEC 58) y, para las facturas anteriores sin
+        // `folioKey`, por el texto exacto. Las dos dentro de la transacción: dos
+        // altas simultáneas del mismo folio no pueden pasar las dos.
+        const bySupplier = collection().where('supplierId', '==', data.supplierId);
+        const [byKey, byText] = await Promise.all([
+            folioKey
+                ? transaction.get(bySupplier.where('folioKey', '==', folioKey).limit(1))
+                : Promise.resolve(null),
+            transaction.get(bySupplier.where('invoiceNumber', '==', data.invoiceNumber).limit(1)),
+        ]);
+        if ((byKey && !byKey.empty) || !byText.empty) {
             throw conflict('Ya existe una factura con ese número para este proveedor');
         }
         transaction.set(collection().doc(id), payload);

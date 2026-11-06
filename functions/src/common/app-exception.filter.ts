@@ -2,6 +2,7 @@ import { ArgumentsHost, Catch, ExceptionFilter, HttpException, Logger } from '@n
 import { Request, Response } from 'express';
 import { AppError } from '../utils/errors';
 import { AuthUser } from '../types';
+import { SyncErrorCode } from '../constants/sync-error-codes';
 
 const extractHttpExceptionMessage = (error: HttpException): string => {
     const body = error.getResponse();
@@ -10,6 +11,33 @@ const extractHttpExceptionMessage = (error: HttpException): string => {
     }
     const message = (body as { message?: string | string[] }).message ?? error.message;
     return Array.isArray(message) ? message.join(', ') : message;
+};
+
+/**
+ * `error.details` del contrato de sincronización (SPEC 49): el código de negocio
+ * que lee el POS y si debe reintentar. Va **además** de `{ code, message }`, que no
+ * cambian, para que un cliente viejo siga leyendo lo mismo.
+ */
+interface SyncErrorDetails {
+    code: SyncErrorCode;
+    retryable: boolean;
+    /**
+     * Datos de apoyo del rechazo (`AppError.details`): la entrada existente
+     * (SPEC 58) o `current` en `CATALOG_CONFLICT` (SPEC 56).
+     */
+    [extra: string]: unknown;
+}
+
+/** Lo que no se pudo decidir (≥ 500) se reintenta: no fue un rechazo. */
+const INTERNAL_DETAILS: SyncErrorDetails = { code: 'INTERNAL', retryable: true };
+
+const appErrorDetails = (error: AppError): SyncErrorDetails | null => {
+    if (error.statusCode >= 500) {
+        return INTERNAL_DETAILS;
+    }
+    return error.syncCode
+        ? { ...error.details, code: error.syncCode, retryable: error.retryable }
+        : null;
 };
 
 /** `authUser` lo cuelga `AuthGuard`; en una ruta pública no existe. */
@@ -49,8 +77,13 @@ export class AppExceptionFilter implements ExceptionFilter {
         const response = host.switchToHttp().getResponse<Response>();
 
         if (error instanceof AppError) {
+            const details = appErrorDetails(error);
             response.status(error.statusCode).json({
-                error: { code: error.code, message: error.message },
+                error: {
+                    code: error.code,
+                    message: error.message,
+                    ...(details ? { details } : {}),
+                },
             });
             return;
         }
@@ -58,15 +91,24 @@ export class AppExceptionFilter implements ExceptionFilter {
         // Nest lanza sus propias HttpException (ej. 404 en rutas no mapeadas)
         // fuera del flujo de AppError - deben respetar su status, no caer a 500.
         if (error instanceof HttpException) {
-            response.status(error.getStatus()).json({
-                error: { code: 'HTTP_ERROR', message: extractHttpExceptionMessage(error) },
+            const status = error.getStatus();
+            response.status(status).json({
+                error: {
+                    code: 'HTTP_ERROR',
+                    message: extractHttpExceptionMessage(error),
+                    ...(status >= 500 ? { details: INTERNAL_DETAILS } : {}),
+                },
             });
             return;
         }
 
         this.reportUnexpected(error, host.switchToHttp().getRequest<AuthenticatedRequest>());
         response.status(500).json({
-            error: { code: 'INTERNAL_ERROR', message: 'Error interno del servidor' },
+            error: {
+                code: 'INTERNAL_ERROR',
+                message: 'Error interno del servidor',
+                details: INTERNAL_DETAILS,
+            },
         });
     }
 }

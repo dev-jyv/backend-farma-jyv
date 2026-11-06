@@ -132,7 +132,11 @@ export const updateProductSchema = z
         hasIvaZero: z.boolean().optional(),
         hasIeps: z.boolean().optional(),
         iepsRate: iepsRateSchema.optional(),
-        controlledGroup: controlledGroupSchema.optional(),
+        /**
+         * `null` desclasifica el producto (SPEC 64): la caja lo manda explícito
+         * para que quitar el grupo no se quede solo en local.
+         */
+        controlledGroup: controlledGroupSchema.nullable().optional(),
         concentration: z.string().trim().max(80).optional(),
         requiresPrescription: z.boolean().optional(),
         isActive: z.boolean().optional(),
@@ -144,6 +148,12 @@ export const updateProductSchema = z
         boxQuantity: boxQuantitySchema.nullable().optional(),
         boxPrice: positiveMoney.nullable().optional(),
         boxBarcode: barcodeSchema.nullable().optional(),
+        /**
+         * `updatedAt` remoto de la copia con la que editó la caja (SPEC 56). Si
+         * el panel cambió `salePrice` o `isActive` después y el PATCH los toca,
+         * responde 409 `CATALOG_CONFLICT`. Sin él (panel, POS viejo), sin cambios.
+         */
+        baseUpdatedAt: parseableDate.optional(),
     })
     .refine((data) => !(data.hasIva === true && data.hasIvaZero === true), {
         message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',

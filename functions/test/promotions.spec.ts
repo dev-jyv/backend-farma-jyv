@@ -357,6 +357,10 @@ describe('promociones', () => {
                 deactivatedAt: Timestamp.fromMillis(daysAgo(4)),
             });
             const session = await openSession();
+            // El turno ya estaba abierto cuando se cobró: un `soldAt` anterior a
+            // la apertura no es confiable (SPEC 51).
+            await db().collection('cashSessions').doc(session.id)
+                .update({ openedAt: Timestamp.fromMillis(daysAgo(6)) });
             const sale = await salesService.createSale({
                 items: [{ productId: product.id, quantity: 2, unitPrice: 35,
                     discountAmount: 10, promotionId: promo.id }],

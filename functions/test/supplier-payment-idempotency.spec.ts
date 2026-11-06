@@ -4,6 +4,7 @@ import * as invoicesRepo from '../src/repositories/invoices.repository';
 import * as accountingCore from '../src/services/accounting-core.service';
 import * as invoicesService from '../src/services/invoices.service';
 import { runIdempotentSupplierPayment } from '../src/services/supplier-payment-idempotency.service';
+import { AppError, badRequest } from '../src/utils/errors';
 
 const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -114,7 +115,7 @@ describe('abonos a proveedor: idempotencia', () => {
         const key = unique('abono');
         const spy = jest
             .spyOn(accountingCore, 'assertPeriodOpen')
-            .mockRejectedValueOnce(new Error('Periodo cerrado'));
+            .mockRejectedValueOnce(badRequest('Periodo cerrado'));
 
         await expect(abono(factura.id, key)).rejects.toThrow('Periodo cerrado');
         expect(await invoicesRepo.listPaymentsForInvoice(factura.id)).toHaveLength(0);
@@ -123,6 +124,36 @@ describe('abonos a proveedor: idempotencia', () => {
 
         expect(spy).toHaveBeenCalledTimes(2);
         expect(ok.invoice.balance).toBe(200);
+    });
+
+    /**
+     * SPEC 55 (B3): liberar la llave ante cualquier error dejaba que un 5xx o un
+     * commit ambiguo —el abono pudo haberse registrado— se reintentara con la
+     * llave libre y bajara el saldo dos veces.
+     */
+    it('un error que no es AppError conserva la llave: el reintento no duplica', async () => {
+        const factura = await crearFactura();
+        const key = unique('abono');
+        const spy = jest
+            .spyOn(accountingCore, 'assertPeriodOpen')
+            .mockRejectedValueOnce(new Error('DEADLINE_EXCEEDED'));
+
+        await expect(abono(factura.id, key)).rejects.toThrow('DEADLINE_EXCEEDED');
+        spy.mockRestore();
+
+        await expect(abono(factura.id, key)).rejects.toThrow(/quedó a medias/);
+        expect(await invoicesRepo.listPaymentsForInvoice(factura.id)).toHaveLength(0);
+        expect((await invoicesRepo.getInvoiceById(factura.id))?.paidTotal).toBe(0);
+    });
+
+    it('un AppError 5xx también conserva la llave', async () => {
+        const factura = await crearFactura();
+        const key = unique('abono');
+        jest.spyOn(accountingCore, 'assertPeriodOpen')
+            .mockRejectedValueOnce(new AppError(503, 'UNAVAILABLE', 'Servicio no disponible'));
+
+        await expect(abono(factura.id, key)).rejects.toThrow('Servicio no disponible');
+        await expect(abono(factura.id, key)).rejects.toThrow(/quedó a medias/);
     });
 
     it('la misma llave contra otra factura no devuelve el abono ajeno', async () => {

@@ -11,4 +11,7 @@ export const corsMiddleware = cors({
         callback(new Error('Origen no permitido por CORS'));
     },
     credentials: true,
+    // La caja y el panel miden el desfase de su reloj contra el header `Date` de
+    // la respuesta (SPEC 65); sin exponerlo, el navegador no lo deja leer.
+    exposedHeaders: ['Date'],
 });

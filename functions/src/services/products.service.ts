@@ -13,7 +13,7 @@ import {
     SupplierSummary,
     isSaleProductItem,
 } from '../types';
-import { badRequest, notFound } from '../utils/errors';
+import { AppError, badRequest, conflict, notFound } from '../utils/errors';
 import {
     buildListMeta,
     buildListResult,
@@ -22,7 +22,8 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
-import { boxPriceExceedsPieces } from '../utils/box-sale';
+import { productNameKey } from '../utils/product-match';
+import { boxConfigProblem, boxPriceExceedsPieces } from '../utils/box-sale';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -81,7 +82,9 @@ const loadInvoiceSummary = async (
 const loadPurchaseHistory = async (
     productId: string,
 ): Promise<ProductPurchaseHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const supplierCache = new Map<string, Supplier | null>();
     const invoiceCache = new Map<string, InvoiceSummary | null>();
     const history: ProductPurchaseHistoryItem[] = [];
@@ -150,7 +153,9 @@ const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryIt
 const loadInvoiceHistory = async (
     productId: string,
 ): Promise<ProductInvoiceHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const grouped = new Map<string, { quantityReceived: number; lastReceivedAt: number }>();
 
     for (const entry of entries) {
@@ -333,7 +338,20 @@ const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
  * solo guarda `categoryId`) ni cae a `getTotalStock` por producto, que eran
  * lecturas por producto en cada sync.
  */
-const readProductsForSync = async (updatedSince?: string): Promise<{ items: SyncProduct[] }> => {
+/**
+ * Respuesta del pull. `serverTime` (SPEC 56) es la hora del servidor tomada
+ * **antes** de leer: lo que cambie durante la lectura cae después de ella, así
+ * que la caja nunca se salta un cambio si la usa como cursor (menos su margen).
+ * El `updatedAt` máximo recibido no sirve: una venta toma su hora antes de
+ * confirmar y puede aparecer con una hora anterior a la de otro cambio ya leído.
+ */
+export interface ProductsSyncResult {
+    items: SyncProduct[];
+    serverTime: string;
+}
+
+const readProductsForSync = async (updatedSince?: string): Promise<ProductsSyncResult> => {
+    const serverTime = new Date().toISOString();
     const products = await productsRepo.listProducts({
         activeOnly: false,
         updatedSince,
@@ -348,6 +366,7 @@ const readProductsForSync = async (updatedSince?: string): Promise<{ items: Sync
         items: products.map((product) =>
             toSyncProduct(product, batchesByProduct.get(product.id) ?? []),
         ),
+        serverTime,
     };
 };
 
@@ -373,14 +392,14 @@ interface SyncCatalogCache {
 }
 
 let syncCache: SyncCatalogCache | null = null;
-let syncInflight: Promise<{ items: SyncProduct[] }> | null = null;
+let syncInflight: Promise<ProductsSyncResult> | null = null;
 
 export const clearProductsSyncCache = (): void => {
     syncCache = null;
     syncInflight = null;
 };
 
-const loadFullCatalogForSync = async (): Promise<{ items: SyncProduct[] }> => {
+const loadFullCatalogForSync = async (): Promise<ProductsSyncResult> => {
     // El corte se toma ANTES de leer: un cambio durante la lectura se vuelve a
     // traer en el siguiente delta en lugar de perderse.
     const startedAt = Date.now();
@@ -404,12 +423,15 @@ const loadFullCatalogForSync = async (): Promise<{ items: SyncProduct[] }> => {
     }
 
     const items = [...syncCache!.byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return { items };
+    // El corte de esta carga (tomado antes de leer) es lo más reciente que el
+    // catálogo mezclado garantiza: quien se sumó a la lectura en curso recibe un
+    // cursor anterior a su petición, nunca uno posterior.
+    return { items, serverTime: new Date(startedAt).toISOString() };
 };
 
 export const listProductsForSync = async (filters: {
     updatedSince?: string;
-}): Promise<{ items: SyncProduct[] }> => {
+}): Promise<ProductsSyncResult> => {
     if (filters.updatedSince) {
         return readProductsForSync(filters.updatedSince);
     }
@@ -420,6 +442,43 @@ export const listProductsForSync = async (filters: {
         });
     }
     return syncInflight;
+};
+
+/** Existencia fresca de un producto para la caja (SPEC 57). */
+export interface ProductStockSnapshot {
+    id: string;
+    totalStock: number;
+    updatedAt: Timestamp;
+    /** Solo lotes con piezas, por caducidad ascendente (orden FEFO). */
+    batches: SyncBatch[];
+}
+
+/**
+ * `GET /products/:id/stock`: la caja la llama antes de negar una venta por stock
+ * local insuficiente, para no rechazar mercancía que otra caja ya recibió y que
+ * su copia aún no tiene. Cuesta 1 lectura del producto + 1 consulta de lotes
+ * vendibles (`quantity > 0`, índice `productId + quantity`); nunca el catálogo.
+ *
+ * Los lotes y el total salen con la misma forma que en `/products/sync`, así la
+ * caja los guarda con el mismo código que el pull.
+ */
+export const getProductStock = async (id: string): Promise<ProductStockSnapshot> => {
+    const [product, batches] = await Promise.all([
+        productsRepo.getProductById(id),
+        batchesRepo.listBatchesByProduct(id, { onlyAvailable: true }),
+    ]);
+    if (!product) {
+        throw notFound('Producto');
+    }
+    const sumFromBatches = batches.reduce((total, batch) => total + batch.quantity, 0);
+    return {
+        id: product.id,
+        // Mismo criterio que el pull: el denormalizado manda; si el producto es
+        // anterior a él, la suma de los lotes ya leídos.
+        totalStock: Math.max(0, product.totalStock ?? sumFromBatches),
+        updatedAt: product.updatedAt,
+        batches: batches.map(toSyncBatch),
+    };
 };
 
 export const listProducts = async (filters: {
@@ -436,8 +495,11 @@ export const listProducts = async (filters: {
     updatedSince?: string;
 }): Promise<{
     items: Array<ProductWithCategory & { stock: number }>;
-    meta: ListMeta;
+    /** `serverTime` solo con `updatedSince` (SPEC 56): el cursor seguro del pull. */
+    meta: ListMeta & { serverTime?: string };
 }> => {
+    // Antes de cualquier lectura, igual que en `/products/sync`.
+    const serverTime = filters.updatedSince ? new Date().toISOString() : undefined;
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const search = filters.search?.trim();
 
@@ -504,7 +566,10 @@ export const listProducts = async (filters: {
 
     return {
         items: withDetails,
-        meta: buildListMeta(page, limit, total),
+        meta: {
+            ...buildListMeta(page, limit, total),
+            ...(serverTime ? { serverTime } : {}),
+        },
     };
 };
 
@@ -618,7 +683,7 @@ const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
     'hasIvaZero',
     'hasIeps',
     'iepsRate',
-    'controlledGroup',
+    // `controlledGroup` va en su propia entrada (`product.controlled_group_changed`).
     'requiresPrescription',
     'isActive',
     'boxQuantity',
@@ -654,6 +719,39 @@ const auditBoxPriceReview = async (
             boxQuantity: after.boxQuantity,
             boxPrice: after.boxPrice,
         },
+    });
+};
+
+const controlledGroupLabel = (group: ControlledGroup | null): string =>
+    (group ? `grupo ${group}` : 'sin grupo');
+
+/**
+ * Cambio de grupo COFEPRIS (SPEC 64), en su propia entrada y siempre que el
+ * valor cambie, **incluida la desclasificación** (`null`): quitarle el grupo a
+ * un producto es dejar de exigir receta y libro de control, y la caja puede
+ * hacerlo. `diffFields` no sirve aquí porque ignora los campos ausentes, y un
+ * grupo quitado queda ausente en el documento.
+ */
+const auditControlledGroupChange = async (
+    before: Product,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    const previous = before.controlledGroup ?? null;
+    const next = after.controlledGroup ?? null;
+    if (previous === next) {
+        return;
+    }
+    await recordAudit({
+        action: 'product.controlled_group_changed',
+        entity: 'product',
+        entityId: after.id,
+        summary: `Grupo controlado de ${after.name}: de ${controlledGroupLabel(previous)} a ` +
+            controlledGroupLabel(next),
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        changes: { controlledGroup: { before: previous, after: next } },
+        metadata: { productName: after.name },
     });
 };
 
@@ -778,6 +876,75 @@ export const createProduct = async (input: {
     return created;
 };
 
+/**
+ * Revisa, **sin escribir nada**, que cada alta se pueda crear: lo mismo que
+ * `createProduct` rechazaría (nombre/SKU, precios, categoría, caja, unicidad
+ * contra el catálogo) y además que no choquen entre sí.
+ *
+ * Existe para las entradas con productos en línea (SPEC 55): se corre antes de
+ * dar de alta el primero, porque un rechazo después deja un producto huérfano y
+ * cada reintento choca por SKU. No cierra la carrera con otra alta simultánea;
+ * eso lo sigue haciendo la transacción de `createProduct`.
+ */
+export const assertProductsCreatable = async (
+    inputs: Array<Omit<Parameters<typeof createProduct>[0], 'actor'>>,
+): Promise<void> => {
+    const seen = new Map<string, string>();
+    const claim = (value: string | undefined, namespace: string, label: string): void => {
+        if (!value) {
+            return;
+        }
+        const key = `${namespace}:${value}`;
+        if (seen.has(key)) {
+            throw conflict(`Dos productos nuevos de la entrada tienen el mismo ${label}`);
+        }
+        seen.set(key, label);
+    };
+
+    const categoryIds = new Set<string>();
+    for (const input of inputs) {
+        const name = input.name.trim();
+        const sku = input.sku.trim();
+        const barcode = input.barcode?.trim() || undefined;
+        const boxBarcode = input.boxBarcode?.trim() || undefined;
+        if (!name || !sku) {
+            throw badRequest('Nombre y SKU son requeridos');
+        }
+        if (input.salePrice < 0 || input.minStock < 0) {
+            throw badRequest('Precio y stock mínimo deben ser positivos');
+        }
+        const boxProblem = boxConfigProblem({ ...input, boxBarcode });
+        if (boxProblem) {
+            throw badRequest(boxProblem);
+        }
+        // Los códigos de barras comparten espacio con el SKU de caja, igual que
+        // en `assertNoDuplicate` del repositorio.
+        claim(sku, 'sku', 'SKU');
+        // Mismo nombre normalizado (SPEC 60), no el texto exacto.
+        claim(productNameKey(name, input.concentration?.trim()), 'name', 'nombre');
+        claim(barcode, 'code', 'código de barras');
+        claim(boxBarcode, 'code', 'código de barras');
+        categoryIds.add(input.categoryId);
+    }
+
+    for (const categoryId of categoryIds) {
+        const category = await categoriesRepo.getCategoryById(categoryId);
+        if (!category || !category.isActive) {
+            throw notFound('Categoría');
+        }
+    }
+
+    for (const input of inputs) {
+        await productsRepo.assertUniqueOutsideTransaction({
+            sku: input.sku.trim(),
+            name: input.name.trim(),
+            concentration: input.concentration?.trim(),
+            barcode: input.barcode?.trim() || undefined,
+            boxBarcode: input.boxBarcode?.trim() || undefined,
+        });
+    }
+};
+
 type CreateProductInput = {
     name: string;
     sku: string;
@@ -867,7 +1034,8 @@ export const updateProduct = async (
         hasIvaZero: boolean;
         hasIeps: boolean;
         concentration: string;
-        controlledGroup: ControlledGroup;
+        /** `null` desclasifica el producto (SPEC 64). */
+        controlledGroup: ControlledGroup | null;
         iepsRate: number;
         requiresPrescription: boolean;
         isActive: boolean;
@@ -877,6 +1045,14 @@ export const updateProduct = async (
         boxBarcode: string | null;
     }>,
     actor?: AuditActor,
+    options: {
+        /**
+         * `updatedAt` de la copia con la que editó la caja (SPEC 56). Si el panel
+         * cambió precio o estado después y el PATCH los toca, esos dos no se
+         * escriben, el resto sí, y se responde 409 `CATALOG_CONFLICT`.
+         */
+        baseUpdatedAt?: string;
+    } = {},
 ): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
@@ -900,7 +1076,7 @@ export const updateProduct = async (
     const sku = input.sku?.trim();
     const barcode = input.barcode?.trim();
 
-    const updated = await productsRepo.updateProduct(id, {
+    const result = await productsRepo.updateProductChecked(id, {
         name,
         sku,
         barcode,
@@ -920,14 +1096,30 @@ export const updateProduct = async (
         boxQuantity: input.boxQuantity,
         boxPrice: input.boxPrice,
         boxBarcode: input.boxBarcode === null ? null : input.boxBarcode?.trim(),
-    });
+    }, { baseUpdatedAt: options.baseUpdatedAt });
+    const { product: updated, conflict: catalogConflict } = result;
 
     await auditProductUpdate(existing, updated, actor);
+    await auditControlledGroupChange(existing, updated, actor);
     await auditBoxPriceReview(existing, updated, actor);
     if (updated.salePrice !== existing.salePrice) {
         await retirePromotionsBrokenByPrice(updated, actor);
     }
     catalogSnapshot.clearCatalogSnapshot();
+    if (catalogConflict) {
+        // Lo demás ya se guardó; la caja decide entre el valor del panel y el suyo
+        // (reenviar sin `baseUpdatedAt` fuerza el suyo).
+        throw new AppError(
+            409,
+            'CONFLICT',
+            'El precio o el estado del producto cambió en el panel después de la ' +
+                'última sincronización de la caja',
+            {
+                syncCode: 'CATALOG_CONFLICT',
+                details: { current: catalogConflict.current },
+            },
+        );
+    }
     return updated;
 };
 

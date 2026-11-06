@@ -20,16 +20,24 @@ import {
     voidSaleSchema,
     createUnreconciledSaleSchema,
     listUnreconciledSalesQuerySchema,
+    resolveUnreconciledSaleSchema,
 } from '../../schemas';
 import * as salesService from '../../services/sales.service';
+import { SaleResponse, toSaleResponse } from '../../utils/sale-response';
 import * as receiptsService from '../../services/receipts.service';
 import * as unreconciledSalesService from '../../services/unreconciled-sales.service';
-import { AppError, badRequest } from '../../utils/errors';
+import { badRequest, describeSyncError } from '../../utils/errors';
+import { SyncErrorCode } from '../../constants/sync-error-codes';
 import { requiresIdempotencyKey } from '../../config/env';
 import { AuthUser } from '../../types';
+import { hasPermission } from '../../constants/permissions';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
-import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import {
+    formatZodError,
+    spanishZodErrorMap,
+    ZodValidationPipe,
+} from '../../common/zod-validation.pipe';
 
 type CreateSaleInput = z.infer<typeof createSaleSchema>;
 type BulkCreateSalesInput = z.infer<typeof bulkCreateSalesSchema>;
@@ -39,6 +47,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 type VoidSaleInput = z.infer<typeof voidSaleSchema>;
 type CreateUnreconciledInput = z.infer<typeof createUnreconciledSaleSchema>;
 type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
+type ResolveUnreconciledInput = z.infer<typeof resolveUnreconciledSaleSchema>;
 
 /**
  * Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock.
@@ -47,6 +56,19 @@ type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
  * la farmacia sin cobrar—; con la bandera puesta, rechaza.
  */
 const logger = new Logger('SalesIdempotency');
+const bulkLogger = new Logger('SalesBulk');
+
+/**
+ * Presupuesto del lote (SPEC 48): la función vive 60 s y, si el lote no responde
+ * a tiempo, la caja no recibe ningún resultado y reintenta todo. A los 40 s lo
+ * que falte se devuelve `DEFERRED` sin procesarse y la caja lo manda en el
+ * siguiente envío. Se mide desde que la petición llega al handler.
+ */
+export const SALES_BULK_BUDGET_MS = 40_000;
+
+type BulkSaleResult =
+    | { ok: true; sale: SaleResponse }
+    | { ok: false; error: string; code: SyncErrorCode; retryable: boolean };
 
 const assertIdempotencyKey = (key: string | undefined, userId: string): void => {
     if (key) {
@@ -89,8 +111,14 @@ export class SalesController {
             cashierId: user.uid,
             roleSlug: user.role.slug,
         });
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
+
+    /**
+     * Presupuesto del lote en ms. Propiedad de la instancia para que una prueba
+     * lo fuerce (a 0 ms: todo `DEFERRED` y nada escrito) sin tocar el reloj.
+     */
+    bulkBudgetMs = SALES_BULK_BUDGET_MS;
 
     /**
      * Empuje del sync local-first del POS: procesa las ventas en el orden en que
@@ -98,6 +126,10 @@ export class SalesController {
      * devuelve un resultado por índice — una venta rechazada no tumba el resto
      * del lote. La `idempotencyKey` de cada una la protege de un reintento por
      * un corte de red a mitad del lote.
+     *
+     * SPEC 48: cada venta se valida aquí (`safeParse`), así una inválida responde
+     * `VALIDATION` solo en su índice; y al agotarse el presupuesto las restantes
+     * responden `DEFERRED` reintentable sin procesarse.
      */
     @Post('bulk')
     @RequirePermission('pos')
@@ -106,12 +138,41 @@ export class SalesController {
         @Body(new ZodValidationPipe(bulkCreateSalesSchema)) body: BulkCreateSalesInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const results: Array<
-            | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
-            | { ok: false; error: string; code?: string }
-        > = [];
+        const deadline = Date.now() + this.bulkBudgetMs;
+        const results: BulkSaleResult[] = [];
+        const callerHasPosWrite = hasPermission(
+            user.permissions ?? [],
+            'pos',
+            'write',
+            user.role.slug,
+        );
 
-        for (const item of body.items) {
+        for (const rawItem of body.items) {
+            if (Date.now() >= deadline) {
+                results.push({
+                    ok: false,
+                    code: 'DEFERRED',
+                    error: 'El lote no alcanzó a procesar esta venta; se enviará en el ' +
+                        'siguiente intento',
+                    retryable: true,
+                });
+                continue;
+            }
+
+            const parsed = createSaleSchema.safeParse(rawItem, {
+                errorMap: spanishZodErrorMap,
+            });
+            if (!parsed.success) {
+                results.push({
+                    ok: false,
+                    code: 'VALIDATION',
+                    error: formatZodError(parsed.error),
+                    retryable: false,
+                });
+                continue;
+            }
+            const item = parsed.data;
+
             try {
                 // Con la bandera encendida cada venta del lote exige su llave: un
                 // reintento del lote completo (corte de red, timeout de 60 s) ya no
@@ -122,17 +183,24 @@ export class SalesController {
                     cashierId: user.uid,
                     roleSlug: user.role.slug,
                     offline: true,
+                    // `soldBy` (SPEC 54) solo vale para quien puede vender.
+                    callerHasPosWrite,
                 });
-                results.push({ ok: true, sale });
+                results.push({ ok: true, sale: toSaleResponse(sale) });
             } catch (error) {
-                const message = error instanceof AppError || error instanceof Error
-                    ? error.message
-                    : 'Error desconocido';
-                results.push({
-                    ok: false,
-                    error: message,
-                    ...(error instanceof AppError ? { code: error.code } : {}),
-                });
+                // Contrato de SPEC 49: la caja decide por `code` y `retryable`, no por
+                // el texto. Lo que no es un rechazo de negocio (un `ABORTED` de
+                // Firestore tras sus reintentos, un 5xx) sale `INTERNAL` reintentable.
+                const { code, retryable, message } = describeSyncError(error);
+                if (code === 'INTERNAL') {
+                    // El lote se traga el error para seguir con las demás ventas: sin
+                    // este registro un 500 dentro del bulk no dejaba rastro.
+                    bulkLogger.error(
+                        `Venta del lote no procesada (cajero ${user.uid}): ` +
+                        (error instanceof Error ? error.stack ?? error.message : String(error)),
+                    );
+                }
+                results.push({ ok: false, error: message, code, retryable });
             }
         }
 
@@ -175,15 +243,24 @@ export class SalesController {
         return { data: result.items, meta: result.meta };
     }
 
-    /** La marca como atendida; el documento se conserva como rastro. */
+    /**
+     * Resuelve una venta no conciliada (SPEC 53): `register` la crea como venta
+     * offline con el payload guardado; `discard` la descarta con motivo. El
+     * documento se conserva como rastro. `sales:write` (admin y gerente).
+     */
     @Post('unreconciled/:id/resolve')
     @RequirePermission('sales')
     async resolveUnreconciled(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(resolveUnreconciledSaleSchema)) body: ResolveUnreconciledInput,
         @CurrentUser() user: AuthUser,
     ) {
-        await unreconciledSalesService.resolveUnreconciledSale(params.id, user.uid);
-        return { data: { id: params.id, resolved: true } };
+        const result = await unreconciledSalesService.resolveUnreconciledSale(
+            params.id,
+            body,
+            { userId: user.uid, roleSlug: user.role.slug },
+        );
+        return { data: result };
     }
 
     @Get()
@@ -199,6 +276,7 @@ export class SalesController {
             includeVoided: query.includeVoided,
             search: query.search,
             promotionReview: query.promotionReview,
+            review: query.review,
             paymentMethod: query.paymentMethod,
             after: query.after,
             page: query.page ? Number(query.page) : undefined,
@@ -206,7 +284,7 @@ export class SalesController {
             requesterId: user.uid,
             requesterRoleSlug: user.role.slug,
         });
-        return { data: result.items, meta: result.meta };
+        return { data: result.items.map(toSaleResponse), meta: result.meta };
     }
 
     @Get(':id')
@@ -217,7 +295,7 @@ export class SalesController {
     ) {
         const sale = await salesService.getSale(params.id);
         await salesService.assertCanReadSale(sale, user.uid, user.role.slug);
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
 
     /** Ticket imprimible: JSON estructurado + HTML para rollo térmico 58/80mm. */
@@ -252,6 +330,6 @@ export class SalesController {
     ) {
         salesService.assertCanVoidSale(user);
         const sale = await salesService.voidSale(params.id, user.uid, user.role.slug, body);
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
 }

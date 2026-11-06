@@ -1,4 +1,10 @@
-import { PosBlockedSale } from '../types';
+import {
+    PosBlockedSale,
+    PosStockDivergence,
+    PosStockDrift,
+    PosStockSampleItem,
+} from '../types';
+import { APP_TIME_ZONE, addDaysYmd, getZonedYmd } from '../utils/timezone';
 
 /**
  * Reglas de alerta de la salud de cajas (SPEC 44). Funciones puras: deciden,
@@ -91,4 +97,97 @@ export const shouldAlertSilence = (
         return false;
     }
     return nowMs - snapshot.receivedAt.getTime() > thresholdMs;
+};
+
+/** Tope de productos divergentes guardados en el snapshot (SPEC 67). */
+export const MAX_STOCK_DIVERGING = 50;
+
+/**
+ * Un `productId` que no puede ser id de documento (vacío, con `/`, `.`/`..` o
+ * `__x__`) se descarta en vez de rechazar el diagnóstico entero: `doc()` lo
+ * tomaría como ruta y el reporte de la caja se perdería por un dato.
+ */
+export const isComparableProductId = (id: string): boolean =>
+    id.trim() !== '' && !id.includes('/') && id !== '.' && id !== '..' && !/^__.*__$/.test(id);
+
+/**
+ * Ids de la muestra que sí se comparan: válidos y sin repetir (gana el primero,
+ * que es el que la caja puso más arriba).
+ */
+export const comparableSample = (sample: PosStockSampleItem[]): PosStockSampleItem[] => {
+    const seen = new Set<string>();
+    return sample.filter((item) => {
+        if (!isComparableProductId(item.productId) || seen.has(item.productId)) {
+            return false;
+        }
+        seen.add(item.productId);
+        return true;
+    });
+};
+
+/**
+ * Compara la muestra de la caja contra `products.totalStock` (SPEC 67). Un
+ * producto que ya no existe en el servidor diverge con `server: null`. Se
+ * guardan hasta 50 divergentes, en el orden de la muestra (los más vendidos).
+ */
+export const compareStockSample = (
+    sample: PosStockSampleItem[],
+    server: ReadonlyMap<string, { name: string; totalStock: number }>,
+    checkedAt: Date,
+): PosStockDrift => {
+    const items = comparableSample(sample);
+    const diverging: PosStockDivergence[] = [];
+    for (const item of items) {
+        const stored = server.get(item.productId);
+        if (stored && stored.totalStock === item.localStock) {
+            continue;
+        }
+        diverging.push({
+            productId: item.productId,
+            name: stored?.name ?? null,
+            local: item.localStock,
+            server: stored ? stored.totalStock : null,
+        });
+    }
+    return {
+        checkedAt: checkedAt.toISOString(),
+        compared: items.length,
+        diverging: diverging.slice(0, MAX_STOCK_DIVERGING),
+    };
+};
+
+/** Día local (`YYYY-MM-DD`) de un `checkedAt`; `null` si no se puede leer. */
+const driftDay = (drift: PosStockDrift | null | undefined): string | null => {
+    const ms = drift ? Date.parse(drift.checkedAt) : NaN;
+    return Number.isFinite(ms) ? getZonedYmd(ms, APP_TIME_ZONE) : null;
+};
+
+/**
+ * ¿Ya se comparó hoy? La caja manda la muestra una vez al día, pero un reinicio
+ * después de las 07:00 la volvería a mandar: con esto la comparación cuesta como
+ * máximo una muestra (≤ 300 lecturas) por caja al día, y la de la mañana queda.
+ */
+export const isStockDriftFromToday = (
+    drift: PosStockDrift | null | undefined,
+    nowDate: Date,
+): boolean => driftDay(drift) === getZonedYmd(nowDate.getTime(), APP_TIME_ZONE);
+
+/**
+ * Divergencias que se repiten **dos días seguidos** en el mismo producto
+ * (SPEC 67): la comparación de hoy contra la de ayer (día calendario local). Una
+ * diferencia de un solo día no alerta —puede ser una venta en vuelo—, y como se
+ * compara a lo más una vez al día, tampoco se avisa dos veces el mismo día.
+ * Devuelve las de hoy, con sus cifras de hoy.
+ */
+export const repeatedStockDivergences = (
+    previous: PosStockDrift | null | undefined,
+    current: PosStockDrift,
+): PosStockDivergence[] => {
+    const previousDay = driftDay(previous);
+    const currentDay = driftDay(current);
+    if (!previous || !previousDay || !currentDay || previousDay !== addDaysYmd(currentDay, -1)) {
+        return [];
+    }
+    const yesterday = new Set(previous.diverging.map((item) => item.productId));
+    return current.diverging.filter((item) => yesterday.has(item.productId));
 };

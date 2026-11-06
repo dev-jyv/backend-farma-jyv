@@ -11,6 +11,7 @@ import {
     ExpenseCategory,
     PaymentMethod,
     SaleReturn,
+    UnreconciledSale,
 } from '../types';
 import { badRequest, forbidden, notFound } from '../utils/errors';
 import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
@@ -18,6 +19,7 @@ import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as readingsRepo from '../repositories/cash-readings.repository';
+import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
 import { renderCashReportHtml } from './cash-reports.service';
 import { ReceiptWidth } from './receipts.service';
 import { db, now } from '../utils/firestore';
@@ -44,6 +46,7 @@ const buildSummary = (
     sales: cashSessionsRepo.SessionSaleRow[],
     movements: CashMovement[],
     returns: SaleReturn[],
+    unreconciledCash: number,
 ): {
     summary: CashSessionSummary;
     expectedCashAmount: number;
@@ -173,6 +176,7 @@ const buildSummary = (
             movements: movementTotals,
             grandTotal: round(grandTotal - returnTotals.total),
             cashInDrawer,
+            unreconciledCash,
             // El bloque solo existe si el turno vio servicios: un corte de un turno
             // sin ellos queda **byte a byte** como el de antes.
             ...(sawServices
@@ -192,6 +196,39 @@ const buildSummary = (
 };
 
 /**
+ * Efectivo de una venta no conciliada, leído del payload que la caja intentó
+ * registrar (SPEC 53): en efectivo es el total; en mixto, el total menos la
+ * parte con tarjeta (o lo recibido, si el payload no trae el reparto); con
+ * tarjeta o transferencia, nada.
+ */
+const unreconciledCashOf = (sale: UnreconciledSale): number => {
+    const payload = sale.payload ?? {};
+    const total = Number.isFinite(sale.total) ? sale.total : 0;
+    if (payload.paymentMethod === 'cash') {
+        return total;
+    }
+    if (payload.paymentMethod === 'mixed') {
+        if (typeof payload.cardAmount === 'number') {
+            return Math.max(0, total - payload.cardAmount);
+        }
+        if (typeof payload.amountReceived === 'number') {
+            return Math.max(0, Math.min(total, payload.amountReceived));
+        }
+    }
+    return 0;
+};
+
+/** Efectivo de las no conciliadas pendientes del turno, en centavos exactos. */
+const loadUnreconciledCash = async (cashSessionId: string): Promise<number> => {
+    const pending = await unreconciledRepo.listPendingUnreconciledForSession(cashSessionId);
+    const cents = pending.reduce(
+        (sum, sale) => sum + Math.round(unreconciledCashOf(sale) * 100),
+        0,
+    );
+    return cents / 100;
+};
+
+/**
  * Un turno de caja es de quien lo abrió: solo ese cajero (o un admin) puede
  * consultarlo, moverlo o cargarle ventas y devoluciones. Se exporta porque
  * `sales.service` y `sale-returns.service` deben aplicar la misma regla: sin ella
@@ -207,6 +244,7 @@ export const assertCanAccessSession = (
     if (session.openedBy !== userId && roleSlug !== 'admin') {
         throw forbidden(
             'Solo el cajero que abrió el turno o un administrador puede usarlo',
+            'SESSION_FORBIDDEN',
         );
     }
 };
@@ -214,10 +252,55 @@ export const assertCanAccessSession = (
 export const getCurrentSession = async (userId: string): Promise<CashSession | null> =>
     cashSessionsRepo.getOpenSessionForUser(userId);
 
-export const openSession = async (userId: string, openingAmount: number): Promise<CashSession> => {
-    return cashSessionsRepo.createCashSessionIfNoneOpen({
+/** Arqueo de apertura que manda el POS (SPEC 63); todo opcional por compatibilidad. */
+export interface OpeningCountInput {
+    openingCounted?: number;
+    inheritedFloat?: number;
+    openingNote?: string;
+}
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+/**
+ * Fondo del turno: lo **contado** al abrir cuando hubo arqueo (SPEC 63), o el
+ * `openingAmount` de siempre. El Z parte de aquí, no de lo heredado.
+ */
+export const sessionFloat = (
+    session: Pick<CashSession, 'openingAmount' | 'openingCounted'>,
+): number => (typeof session.openingCounted === 'number'
+    ? session.openingCounted
+    : session.openingAmount);
+
+/**
+ * Abre el turno. Con arqueo de apertura (SPEC 63) el fondo es lo contado y la
+ * diferencia contra lo heredado queda en el turno nuevo y, si no es cero, en el
+ * anterior (`followingOpeningDifference`) y en la bitácora: el faltante del
+ * turno anterior ya no aparece en el corte de quien abre. Sin `openingCounted`
+ * (POS anterior) todo sigue como antes.
+ */
+export const openSession = async (
+    userId: string,
+    openingAmount: number,
+    opening: OpeningCountInput & { roleSlug?: string | null } = {},
+): Promise<CashSession> => {
+    const counted = opening.openingCounted;
+    const hasCount = typeof counted === 'number';
+    const inherited = hasCount && typeof opening.inheritedFloat === 'number'
+        ? opening.inheritedFloat
+        : undefined;
+    const openingDifference = inherited !== undefined
+        ? round2(counted! - inherited)
+        : undefined;
+    const note = hasCount ? opening.openingNote?.trim() || undefined : undefined;
+
+    const created = await cashSessionsRepo.createCashSessionIfNoneOpen({
         openedBy: userId,
-        openingAmount,
+        // Para medir el tope de descuento de sus ventas subidas por otro (SPEC 54).
+        ...(opening.roleSlug ? { openedByRoleSlug: opening.roleSlug } : {}),
+        openingAmount: hasCount ? counted! : openingAmount,
+        ...(hasCount ? { openingCounted: counted } : {}),
+        ...(inherited !== undefined ? { inheritedFloat: inherited, openingDifference } : {}),
+        ...(note ? { openingNote: note } : {}),
         expectedCashAmount: null,
         countedCashAmount: null,
         cashDifference: null,
@@ -225,6 +308,29 @@ export const openSession = async (userId: string, openingAmount: number): Promis
         closedBy: null,
         closedAt: null,
     });
+    const { previousSessionId, ...session } = created;
+
+    // Contado igual a lo heredado: sin auditoría (SPEC 63).
+    if (openingDifference !== undefined && Math.abs(openingDifference) >= 0.01) {
+        await recordAudit({
+            action: 'cash.opening_difference',
+            entity: 'cashSession',
+            entityId: session.id,
+            summary: `Apertura de turno con diferencia de ${openingDifference.toFixed(2)} ` +
+                `contra el fondo heredado (heredado ${inherited!.toFixed(2)}, ` +
+                `contado ${counted!.toFixed(2)})`,
+            userId,
+            roleSlug: opening.roleSlug ?? null,
+            metadata: {
+                openingCounted: counted,
+                inheritedFloat: inherited,
+                openingDifference,
+                openingNote: note ?? null,
+                previousSessionId: previousSessionId ?? null,
+            },
+        });
+    }
+    return session;
 };
 
 export const getSessionSummary = async (
@@ -244,22 +350,26 @@ export const getSessionSummary = async (
     }
     assertCanAccessSession(session, userId, roleSlug);
 
-    const [sales, movements, returns] = await Promise.all([
+    const [sales, movements, returns, unreconciledCash] = await Promise.all([
         cashSessionsRepo.listSalesForSession(id),
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
+        sessionFloat(session),
         sales,
         movements,
         returns,
+        unreconciledCash,
     );
 
     if (session.closedAt && session.summary) {
         return {
             session,
-            summary: session.summary,
+            // El corte congelado, con las no conciliadas de **ahora**: una venta
+            // puede caer ahí después del cierre y ese efectivo está en el cajón.
+            summary: { ...session.summary, unreconciledCash },
             expectedCashAmount: session.expectedCashAmount ?? expectedCashAmount,
             expectedServicesCashAmount:
                 session.expectedServicesCashAmount ?? expectedServicesCashAmount,
@@ -300,16 +410,18 @@ export const buildXReport = async (
         throw badRequest('El turno de caja ya está cerrado: usa el corte Z');
     }
 
-    const [sales, movements, returns] = await Promise.all([
+    const [sales, movements, returns, unreconciledCash] = await Promise.all([
         cashSessionsRepo.listSalesForSession(id),
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
+        sessionFloat(session),
         sales,
         movements,
         returns,
+        unreconciledCash,
     );
 
     let reading: CashReading | null = null;
@@ -387,51 +499,83 @@ export const closeSession = async (
     }
     assertCanAccessSession(session, userId, roleSlug);
 
-    const [sales, movements, returns] = await Promise.all([
-        cashSessionsRepo.listSalesForSession(id),
+    // Movimientos y devoluciones se leen antes; las ventas se releen **dentro** de
+    // la transacción de cierre (SPEC 52): una venta que confirma entre este punto
+    // y el cierre aparece en el corte congelado en vez de quedar en el turno pero
+    // fuera del resumen. Si llega mientras la transacción corre, Firestore la
+    // reintenta y el resumen se rehace con ella.
+    const [movements, returns, unreconciledCash] = await Promise.all([
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
-    const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
-        sales,
-        movements,
-        returns,
-    );
-    /**
-     * El cajón es **uno**: el cajero cuenta el efectivo una sola vez y hay una
-     * sola diferencia. Los dos esperados son informativos, así que el arqueo va
-     * contra su **suma** —no hay segundo conteo ni segunda diferencia.
-     *
-     * Se redondea a centavos ANTES de comparar: en coma flotante
-     * `500.01 - 500` da 0.009999999999990905, que no pasa el `>= 0.01` y dejaba
-     * un centavo real de faltante cerrando el turno como si cuadrara. Además
-     * evita persistir e imprimir diferencias tipo -39.999999999.
-     */
-    const expectedDrawerAmount = expectedCashAmount + expectedServicesCashAmount;
-    const cashDifference = Math.round((countedCashAmount - expectedDrawerAmount) * 100) / 100;
     // La marca la manda el cliente, pero solo se respeta si el turno de verdad venció:
     // con `true` en cualquier cierre un faltante nunca llegaba a la cola de revisión.
     const autoClosedByExpiry = (options.autoClosedByExpiry ?? false) &&
         isSessionExpired(session);
-    // Un cierre automático a las 24:00 nunca genera ajuste pendiente: no hay
-    // cajero presente para explicar la diferencia, y forzar una aprobación de
-    // admin sobre un cierre que nadie autorizó en el momento no tiene sentido —
-    // el backend ya recalculó `expectedCashAmount` de forma autoritativa, así
-    // que cualquier pequeña discrepancia local queda absorbida silenciosamente.
-    const hasPendingAdjustment = !autoClosedByExpiry && Math.abs(cashDifference) >= 0.01;
 
-    const closed = await cashSessionsRepo.closeCashSession(id, {
-        closedBy: userId,
-        countedCashAmount,
+    let computed!: {
+        summary: CashSessionSummary;
+        expectedCashAmount: number;
+        expectedServicesCashAmount: number;
+        expectedDrawerAmount: number;
+        cashDifference: number;
+        hasPendingAdjustment: boolean;
+    };
+    const closed = await cashSessionsRepo.closeCashSession(id, (sales) => {
+        const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
+            sessionFloat(session),
+            sales,
+            movements,
+            returns,
+            unreconciledCash,
+        );
+        /**
+         * El cajón es **uno**: el cajero cuenta el efectivo una sola vez y hay una
+         * sola diferencia. Los dos esperados son informativos, así que el arqueo va
+         * contra su **suma** —no hay segundo conteo ni segunda diferencia.
+         *
+         * Se redondea a centavos ANTES de comparar: en coma flotante
+         * `500.01 - 500` da 0.009999999999990905, que no pasa el `>= 0.01` y dejaba
+         * un centavo real de faltante cerrando el turno como si cuadrara. Además
+         * evita persistir e imprimir diferencias tipo -39.999999999.
+         */
+        const expectedDrawerAmount = expectedCashAmount + expectedServicesCashAmount;
+        const cashDifference =
+            Math.round((countedCashAmount - expectedDrawerAmount) * 100) / 100;
+        // Un cierre automático a las 24:00 nunca genera ajuste pendiente: no hay
+        // cajero presente para explicar la diferencia, y forzar una aprobación de
+        // admin sobre un cierre que nadie autorizó en el momento no tiene sentido —
+        // el backend ya recalculó `expectedCashAmount` de forma autoritativa, así
+        // que cualquier pequeña discrepancia local queda absorbida silenciosamente.
+        const hasPendingAdjustment = !autoClosedByExpiry && Math.abs(cashDifference) >= 0.01;
+        computed = {
+            summary,
+            expectedCashAmount,
+            expectedServicesCashAmount,
+            expectedDrawerAmount,
+            cashDifference,
+            hasPendingAdjustment,
+        };
+        return {
+            closedBy: userId,
+            countedCashAmount,
+            expectedCashAmount,
+            expectedServicesCashAmount,
+            cashDifference,
+            summary,
+            hasPendingAdjustment,
+            adjustmentStatus: hasPendingAdjustment ? 'pending' : null,
+            autoClosedByExpiry,
+        };
+    });
+    const {
+        summary,
         expectedCashAmount,
         expectedServicesCashAmount,
+        expectedDrawerAmount,
         cashDifference,
-        summary,
-        hasPendingAdjustment,
-        adjustmentStatus: hasPendingAdjustment ? 'pending' : null,
-        autoClosedByExpiry,
-    });
+    } = computed;
 
     // Un corte que no cuadra es el primer síntoma de faltante: queda en bitácora,
     // y además el turno queda marcado como pendiente de revisión de un admin
@@ -665,6 +809,7 @@ export const listCashSessions = async (filters: {
     to?: string;
     openedBy?: string;
     adjustmentStatus?: CashAdjustmentStatus;
+    needsReview?: boolean;
     page?: number;
     limit?: number;
 }): Promise<{ items: CashSessionWithUsers[]; meta: ListMeta }> => {

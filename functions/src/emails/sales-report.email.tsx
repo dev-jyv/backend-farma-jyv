@@ -47,6 +47,24 @@ const reviewFoliosLabel = (review: SalesReport['promotionReview']): string => {
     return rest > 0 ? `${shown} y ${rest} más` : shown;
 };
 
+/** Marcas de revisión de las ventas offline (SPEC 52), en el orden del correo. */
+const SALE_REVIEW_LABELS: Array<{
+    kind: keyof SalesReport['saleReview'];
+    label: string;
+}> = [
+    { kind: 'stock', label: 'Con faltante de stock' },
+    { kind: 'catalog', label: 'Con producto o servicio inactivo' },
+    { kind: 'late', label: 'Cobradas con el turno ya cerrado' },
+];
+
+/** "Cobrado bajo catálogo: 3 partidas, −$45.00" (SPEC 64). */
+export const priceDeviationLabel = (
+    deviation: { count: number; amount: number },
+): string => `Cobrado bajo catálogo: ${deviation.count} ` +
+    `${deviation.count === 1 ? 'partida' : 'partidas'}, −${formatCurrency(deviation.amount)}`;
+
+const groupLabel = (group: string | null): string => (group ? `Grupo ${group}` : 'Sin grupo');
+
 const percentLabel = (value: number | null): string =>
     value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
@@ -62,6 +80,10 @@ const monthDeltaLabel = (report: MonthlySalesReport): string => {
 export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
     const { totals, branches, expenses } = report;
     const review = report.promotionReview;
+    const saleReviews = SALE_REVIEW_LABELS
+        .map((entry) => ({ ...entry, review: report.saleReview[entry.kind] }))
+        .filter((entry) => entry.review.count > 0);
+    const saleReviewCount = saleReviews.reduce((sum, entry) => sum + entry.review.count, 0);
     const netTone = report.netResult >= 0 ? palette.positive : palette.negative;
 
     const expenseRows: DataRow[] = expenses.byCategory.map((entry) => ({
@@ -224,6 +246,102 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                             </Text>
                             <Text style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}>
                                 {reviewFoliosLabel(review)}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {saleReviewCount > 0 ? (
+                        <ReportSection
+                            title={`Ventas sin conexión por revisar (${saleReviewCount})`}
+                        >
+                            <Text style={{ ...text.label, color: palette.expense }}>
+                                {'Se cobraron sin conexión y se registraron aunque el servidor ' +
+                                    'no pudo aplicarlas completas. Revísalas en el historial de ' +
+                                    'ventas del admin con el filtro de revisión.'}
+                            </Text>
+                            {saleReviews.map((entry) => (
+                                <Text
+                                    key={entry.kind}
+                                    style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}
+                                >
+                                    {`${entry.label} (${entry.review.count}): ` +
+                                        reviewFoliosLabel(entry.review)}
+                                </Text>
+                            ))}
+                        </ReportSection>
+                    ) : null}
+
+                    {report.kind === 'daily' && report.unreconciledPending.count > 0 ? (
+                        <ReportSection
+                            title={`Ventas no conciliadas pendientes (${
+                                report.unreconciledPending.count})`}
+                        >
+                            <Text style={{ ...text.label, color: palette.negative }}>
+                                {'Se cobraron en caja pero el servidor no pudo registrarlas: ' +
+                                    'no están en las cifras de este reporte ni en el corte. ' +
+                                    'Regístralas o descártalas en «Ventas no conciliadas» ' +
+                                    'del panel. Incluye las pendientes de días anteriores.'}
+                            </Text>
+                            <Text style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}>
+                                {`${formatCurrency(report.unreconciledPending.total)} cobrados ` +
+                                    `en ${report.unreconciledPending.count} ` +
+                                    (report.unreconciledPending.count === 1 ? 'venta' : 'ventas')}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {/*
+                      * SPEC 64: la caja puede editar precios. Una línea, no una
+                      * tabla: el detalle por partida está en el reporte
+                      * «Precio cobrado distinto al catálogo» del panel. Se
+                      * destaca solo pasando `PRICE_DEVIATION_ALERT_MXN`, para que
+                      * un redondeo de centavos no se lea igual que un precio
+                      * rebajado a la mitad.
+                      */}
+                    {report.kind === 'daily' && report.priceDeviation.count > 0 ? (
+                        <ReportSection title="Precio cobrado distinto al catálogo">
+                            <Text
+                                data-alert={report.priceDeviation.alert ? 'true' : 'false'}
+                                style={{
+                                    ...text.value,
+                                    textAlign: 'left',
+                                    margin: 0,
+                                    color: report.priceDeviation.alert
+                                        ? palette.negative
+                                        : palette.ink,
+                                    fontWeight: report.priceDeviation.alert ? 700 : 400,
+                                }}
+                            >
+                                {priceDeviationLabel(report.priceDeviation)}
+                            </Text>
+                            <Text style={text.note}>
+                                {(report.priceDeviation.alert
+                                    ? `Supera el umbral de ${
+                                        formatCurrency(report.priceDeviation.threshold)}. `
+                                    : '') +
+                                    'El detalle por partida, cajero y producto está en el ' +
+                                    'reporte «Precio cobrado distinto al catálogo» del panel.'}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {report.kind === 'daily' && report.controlledGroupChanges.length > 0 ? (
+                        <ReportSection
+                            title={`Cambios de grupo controlado (${
+                                report.controlledGroupChanges.length})`}
+                        >
+                            <DataTable
+                                rows={report.controlledGroupChanges.map((change, index) => ({
+                                    key: `${change.time}-${index}`,
+                                    label: `${change.time} · ${change.productName}`,
+                                    sublabel: change.userLabel,
+                                    value: `${groupLabel(change.before)} → ` +
+                                        groupLabel(change.after),
+                                }))}
+                            />
+                            <Text style={text.note}>
+                                {'Quitar el grupo deja de exigir receta y libro de control ' +
+                                    'para ese producto.'}
                             </Text>
                         </ReportSection>
                     ) : null}

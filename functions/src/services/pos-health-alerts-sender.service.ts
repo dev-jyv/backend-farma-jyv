@@ -1,9 +1,10 @@
 import {
     PosBlockedSalesAlertEmail,
     PosSilenceAlertEmail,
+    PosStockDriftAlertEmail,
 } from '../emails/pos-health-alert.email';
 import * as diagnosticsRepo from '../repositories/pos-diagnostics.repository';
-import { PosDiagnosticsInput } from '../types';
+import { PosDiagnosticsInput, PosStockDivergence, PosStockDrift } from '../types';
 import { APP_TIME_ZONE, formatLocalDateTime, getZonedYmd } from '../utils/timezone';
 import { sendReportEmail } from './email.service';
 import {
@@ -98,6 +99,34 @@ export const sendBlockedSalesAlert = async (
                 pushError: sale.pushError,
                 isNew: newIds.has(sale.localId),
             })),
+        }),
+    });
+};
+
+export const stockDriftSubject = (deviceName: string, count: number): string =>
+    `Caja ${deviceName}: ${count} ${count === 1 ? 'producto' : 'productos'} con stock ` +
+    'distinto al servidor dos días seguidos';
+
+/**
+ * Correo de divergencia de stock repetida dos días seguidos (SPEC 67). Lanza si
+ * Resend falla: quien lo llama (`reportDiagnostics`) traga el error.
+ */
+export const sendStockDriftAlert = async (
+    diagnostics: Pick<PosDiagnosticsInput, 'deviceName'>,
+    repeated: PosStockDivergence[],
+    drift: PosStockDrift,
+): Promise<void> => {
+    if (repeated.length === 0) {
+        return;
+    }
+    await sendReportEmail({
+        subject: stockDriftSubject(diagnostics.deviceName, repeated.length),
+        react: PosStockDriftAlertEmail({
+            deviceName: diagnostics.deviceName,
+            checkedAtLocal: formatLocalDateTime(new Date(drift.checkedAt)),
+            compared: drift.compared,
+            divergingToday: drift.diverging.length,
+            repeated,
         }),
     });
 };

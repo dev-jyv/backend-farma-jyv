@@ -9,6 +9,7 @@ import {
     ExpensePaymentMethod,
     Sale,
     isSaleProductItem,
+    saleBusinessAt,
     isSaleServiceItem,
 } from '../types';
 import { formatCurrency } from '../utils/currency';
@@ -144,7 +145,9 @@ export const buildSalesRows = (
 ): SalesPdfRow[] =>
     [...sales]
         .filter((sale) => !sale.voidedAt)
-        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis())
+        // Orden y fecha por fecha de negocio (SPEC 51): la venta offline sale el día
+        // en que se cobró, no el día en que llegó.
+        .sort((a, b) => saleBusinessAt(a).toMillis() - saleBusinessAt(b).toMillis())
         .flatMap((sale) => {
             const products = sale.items.filter(isSaleProductItem);
             const services = sale.items.filter(isSaleServiceItem);
@@ -171,7 +174,7 @@ export const buildSalesRows = (
                 return [];
             }
 
-            const at = sale.createdAt.toDate();
+            const at = saleBusinessAt(sale).toDate();
             return [
                 {
                     date: dateFormatter.format(at),
@@ -307,7 +310,11 @@ export const buildSalesPdf = async (input: {
         input.kind === 'daily'
             ? dayRange(input.period ?? todayYmd(now))
             : monthRange(input.period ?? currentMonth(now));
-    const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
+    const { items: sales } = await salesRepo.listSales({
+        from: range.from,
+        to: range.to,
+        byBusinessDate: true,
+    });
     const cashierNames = await resolveUserNames(sales.map((sale) => sale.cashierId));
     const rows = buildSalesRows(sales, input.scope, cashierNames);
     const html = salesReportHtml({

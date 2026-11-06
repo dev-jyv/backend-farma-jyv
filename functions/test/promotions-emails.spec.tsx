@@ -152,6 +152,14 @@ describe('reporte de ventas: promociones por revisar', () => {
         sales: [],
         topProducts: [],
         promotionReview: { count: folios.length, folios },
+        saleReview: {
+            stock: { count: 0, folios: [] },
+            catalog: { count: 0, folios: [] },
+            late: { count: 0, folios: [] },
+        },
+        unreconciledPending: { count: 0, total: 0 },
+        priceDeviation: { count: 0, amount: 0, threshold: 200, alert: false },
+        controlledGroupChanges: [],
     });
 
     it('lista folios e invita a revisarlas en el historial del admin', () => {

@@ -2,13 +2,26 @@ import { z } from 'zod';
 import { cursorField, isoDate, money, paginationFields, positiveMoney, qty } from './common';
 import { createProductSchema } from './catalog';
 import { idempotencyKeySchema } from './sales';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 
+/** Hoy en la farmacia: después de las 18:00 de México el día UTC ya es mañana. */
+const localToday = (): string => getZonedYmd(Date.now(), APP_TIME_ZONE);
+
+/** No se recibe mercancía vencida; "hoy" es el día local (SPEC 59). */
 const expiryDateSchema = isoDate.refine(
-    (value) => value >= new Date().toISOString().slice(0, 10),
+    (value) => value >= localToday(),
     { message: 'La fecha de caducidad no puede estar en el pasado' },
 );
 
 const lotNumberSchema = z.string().trim().min(1, 'El número de lote es requerido').max(40);
+
+/**
+ * Tope de partidas por entrada (SPEC 55). Una entrada es una sola transacción:
+ * sin tope, una lista grande topaba el límite de escrituras, el documento de
+ * 1 MiB o los 60 s de la función, y el reintento volvía a fallar igual.
+ */
+export const MAX_ENTRY_ITEMS = 200;
+const maxItemsMessage = `Una entrada admite como máximo ${MAX_ENTRY_ITEMS} partidas`;
 
 export const inventoryEntryProductSchema = z.object({
     productId: z.string().min(1),
@@ -22,7 +35,7 @@ export const bulkEntryGroupSchema = z.object({
     invoiceId: z.string().min(1).optional(),
     supplierId: z.string().min(1).optional(),
     notes: z.string().optional(),
-    items: z.array(inventoryEntryProductSchema).min(1),
+    items: z.array(inventoryEntryProductSchema).min(1).max(MAX_ENTRY_ITEMS, maxItemsMessage),
 }).refine(
     (data) => Boolean(data.invoiceId) !== Boolean(data.supplierId),
     { message: 'Cada entrada debe incluir invoiceId o supplierId, no ambos' },
@@ -36,8 +49,10 @@ export const bulkCreateEntriesSchema = z.object({
 
 export const inventoryEntrySchema = z.object({
     invoiceId: z.string().min(1),
-    products: z.array(inventoryEntryProductSchema).min(1).optional(),
-    items: z.array(inventoryEntryProductSchema).min(1).optional(),
+    products: z.array(inventoryEntryProductSchema).min(1)
+        .max(MAX_ENTRY_ITEMS, maxItemsMessage).optional(),
+    items: z.array(inventoryEntryProductSchema).min(1)
+        .max(MAX_ENTRY_ITEMS, maxItemsMessage).optional(),
     /** Una llave por captura, reenviada sin cambios en cada reintento. */
     idempotencyKey: idempotencyKeySchema.optional(),
 }).refine(
@@ -66,7 +81,7 @@ export const directInventoryEntryItemSchema = z
 export const directInventoryEntrySchema = z.object({
     supplierId: z.string().min(1),
     notes: z.string().optional(),
-    items: z.array(directInventoryEntryItemSchema).min(1),
+    items: z.array(directInventoryEntryItemSchema).min(1).max(MAX_ENTRY_ITEMS, maxItemsMessage),
     idempotencyKey: idempotencyKeySchema.optional(),
 });
 
@@ -95,6 +110,7 @@ export const listMovementsQuerySchema = z.object({
             'sale_adjustment',
             'return_in',
             'adjustment_count',
+            'entry_cancel',
         ])
         .optional(),
     from: z.string().optional(),
@@ -197,6 +213,16 @@ export const updateInvoiceAccountingSchema = z.object({
     { message: 'No hay nada que corregir' },
 );
 
+/**
+ * Cancelación de una entrada de mercancía (SPEC 58): el motivo queda en la
+ * entrada, en cada contramovimiento y en la bitácora.
+ */
+export const cancelInventoryEntrySchema = z.object({
+    reason: z.string().trim()
+        .min(5, 'El motivo debe tener al menos 5 caracteres')
+        .max(300, 'El motivo admite como máximo 300 caracteres'),
+});
+
 /** Cancelación de un abono: exige motivo, porque queda en la bitácora. */
 export const voidSupplierPaymentSchema = z.object({
     reason: z.string().trim().min(1, 'El motivo es requerido').max(300),
@@ -212,7 +238,7 @@ export const createSupplierPaymentSchema = z.object({
     paymentMethod: z.enum(['cash', 'transfer', 'card']),
     /** Ausente = hoy. No se admite futuro: un pago que no ocurrió no es pago. */
     paidAt: isoDate
-        .refine((value) => value <= new Date().toISOString().slice(0, 10), {
+        .refine((value) => value <= localToday(), {
             message: 'La fecha del pago no puede estar en el futuro',
         })
         .optional(),
