@@ -530,6 +530,13 @@ export const openCashSessionSchema = z.object({
     openingNote: nullable(z.string().trim().max(1000).transform(
         (value) => value.slice(0, 200),
     )),
+    /**
+     * Hora en que la caja abrió el turno. Una caja sin conexión crea el turno en
+     * el servidor al sincronizar, horas o días después; sin esto `openedAt` es la
+     * hora de recepción y toda venta del turno parece anterior a la apertura.
+     * Una fecha ilegible no es 400 (atoraría la cola): `openSession` la ignora.
+     */
+    openedAt: z.string().max(64).optional(),
 });
 
 /** `true`/`false` como texto de query. */

@@ -22,6 +22,7 @@ import * as readingsRepo from '../repositories/cash-readings.repository';
 import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
 import { renderCashReportHtml } from './cash-reports.service';
 import { ReceiptWidth } from './receipts.service';
+import { Timestamp } from 'firebase-admin/firestore';
 import { db, now } from '../utils/firestore';
 import { recordAudit } from './audit.service';
 import { ListMeta, buildListMeta, parsePagination } from '../utils/pagination';
@@ -257,7 +258,32 @@ export interface OpeningCountInput {
     openingCounted?: number;
     inheritedFloat?: number;
     openingNote?: string;
+    /** Hora de apertura en la caja (ISO); ver `resolveReportedOpenedAt`. */
+    openedAt?: string;
 }
+
+/** Una apertura reportada más vieja que esto no se cree (como `soldAt`). */
+const REPORTED_OPENED_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Hora de apertura de la caja, solo si es **anterior** a ahora (una en el futuro
+ * es reloj adelantado y no aporta nada) y de los últimos 7 días, como `soldAt`.
+ * Ilegible o ausente, `undefined`: nunca rechaza el alta, que atoraría la cola
+ * de la caja.
+ */
+export const resolveReportedOpenedAt = (
+    value: string | undefined,
+    nowMs: number = Date.now(),
+): Timestamp | undefined => {
+    if (!value) {
+        return undefined;
+    }
+    const ms = Date.parse(value);
+    if (Number.isNaN(ms) || ms >= nowMs || ms < nowMs - REPORTED_OPENED_AT_MAX_AGE_MS) {
+        return undefined;
+    }
+    return Timestamp.fromMillis(ms);
+};
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
@@ -292,6 +318,7 @@ export const openSession = async (
         ? round2(counted! - inherited)
         : undefined;
     const note = hasCount ? opening.openingNote?.trim() || undefined : undefined;
+    const reportedOpenedAt = resolveReportedOpenedAt(opening.openedAt);
 
     const created = await cashSessionsRepo.createCashSessionIfNoneOpen({
         openedBy: userId,
@@ -301,6 +328,7 @@ export const openSession = async (
         ...(hasCount ? { openingCounted: counted } : {}),
         ...(inherited !== undefined ? { inheritedFloat: inherited, openingDifference } : {}),
         ...(note ? { openingNote: note } : {}),
+        ...(reportedOpenedAt ? { reportedOpenedAt } : {}),
         expectedCashAmount: null,
         countedCashAmount: null,
         cashDifference: null,
