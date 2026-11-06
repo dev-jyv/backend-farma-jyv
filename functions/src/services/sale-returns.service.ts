@@ -441,7 +441,8 @@ export const createSaleReturn = async (input: {
         }
 
         const returnedProductIds = [...new Set(planned.map((item) => item.productId))];
-        const [saleDoc, counterDoc, batchDocs, productDocs] = await Promise.all([
+        const [sessionDoc, saleDoc, counterDoc, batchDocs, productDocs] = await Promise.all([
+            transaction.get(firestore.collection('cashSessions').doc(input.cashSessionId)),
             transaction.get(saleRef),
             transaction.get(counterRef),
             Promise.all(uniqueBatches.map(([batchId]) =>
@@ -458,6 +459,15 @@ export const createSaleReturn = async (input: {
             );
         });
 
+        // El turno se vuelve a revisar aquí (SPEC 52): la revisión de arriba es
+        // previa y un cierre que confirma en medio dejaba la devolución en efectivo
+        // dentro de un turno con el corte ya congelado.
+        if (!sessionDoc.exists) {
+            throw notFound('Turno de caja');
+        }
+        if (sessionDoc.data()?.closedAt) {
+            throw badRequest('El turno de caja ya está cerrado', 'SESSION_CLOSED');
+        }
         if (!saleDoc.exists) {
             throw notFound('Venta');
         }

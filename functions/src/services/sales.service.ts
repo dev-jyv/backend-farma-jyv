@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
+    Batch,
     ControlledGroup,
     Coupon,
     PaymentMethod,
@@ -14,7 +15,11 @@ import {
     SaleItemPromotion,
     SaleLineItem,
     SalePrescription,
+    SaleReviewKind,
+    SaleStockReviewItem,
+    SALE_REVIEW_FILTERS,
     isSaleProductItem,
+    saleBusinessAt,
     isSaleServiceItem,
     saleItemName,
 } from '../types';
@@ -26,7 +31,8 @@ import {
     withDefaultSyncCode,
 } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
-import { allocateFefo } from '../utils/fefo';
+import { allocateFefoAvailable, BatchAllocation } from '../utils/fefo';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 import {
     breakdownLineTaxes,
     fromCents,
@@ -61,6 +67,7 @@ import {
 import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
 import { assertCanAccessSession } from './cash-sessions.service';
+import { LEGACY_VOID_REASON } from '../schemas/sales';
 import { hasPermission } from '../constants/permissions';
 import { RolePermission } from '../types';
 
@@ -103,24 +110,86 @@ const IDEMPOTENCY_COLLECTION = 'saleIdempotencyKeys';
  * dejar de creer su `soldAt`. Más allá, se usa la hora del servidor.
  */
 const SOLD_AT_MAX_CLOCK_AHEAD_MS = 10 * 60 * 1000;
+/**
+ * Antigüedad máxima de un `soldAt` creíble (SPEC 51). Más viejo que esto, la venta
+ * queda con la fecha de recepción: los reportes por fecha de negocio consultan
+ * `createdAt` con este mismo margen (`BUSINESS_DATE_LATE_MARGIN_MS`).
+ */
+const SOLD_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Por qué un `soldAt` offline no se usó como fecha de negocio. */
+type SoldAtUntrustedReason = 'clock_ahead' | 'before_session' | 'too_old';
 /** Ventana de reintento cubierta por la llave; después de esto el TTL de Firestore la borra. */
 const IDEMPOTENCY_TTL_HOURS = 48;
 
 const buildFolio = (sequence: number): string => `V-${String(sequence).padStart(6, '0')}`;
 
 /**
- * La llave se guarda por cajero para que la llave de un cajero no pueda devolver
- * la venta de otro (los uuid los genera el cliente y no son de confianza).
+ * Llave de idempotencia (SPEC 54): `<cashSessionId>:<key>` cuando la venta trae
+ * turno, `<soldBy ?? llamante>:<key>` cuando no. Ya no depende de quien
+ * sincroniza: si el cajero A cobró y un admin reenvía la cola, el reintento cae
+ * en la misma llave y devuelve la venta en vez de duplicarla. Que la llave de
+ * otro turno no devuelva una venta ajena lo cuida `assertCanReplaySale`.
  */
-const buildIdempotencyDocId = (cashierId: string, key: string): string =>
-    `${cashierId}:${key}`;
+const buildIdempotencyDocId = (
+    scope: { cashSessionId?: string | null; soldBy?: string | null; callerId: string },
+    key: string,
+): string => (scope.cashSessionId
+    ? `${scope.cashSessionId}:${key}`
+    : `${scope.soldBy ?? scope.callerId}:${key}`);
+
+/**
+ * Llaves escritas antes de SPEC 54 (`<cajero>:<key>`), vivas mientras dure su TTL
+ * de 48 h: la del llamante y, si la venta trae otro `soldBy`, la de quien cobró
+ * (su primer intento pudo confirmar con el backend anterior).
+ */
+const legacyIdempotencyDocIds = (
+    callerId: string,
+    soldBy: string | null,
+    key: string,
+): string[] => [...new Set([callerId, ...(soldBy ? [soldBy] : [])])]
+    .map((owner) => `${owner}:${key}`);
+
+/**
+ * Una llave devuelve la venta solo a quien puede verla: su cajero, quien la
+ * sincronizó, un admin, o quien sube la cola de ese cajero con su `soldBy`
+ * (SPEC 54). Con la llave por turno, sin esto bastaría conocer el payload de
+ * otro turno para leer su venta.
+ */
+const assertCanReplaySale = (
+    sale: Sale,
+    callerId: string,
+    roleSlug: string | undefined,
+    soldBy: string | null,
+): void => {
+    if (roleSlug === 'admin' || sale.cashierId === callerId || sale.syncedBy === callerId ||
+        (soldBy !== null && soldBy === sale.cashierId)) {
+        return;
+    }
+    throw forbidden(
+        'Solo el cajero que abrió el turno o un administrador puede usarlo',
+        'SESSION_FORBIDDEN',
+    );
+};
 
 /**
  * Huella del cobro. Si llega la misma llave con un cobro distinto es un bug del
  * cliente (llave reciclada), no un retry: mejor fallar que devolver otra venta.
  */
+/** Lo que la huella lee de cada partida: `SaleLineItem` resuelto o su réplica. */
+interface FingerprintLine {
+    kind?: 'product' | 'service';
+    productId?: string;
+    serviceId?: string;
+    quantity: number;
+    unitPrice: number;
+    discountAmount: number;
+    promotion?: { promotionId: string } | null;
+    saleUnit?: { type: 'box'; boxes: number; piecesPerBox: number; boxPrice: number };
+}
+
 const buildRequestFingerprint = (input: {
-    items: SaleLineItem[];
+    items: FingerprintLine[];
     total: number;
     paymentMethod: PaymentMethod;
     cashSessionId: string;
@@ -130,7 +199,7 @@ const buildRequestFingerprint = (input: {
         // La partida de mercancía conserva **exactamente** la forma de siempre:
         // cambiarla invalidaría las llaves vivas (48 h de TTL) y un retry legítimo
         // de una venta ya registrada respondería "llave usada para otra venta".
-        items: input.items.map((item) => (isSaleServiceItem(item)
+        items: input.items.map((item) => (item.kind === 'service'
             ? {
                 kind: 'service',
                 serviceId: item.serviceId,
@@ -168,6 +237,183 @@ const buildRequestFingerprint = (input: {
     }))
     .digest('hex');
 
+/**
+ * Huella del **payload normalizado** (SPEC 48): no depende del catálogo, del stock
+ * ni del rol, así que se calcula antes de leer nada y un reintento con la misma
+ * llave se reconoce aunque el producto se haya desactivado, el lote haya caducado
+ * o el precio haya cambiado desde el primer intento.
+ *
+ * Se guarda junto a `requestFingerprint` (la huella resuelta de siempre) y manda
+ * cuando existe. Las llaves anteriores a este campo (TTL de 48 h) solo traen la
+ * resuelta y se comparan con ella: ver `buildLegacyRequestFingerprint`.
+ */
+const buildPayloadFingerprint = (input: {
+    items: SaleItemInput[];
+    saleDiscountAmount?: number;
+    paymentMethod: PaymentMethod;
+    cashSessionId: string;
+    couponCode?: string;
+}): string => {
+    const cents = (value: number | undefined): number | null =>
+        (value === undefined || value === null ? null : toCents(value));
+    return createHash('sha256')
+        .update(JSON.stringify({
+            v: 2,
+            items: input.items.map((item) => (item.kind === 'service'
+                ? {
+                    kind: 'service',
+                    serviceId: item.serviceId,
+                    quantity: item.quantity,
+                    unitPrice: cents(item.unitPrice),
+                    discountAmount: toCents(item.discountAmount ?? 0),
+                }
+                : {
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    unitPrice: cents(item.unitPrice),
+                    discountAmount: toCents(item.discountAmount ?? 0),
+                    ...(item.promotionId ? { promotionId: item.promotionId } : {}),
+                    ...(item.saleUnit ? { saleUnit: item.saleUnit } : {}),
+                })),
+            saleDiscountAmount: toCents(input.saleDiscountAmount ?? 0),
+            paymentMethod: input.paymentMethod,
+            cashSessionId: input.cashSessionId,
+            ...(input.couponCode ? { couponCode: input.couponCode } : {}),
+        }))
+        .digest('hex');
+};
+
+/**
+ * Huella resuelta (`buildRequestFingerprint`) de un payload, para comparar con
+ * una llave guardada antes de `payloadFingerprint`. Resuelve **solo precios**
+ * (producto, caja, servicio y la regla de la promoción), nunca lotes, y replica
+ * paso a paso las cuentas de `applySale` (mismos redondeos, mismo orden) para
+ * dar el mismo hash.
+ *
+ * Devuelve `null` si no puede resolverla (un producto o servicio que ya no
+ * existe): entonces decide la ruta de siempre, que vuelve a comparar con la
+ * huella calculada sobre la venta resuelta.
+ */
+const buildLegacyRequestFingerprint = async (input: {
+    items: SaleItemInput[];
+    saleDiscountAmount?: number;
+    paymentMethod: PaymentMethod;
+    cashSessionId: string;
+    couponCode?: string;
+}): Promise<string | null> => {
+    const productIds = input.items.flatMap((item) => (item.kind !== 'service'
+        ? [item.productId]
+        : []));
+    const serviceIds = [...new Set(input.items.flatMap((item) => (item.kind === 'service'
+        ? [item.serviceId]
+        : [])))];
+    const [products, promotions, services] = await Promise.all([
+        productsRepo.getProductsByIds(productIds),
+        promotionsRepo.getPromotionsByIds(input.items.flatMap((item) =>
+            (item.kind !== 'service' && item.promotionId ? [item.promotionId] : []))),
+        Promise.all(serviceIds.map((id) => pharmacyServicesRepo.getPharmacyServiceById(id))),
+    ]);
+    const serviceById = new Map(serviceIds.map((id, index) => [id, services[index]]));
+
+    const lines: FingerprintLine[] = [];
+    let subtotal = 0;
+    let lineDiscountTotal = 0;
+    for (const item of input.items) {
+        if (item.kind === 'service') {
+            const service = serviceById.get(item.serviceId);
+            if (!service) {
+                return null;
+            }
+            const unitPrice = item.unitPrice ?? service.price;
+            const itemSubtotal = fromCents(toCents(unitPrice * item.quantity));
+            const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
+            subtotal += itemSubtotal;
+            lineDiscountTotal += discountAmount;
+            lines.push({
+                kind: 'service',
+                serviceId: item.serviceId,
+                quantity: item.quantity,
+                unitPrice,
+                discountAmount,
+            });
+            continue;
+        }
+        const product = products.get(item.productId);
+        const isBox = item.saleUnit === 'box';
+        if (!product || (isBox && !(product.boxQuantity && product.boxPrice))) {
+            return null;
+        }
+        const piecesPerBox = isBox ? product.boxQuantity as number : 1;
+        const catalogPrice = isBox ? product.boxPrice as number : product.salePrice;
+        const chargedPrice = item.unitPrice ?? catalogPrice;
+        const unitPrice = isBox ? chargedPrice / piecesPerBox : chargedPrice;
+        const itemSubtotal = fromCents(toCents(chargedPrice * item.quantity));
+        const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
+        subtotal += itemSubtotal;
+        lineDiscountTotal += discountAmount;
+
+        let promotion: { promotionId: string } | null = null;
+        if (item.promotionId) {
+            const rule = promotions.get(item.promotionId);
+            if (!rule || !rule.productIds.includes(product.id)) {
+                return null;
+            }
+            const promoDiscount = Math.min(
+                computePromotionDiscount(rule.rule, unitPrice, item.quantity),
+                discountAmount,
+            );
+            promotion = promoDiscount > 0 ? { promotionId: rule.id } : null;
+        }
+        lines.push({
+            kind: 'product',
+            productId: product.id,
+            quantity: item.quantity * piecesPerBox,
+            unitPrice,
+            discountAmount,
+            promotion,
+            ...(isBox
+                ? {
+                    saleUnit: {
+                        type: 'box' as const,
+                        boxes: item.quantity,
+                        piecesPerBox,
+                        boxPrice: chargedPrice,
+                    },
+                }
+                : {}),
+        });
+    }
+    const saleDiscountAmount = Math.min(
+        Math.max(0, input.saleDiscountAmount ?? 0),
+        subtotal - lineDiscountTotal,
+    );
+    const discountTotal = fromCents(toCents(lineDiscountTotal) + toCents(saleDiscountAmount));
+    return buildRequestFingerprint({
+        items: lines,
+        total: fromCents(toCents(subtotal) - toCents(discountTotal)),
+        paymentMethod: input.paymentMethod,
+        cashSessionId: input.cashSessionId,
+        couponCode: input.couponCode,
+    });
+};
+
+/** Las dos huellas de un intento; `resolved` es `null` mientras no se calcula. */
+interface SaleFingerprints {
+    payload: string;
+    resolved: string | null;
+}
+
+/**
+ * Manda `payloadFingerprint` cuando la llave lo trae (escrita desde SPEC 48); si
+ * no, la llave es anterior y se compara la huella resuelta de siempre.
+ */
+const matchesStoredFingerprint = (
+    stored: FirebaseFirestore.DocumentData,
+    fingerprints: SaleFingerprints,
+): boolean => (typeof stored.payloadFingerprint === 'string'
+    ? stored.payloadFingerprint === fingerprints.payload
+    : stored.requestFingerprint === fingerprints.resolved);
+
 const mapSaleDoc = (doc: FirebaseFirestore.DocumentSnapshot): Sale => {
     const data = doc.data()!;
     return {
@@ -185,10 +431,9 @@ const mapSaleDoc = (doc: FirebaseFirestore.DocumentSnapshot): Sale => {
 const resolveReplayedSale = (
     idemDoc: FirebaseFirestore.DocumentSnapshot,
     saleDoc: FirebaseFirestore.DocumentSnapshot,
-    fingerprint: string,
+    fingerprints: SaleFingerprints,
 ): Sale => {
-    const stored = idemDoc.data()!;
-    if (stored.requestFingerprint !== fingerprint) {
+    if (!matchesStoredFingerprint(idemDoc.data()!, fingerprints)) {
         throw conflict(
             'Esta llave de idempotencia ya se usó para una venta distinta',
             'IDEMPOTENCY_CONFLICT',
@@ -558,6 +803,48 @@ const resolveSaleCoupon = (input: {
 };
 
 /**
+ * FEFO de una partida sobre `batches` (vigentes primero, los caducados no se
+ * venden). Descuenta lo asignado **en la misma lista**, así la siguiente partida
+ * del mismo producto ve solo lo que queda y la venta se reparte sobre el total de
+ * piezas. Lo usan el plan previo y el reparto dentro de la transacción, con el
+ * mismo mensaje y el mismo código en los dos.
+ *
+ * La caducidad se mide a `options.now`, la fecha de negocio de la venta (SPEC 51):
+ * un lote que caducó a medianoche no impide registrar una venta offline de ayer.
+ *
+ * Con `allowShortfall` (venta offline ya cobrada, SPEC 52) nunca rechaza: asigna
+ * lo vendible que haya y devuelve el resto en `shortfall`. Ningún lote baja de cero.
+ */
+const allocateSaleBatches = (
+    batches: Batch[],
+    pieces: number,
+    productName: string,
+    options: { now: Date; allowShortfall: boolean },
+): { allocations: BatchAllocation[]; shortfall: number } => {
+    const { allocations, shortfall, expiredQuantity } = allocateFefoAvailable(
+        batches,
+        pieces,
+        { excludeExpired: true, now: options.now },
+    );
+    if (shortfall > 0 && !options.allowShortfall) {
+        if (expiredQuantity > 0) {
+            throw badRequest(
+                `El stock disponible de ${productName} está vencido`,
+                'BATCH_EXPIRED',
+            );
+        }
+        throw badRequest(`Stock insuficiente para ${productName}`, 'STOCK_INSUFFICIENT');
+    }
+    for (const allocation of allocations) {
+        const batch = batches.find((entry) => entry.id === allocation.batchId);
+        if (batch) {
+            batch.quantity -= allocation.quantity;
+        }
+    }
+    return { allocations, shortfall };
+};
+
+/**
  * Registra una venta. Todo rechazo de negocio sale con un código de
  * sincronización (SPEC 49): los que la caja resuelve por un camino propio
  * (stock, catálogo, turno, llave) lo llevan desde donde se lanzan, y el resto es
@@ -603,6 +890,19 @@ const applySale = async (input: {
     soldAt?: string;
     /** Código de cupón ya normalizado (mayúsculas); uno por venta (SPEC 47). */
     couponCode?: string;
+    /** Desfase del reloj de la caja (ms, SPEC 65); informativo, no entra a la huella. */
+    clockSkewMs?: number;
+    /**
+     * Uid de quien **cobró** (SPEC 54), solo offline. Se toma como `cashierId` si
+     * es quien abrió el turno de la venta y quien llama tiene `pos:write`
+     * (`callerHasPosWrite`); si no, se ignora (y se audita) y la venta es de quien
+     * llama, como siempre. `cashierId` es siempre **quien llama**.
+     */
+    soldBy?: string;
+    /** Quien llama tiene `pos:write`: requisito para respetar `soldBy`. */
+    callerHasPosWrite?: boolean;
+    /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
+    discountAuthorizedBy?: string;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -618,6 +918,70 @@ const applySale = async (input: {
     const cashSessionRef = firestore.collection('cashSessions').doc(input.cashSessionId);
     const counterRef = firestore.collection('counters').doc(SALES_COUNTER_ID);
     const timestamp = now();
+    const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
+
+    // Idempotencia **antes de todo** (SPEC 48): antes del catálogo, del stock, de
+    // FEFO y del tope de descuento. Si una venta se confirmó y su respuesta se
+    // perdió, el reintento ya no ve el stock descontado ni el producto
+    // desactivado ni el rol cambiado: ve su venta. La huella es la del payload,
+    // que no necesita leer nada.
+    const payloadFingerprint = buildPayloadFingerprint({
+        items: input.items,
+        saleDiscountAmount: input.saleDiscountAmount,
+        paymentMethod: input.paymentMethod,
+        cashSessionId: input.cashSessionId,
+        couponCode,
+    });
+    // Autor original (SPEC 54). Quien llama es `input.cashierId`; `soldBy` solo
+    // cuenta offline, cuando difiere de quien llama y este puede vender.
+    const callerId = input.cashierId;
+    const soldByCandidate = input.offline && input.callerHasPosWrite && input.soldBy &&
+        input.soldBy !== callerId
+        ? input.soldBy
+        : null;
+    const idempotencyCollection = firestore.collection(IDEMPOTENCY_COLLECTION);
+    const idempotencyRef = input.idempotencyKey
+        ? idempotencyCollection.doc(buildIdempotencyDocId({
+            cashSessionId: input.cashSessionId,
+            soldBy: soldByCandidate,
+            callerId,
+        }, input.idempotencyKey))
+        : null;
+    // La llave nueva primero; las de antes de SPEC 54 después (TTL de 48 h).
+    const idempotencyRefs = idempotencyRef
+        ? [
+            idempotencyRef,
+            ...legacyIdempotencyDocIds(callerId, soldByCandidate, input.idempotencyKey!)
+                .filter((id) => id !== idempotencyRef.id)
+                .map((id) => idempotencyCollection.doc(id)),
+        ]
+        : [];
+    if (idempotencyRefs.length) {
+        const idemDocs = await firestore.getAll(...idempotencyRefs);
+        const idemDoc = idemDocs.find((doc) => doc.exists);
+        const stored = idemDoc?.data();
+        if (idemDoc && stored) {
+            // Llave anterior a `payloadFingerprint`: se compara con la huella
+            // resuelta, leyendo solo precios. Si no coincide o no se puede
+            // resolver, sigue la ruta de siempre y la transacción decide.
+            const resolved = typeof stored.payloadFingerprint === 'string'
+                ? null
+                : await buildLegacyRequestFingerprint({ ...input, couponCode });
+            if (typeof stored.payloadFingerprint === 'string' ||
+                (resolved !== null && resolved === stored.requestFingerprint)) {
+                const existingSaleDoc = await firestore
+                    .collection('sales')
+                    .doc(stored.saleId as string)
+                    .get();
+                const replay = resolveReplayedSale(idemDoc, existingSaleDoc, {
+                    payload: payloadFingerprint,
+                    resolved,
+                });
+                assertCanReplaySale(replay, callerId, input.roleSlug, soldByCandidate);
+                return replay;
+            }
+        }
+    }
 
     const saleItems: SaleLineItem[] = [];
     let subtotal = 0;
@@ -635,10 +999,6 @@ const applySale = async (input: {
     // resuelven después de prorratear el descuento, así que hace falta volver a
     // consultarlo por partida sin pagar otra lectura.
     const serviceCache = new Map<string, CachedService>();
-    // Suma de lotes ANTES de asignar FEFO. Si `products.totalStock` no existe
-    // (productos previos a la denormalización), FieldValue.increment(-n) parte
-    // de 0 y deja stock negativo aunque los lotes sí tenían piezas.
-    const batchStockBefore = new Map<string, number>();
 
     // Todas las promociones de la venta en una sola lectura, fuera de la
     // transacción: la regla es inmutable, así que no hay carrera que cerrar.
@@ -648,27 +1008,86 @@ const applySale = async (input: {
             : [])),
     );
 
-    // Offline, la vigencia se mide a la hora del cobro que reporta la caja. Una
-    // hora futura (reloj adelantado) no se cree: se usa la del servidor. Sin
-    // `soldAt` (POS anterior a este campo) se concede el margen de siempre.
+    // Hora del cobro que reporta la caja: solo cuenta offline (SPEC 51).
     const soldAtMs = input.offline && input.soldAt ? Date.parse(input.soldAt) : NaN;
-    const trustedSoldAt = Number.isFinite(soldAtMs) &&
-        soldAtMs <= timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS;
-    const promotionAtMs = trustedSoldAt ? soldAtMs : timestamp.toMillis();
-    const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
+    const hasSoldAt = Number.isFinite(soldAtMs);
     let closedPromotionName: string | null = null;
     const outOfWindowPromotions: string[] = [];
+    /** Productos y servicios inactivos aceptados en una venta offline (SPEC 52). */
+    const inactiveCatalogIds: string[] = [];
 
     // El cupón se lee una vez aquí (vigencia, productos, mínimo) y otra dentro
     // de la transacción (`usedCount`), que es la que decide el último uso.
-    const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
-    const preloadedCoupon = couponCode ? await couponsRepo.getCouponByCode(couponCode) : null;
+    //
+    // Lecturas previas en bloque y en paralelo: solo sirven para validar y para el
+    // mensaje en línea. La transacción vuelve a leer lotes y productos y es la que
+    // reparte (SPEC 50). Los lotes de cada producto se piden a la vez, no uno por
+    // partida en serie: con 50 ventas por lote la serie rozaba los 60 s (SPEC 48).
+    const cartProductIds = [...new Set(input.items.flatMap((item) => (item.kind !== 'service'
+        ? [item.productId]
+        : [])))];
+    const [preloadedCoupon, preloadedProducts, preloadedBatches, preloadedSession] =
+        await Promise.all([
+            couponCode ? couponsRepo.getCouponByCode(couponCode) : Promise.resolve(null),
+            productsRepo.getProductsByIds(
+                input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
+            ),
+            Promise.all(cartProductIds.map((productId) =>
+                batchesRepo.listBatchesByProduct(productId, { onlyAvailable: true }))),
+            // La apertura del turno decide si el `soldAt` es creíble y quién lo
+            // abrió decide si vale el `soldBy` (SPEC 54); solo hace falta con
+            // alguno de los dos offline. `openedAt` y `openedBy` no cambian:
+            // basta leerlos aquí (la transacción vuelve a comprobar `openedBy`).
+            hasSoldAt || soldByCandidate
+                ? cashSessionsRepo.getCashSessionById(input.cashSessionId)
+                : Promise.resolve(null),
+        ]);
+    cartProductIds.forEach((productId, index) => {
+        batchCache.set(productId, preloadedBatches[index]);
+    });
 
-    // Lecturas previas en bloque: solo sirven para validar y armar el plan. La
-    // transacción vuelve a leer lotes y productos y es la que decide.
-    const preloadedProducts = await productsRepo.getProductsByIds(
-        input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
-    );
+    // `soldBy` válido (SPEC 54): es quien abrió el turno. La venta queda a su
+    // nombre y quien la subió en `syncedBy`. Si no coincide se ignora: la venta
+    // es de quien llama, como siempre, y queda en la bitácora.
+    const soldByValid = soldByCandidate !== null &&
+        preloadedSession?.openedBy === soldByCandidate;
+    const soldByIgnored = soldByCandidate !== null && !soldByValid;
+    const cashierId = soldByValid ? soldByCandidate! : callerId;
+    const syncedBy = soldByValid ? callerId : null;
+    // El tope de descuento se mide con el rol de quien cobró. Se conoce sin otra
+    // lectura solo si el turno lo guardó al abrirse (`openedByRoleSlug`); en
+    // turnos anteriores, el de quien llama.
+    const capRoleSlug = soldByValid
+        ? preloadedSession?.openedByRoleSlug ?? input.roleSlug
+        : input.roleSlug;
+
+    // Fecha de negocio (SPEC 51). Offline vale la hora del cobro que reporta la
+    // caja si es creíble: no más de 10 min en el futuro (reloj adelantado), no
+    // anterior a la apertura del turno, no más vieja de 7 días. Si no, la de
+    // recepción. En línea siempre es la de recepción.
+    let soldAtUntrustedReason: SoldAtUntrustedReason | null = null;
+    if (hasSoldAt) {
+        const openedAtMs = preloadedSession?.openedAt?.toMillis();
+        if (soldAtMs > timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS) {
+            soldAtUntrustedReason = 'clock_ahead';
+        } else if (openedAtMs !== undefined && soldAtMs < openedAtMs) {
+            soldAtUntrustedReason = 'before_session';
+        } else if (soldAtMs < timestamp.toMillis() - SOLD_AT_MAX_AGE_MS) {
+            soldAtUntrustedReason = 'too_old';
+        }
+    }
+    const trustedSoldAt = hasSoldAt && soldAtUntrustedReason === null;
+    const businessAt = trustedSoldAt ? Timestamp.fromMillis(soldAtMs) : timestamp;
+    /** FEFO excluye solo los lotes caducados a la hora del cobro (SPEC 51). */
+    const fefoNow = businessAt.toDate();
+    /** Offline, la venta ya cobrada entra aunque falte stock (SPEC 52). */
+    const allowShortfall = Boolean(input.offline);
+
+    // Offline, la vigencia de promociones y cupones se mide a la hora del cobro.
+    // Sin `soldAt` creíble (POS anterior a este campo, reloj desfasado) se usa la
+    // del servidor con el margen de siempre.
+    const promotionAtMs = trustedSoldAt ? soldAtMs : timestamp.toMillis();
+    const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
@@ -690,7 +1109,14 @@ const applySale = async (input: {
                 throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_NOT_FOUND');
             }
             if (!service.isActive) {
-                throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_INACTIVE');
+                // Offline la venta ya se cobró: se registra y queda marcada
+                // (`catalogReview`). En línea el cajero puede corregir.
+                if (!input.offline) {
+                    throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_INACTIVE');
+                }
+                if (!inactiveCatalogIds.includes(service.id)) {
+                    inactiveCatalogIds.push(service.id);
+                }
             }
             if (service.hasIeps && service.iepsRate === undefined) {
                 throw badRequest(
@@ -765,7 +1191,13 @@ const applySale = async (input: {
             throw notFound(`Producto ${item.productId}`, 'PRODUCT_NOT_FOUND');
         }
         if (!product.isActive) {
-            throw notFound(`Producto ${item.productId}`, 'PRODUCT_INACTIVE');
+            // Mismo criterio que los servicios: offline se acepta y se marca.
+            if (!input.offline) {
+                throw notFound(`Producto ${item.productId}`, 'PRODUCT_INACTIVE');
+            }
+            if (!inactiveCatalogIds.includes(product.id)) {
+                inactiveCatalogIds.push(product.id);
+            }
         }
 
         if (isBox && !(product.boxQuantity && product.boxPrice)) {
@@ -784,37 +1216,16 @@ const applySale = async (input: {
             );
         }
 
-        let batches = batchCache.get(item.productId);
-        if (!batches) {
-            batches = await batchesRepo.listBatchesByProduct(item.productId, {
-                onlyAvailable: true,
-            });
-            batchCache.set(item.productId, batches);
-            batchStockBefore.set(
-                item.productId,
-                batches.reduce((sum, batch) => sum + batch.quantity, 0),
-            );
-        }
-
-        let allocations;
-        try {
-            allocations = allocateFefo(batches, pieces, { excludeExpired: true });
-        } catch (error) {
-            if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
-                throw badRequest(
-                    `El stock disponible de ${product.name} está vencido`,
-                    'BATCH_EXPIRED',
-                );
-            }
-            throw badRequest(`Stock insuficiente para ${product.name}`, 'STOCK_INSUFFICIENT');
-        }
-
-        for (const allocation of allocations) {
-            const batch = batches.find((entry) => entry.id === allocation.batchId);
-            if (batch) {
-                batch.quantity -= allocation.quantity;
-            }
-        }
+        // Plan previo: validación temprana con el mensaje de siempre. **No decide
+        // las asignaciones**: las de la venta salen del reparto transaccional
+        // (SPEC 50). Descuenta sobre la copia en memoria para que dos partidas
+        // del mismo producto (pieza y caja) se validen contra el total.
+        const { allocations } = allocateSaleBatches(
+            batchCache.get(item.productId) ?? [],
+            pieces,
+            product.name,
+            { now: fefoNow, allowShortfall },
+        );
 
         // Precio **cobrado**, no el de catálogo de hoy. Una venta sin conexión se
         // sincroniza horas o días después; si el precio subió entre medias, tarifar
@@ -1014,33 +1425,6 @@ const applySale = async (input: {
     const productItems = saleItems.filter(isSaleProductItem);
     const serviceItems = saleItems.filter(isSaleServiceItem);
 
-    // COGS por partida desde el costo de los lotes asignados. Si a un lote le falta
-    // `costPrice`, la partida queda en `null` y el reporte de margen lo reporta como
-    // "sin costo" en lugar de inflar la utilidad con un cero. Un servicio no tiene
-    // costo de mercancía: queda fuera del cálculo, no cuenta como "sin costo".
-    const costByBatchId = new Map<string, number | undefined>();
-    for (const batches of batchCache.values()) {
-        for (const batch of batches) {
-            costByBatchId.set(batch.id, batch.costPrice);
-        }
-    }
-    for (const item of productItems) {
-        let costCents = 0;
-        let costKnown = true;
-        for (const allocation of item.batchAllocations) {
-            const costPrice = costByBatchId.get(allocation.batchId);
-            if (costPrice === undefined) {
-                costKnown = false;
-                break;
-            }
-            costCents += toCents(costPrice) * allocation.quantity;
-        }
-        item.costAmount = costKnown ? costCents / 100 : null;
-    }
-    const costTotal = productItems.every((item) => item.costAmount !== null)
-        ? productItems.reduce((total, item) => total + (item.costAmount ?? 0), 0)
-        : null;
-
     // El tope es para el descuento **manual**: el de una promoción lo decidió la
     // gerencia al darla de alta, y un 2x1 (50%) no debe pedir un administrador.
     const promotionDiscountTotal = saleItems.reduce(
@@ -1070,7 +1454,7 @@ const applySale = async (input: {
 
     // Con un cupón que se va a rechazar no hay venta que topar: se omite para que
     // el cajero reciba el motivo real (o el reintento su venta), no un 403.
-    if (input.roleSlug !== 'admin' && !couponError) {
+    if (capRoleSlug !== 'admin' && !couponError) {
         const lineOverCap = saleItems.find(isLineOverCap);
         if (lineOverCap) {
             throw forbidden(
@@ -1086,32 +1470,19 @@ const applySale = async (input: {
         }
     }
 
-    // Corto circuito de idempotencia antes de cobrar/consultar Mercado Pago: un
-    // retry de red no debe crear una segunda venta ni chocar con la validación de
-    // "esta order ya está asociada a una venta".
-    const fingerprint = buildRequestFingerprint({
-        items: saleItems,
-        total,
-        paymentMethod: input.paymentMethod,
-        cashSessionId: input.cashSessionId,
-        couponCode,
-    });
-    const idempotencyRef = input.idempotencyKey
-        ? firestore
-            .collection(IDEMPOTENCY_COLLECTION)
-            .doc(buildIdempotencyDocId(input.cashierId, input.idempotencyKey))
-        : null;
-
-    if (idempotencyRef) {
-        const idemDoc = await idempotencyRef.get();
-        if (idemDoc.exists) {
-            const existingSaleDoc = await firestore
-                .collection('sales')
-                .doc(idemDoc.data()!.saleId as string)
-                .get();
-            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
-        }
-    }
+    // Huella resuelta de siempre: se sigue guardando en `requestFingerprint` para
+    // que un despliegue anterior (rollback) reconozca las llaves nuevas. La
+    // revisión de idempotencia ya se hizo al principio con la del payload.
+    const fingerprints: SaleFingerprints = {
+        payload: payloadFingerprint,
+        resolved: buildRequestFingerprint({
+            items: saleItems,
+            total,
+            paymentMethod: input.paymentMethod,
+            cashSessionId: input.cashSessionId,
+            couponCode,
+        }),
+    };
 
     if (closedPromotionName) {
         throw badRequest(`La promoción "${closedPromotionName}" no está vigente`);
@@ -1183,55 +1554,33 @@ const applySale = async (input: {
     const servicesCashAmount = fromCents(servicesCashCents);
     const pharmacyCashAmount = fromCents(cashAmountCents - servicesCashCents);
 
-    // Firestore exige que todas las lecturas de una transacción ocurran antes
-    // que cualquier escritura: cuando una venta reparte stock entre 2+ lotes
-    // (lo normal en FEFO) hay que leer todos los lotes primero y recién luego
-    // escribir todos los updates/movimientos. Solo la mercancía mueve lotes.
-    const allocationRefs = productItems.flatMap((item) =>
-        item.batchAllocations.map((allocation) => ({
-            item,
-            allocation,
-            batchRef: firestore.collection('batches').doc(allocation.batchId),
-        })),
-    );
-
-    const qtyByBatchId = new Map<string, {
-        batchRef: FirebaseFirestore.DocumentReference;
-        productId: string;
-        quantity: number;
-    }>();
-    for (const { item, allocation, batchRef } of allocationRefs) {
-        const existing = qtyByBatchId.get(allocation.batchId);
-        if (existing) {
-            existing.quantity += allocation.quantity;
-        } else {
-            qtyByBatchId.set(allocation.batchId, {
-                batchRef,
-                productId: item.productId,
-                quantity: allocation.quantity,
-            });
-        }
-    }
-    const uniqueBatchEntries = [...qtyByBatchId.entries()];
-
-    // Lote por asignación: el libro de control necesita el número de lote, no el id.
-    const lotNumberByBatchId = new Map<string, string>();
-    for (const batches of batchCache.values()) {
-        for (const batch of batches) {
-            lotNumberByBatchId.set(batch.id, batch.lotNumber);
-        }
-    }
+    /** La transacción devolvió una venta ya registrada (reintento): sin bitácora nueva. */
+    let replayed = false;
+    /** Partidas con faltante de stock en el último intento de la transacción. */
+    let stockReviewItems: SaleStockReviewItem[] = [];
+    let wroteLedger = false;
 
     const sale = await firestore.runTransaction(async (transaction) => {
+        replayed = false;
+        stockReviewItems = [];
+        wroteLedger = false;
         // Segundo chequeo dentro de la transacción: dos requests simultáneos con la
         // misma llave contienden por este documento y el perdedor reintenta, ve la
         // venta ya escrita y la devuelve en lugar de duplicarla.
-        const idemDoc = idempotencyRef ? await transaction.get(idempotencyRef) : null;
-        if (idemDoc?.exists) {
+        // Incluye las llaves de antes de SPEC 54: una vieja con otra huella sigue
+        // siendo un conflicto, no una venta nueva con la llave nueva.
+        const idemDocs = idempotencyRefs.length
+            ? await transaction.getAll(...idempotencyRefs)
+            : [];
+        const idemDoc = idemDocs.find((doc) => doc.exists);
+        if (idemDoc) {
             const existingSaleDoc = await transaction.get(
                 firestore.collection('sales').doc(idemDoc.data()!.saleId as string),
             );
-            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
+            replayed = true;
+            const replay = resolveReplayedSale(idemDoc, existingSaleDoc, fingerprints);
+            assertCanReplaySale(replay, callerId, input.roleSlug, soldByCandidate);
+            return replay;
         }
 
         // Cupón: `usedCount` se lee aquí, antes de cualquier escritura. Dos ventas
@@ -1261,74 +1610,174 @@ const applySale = async (input: {
         // Solo mercancía: los reportes resuelven cada id de `productIds` contra
         // `products`, así que un id de servicio aquí los revienta.
         const productIds = [...new Set(productItems.map((item) => item.productId))];
-        const stockDeltaByProduct = new Map<string, number>();
-        for (const item of productItems) {
-            stockDeltaByProduct.set(
-                item.productId,
-                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
-            );
-        }
 
-        const [cashSessionDoc, counterDoc, ...batchAndProductDocs] = await Promise.all([
+        // Todas las lecturas antes de cualquier escritura, en paralelo. Los lotes
+        // se leen **por consulta** (`productId`, `quantity > 0`) dentro de la
+        // transacción (SPEC 50): si otra caja vació un lote entre el plan y aquí,
+        // Firestore reintenta este callback y el reparto se rehace sobre el
+        // estado fresco, en vez de rechazar con stock en otro lote.
+        const [cashSessionDoc, counterDoc, productDocs, batchSnapshots] = await Promise.all([
             transaction.get(cashSessionRef),
             transaction.get(counterRef),
-            ...uniqueBatchEntries.map(([, entry]) => transaction.get(entry.batchRef)),
-            ...productIds.map((productId) =>
-                transaction.get(firestore.collection('products').doc(productId))),
+            Promise.all(productIds.map((productId) =>
+                transaction.get(firestore.collection('products').doc(productId)))),
+            Promise.all(productIds.map((productId) =>
+                transaction.get(batchesRepo.availableBatchesQuery(productId)))),
         ]);
-        const batchDocs = batchAndProductDocs.slice(0, uniqueBatchEntries.length);
-        const productDocs = batchAndProductDocs.slice(uniqueBatchEntries.length);
 
         if (!cashSessionDoc.exists) {
             throw notFound('Turno de caja');
         }
         // El turno es de quien lo abrió: sin esto un cajero puede cargar ventas en
-        // efectivo al turno de otro y dejarle el faltante en su corte.
-        assertCanAccessSession(
-            { openedBy: cashSessionDoc.data()!.openedBy as string },
-            input.cashierId,
-            input.roleSlug,
-        );
-        if (cashSessionDoc.data()?.closedAt) {
+        // efectivo al turno de otro y dejarle el faltante en su corte. Con un
+        // `soldBy` válido (SPEC 54) cualquiera con `pos:write` sube la cola de
+        // ese turno: la venta es de quien lo abrió, no de quien sincroniza.
+        const sessionOpenedBy = cashSessionDoc.data()!.openedBy as string;
+        if (soldByValid) {
+            assertCanAccessSession({ openedBy: sessionOpenedBy }, cashierId, null);
+        } else {
+            assertCanAccessSession({ openedBy: sessionOpenedBy }, callerId, input.roleSlug);
+        }
+        // Turno cerrado (SPEC 52): una venta offline cobrada **antes** del cierre
+        // se registra en ese turno marcada `lateSync`, y el turno queda con ajuste
+        // pendiente y el efectivo que llegó tarde en `lateSales`. Cobrada después
+        // del cierre (o sin fecha de cobro creíble, que entonces es la de
+        // recepción) sigue siendo un rechazo.
+        const sessionClosedAt = cashSessionDoc.data()?.closedAt as Timestamp | null | undefined;
+        const lateSync = Boolean(sessionClosedAt) && Boolean(input.offline) &&
+            businessAt.toMillis() <= sessionClosedAt!.toMillis();
+        if (sessionClosedAt && !lateSync) {
             throw badRequest('El turno de caja ya está cerrado', 'SESSION_CLOSED');
         }
 
         const nextSequence = (counterDoc.data()?.value as number | undefined ?? 0) + 1;
         const folio = buildFolio(nextSequence);
 
-        uniqueBatchEntries.forEach(([batchId, entry], index) => {
-            const batchDoc = batchDocs[index];
-            // El lote se borró o se vació entre el plan y la transacción: para la
-            // caja es lo mismo, no hay de dónde surtir.
-            if (!batchDoc.exists) {
-                throw notFound('Lote', 'STOCK_INSUFFICIENT');
+        // Reparto FEFO transaccional: es el que decide `batchAllocations`, el
+        // costo y los lotes del libro. Se rehace completo en cada intento de la
+        // transacción (las partidas se sobrescriben, no se acumulan).
+        const batchById = new Map<string, Batch>();
+        // Suma de lotes ANTES de asignar. Si `products.totalStock` no existe
+        // (productos previos a la denormalización), es la base del descuento.
+        const batchStockBefore = new Map<string, number>();
+        const workingBatches = new Map<string, Batch[]>();
+        productIds.forEach((productId, index) => {
+            const batches = batchesRepo.toBatchesByExpiry(batchSnapshots[index].docs);
+            batches.forEach((batch) => batchById.set(batch.id, batch));
+            batchStockBefore.set(
+                productId,
+                batches.reduce((sum, batch) => sum + batch.quantity, 0),
+            );
+            // Copias: `allocateSaleBatches` descuenta sobre ellas, los originales
+            // conservan la existencia leída para escribir `quantity − tomado`.
+            workingBatches.set(productId, batches.map((batch) => ({ ...batch })));
+        });
+        const takenByBatchId = new Map<string, number>();
+        // Piezas que de verdad salen de lotes, por producto: es lo que baja
+        // `totalStock`. Con faltante (offline) es menos de lo cobrado.
+        const stockDeltaByProduct = new Map<string, number>();
+        for (const item of productItems) {
+            const { allocations, shortfall } = allocateSaleBatches(
+                workingBatches.get(item.productId) ?? [],
+                item.quantity,
+                item.productName,
+                { now: fefoNow, allowShortfall },
+            );
+            item.batchAllocations = allocations;
+            // Se rehace en cada intento: un reintento con más stock no deja el
+            // faltante del intento anterior.
+            delete item.stockShortfall;
+            if (shortfall > 0) {
+                item.stockShortfall = shortfall;
+                stockReviewItems.push({
+                    productId: item.productId,
+                    requested: item.quantity,
+                    allocated: item.quantity - shortfall,
+                    shortfall,
+                });
             }
-
-            const currentQty = batchDoc.data()?.quantity as number;
-            if (currentQty < entry.quantity) {
-                throw badRequest(`Stock insuficiente en lote ${batchId}`, 'STOCK_INSUFFICIENT');
+            for (const allocation of item.batchAllocations) {
+                takenByBatchId.set(
+                    allocation.batchId,
+                    (takenByBatchId.get(allocation.batchId) ?? 0) + allocation.quantity,
+                );
             }
+            stockDeltaByProduct.set(
+                item.productId,
+                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity - shortfall,
+            );
+        }
 
-            transaction.update(entry.batchRef, {
-                quantity: currentQty - entry.quantity,
+        // COGS por partida desde el costo de los lotes asignados. Si a un lote le
+        // falta `costPrice`, la partida queda en `null` y el reporte de margen la
+        // reporta como "sin costo" en lugar de inflar la utilidad con un cero. Un
+        // servicio no tiene costo de mercancía: queda fuera, no cuenta como "sin
+        // costo".
+        for (const item of productItems) {
+            let costCents = 0;
+            // Con faltante, el costo de las piezas que no salieron de ningún lote
+            // no se conoce: la partida queda "sin costo" (`salesWithoutCost`) en
+            // vez de reportar un margen inflado (SPEC 52).
+            let costKnown = !item.stockShortfall;
+            for (const allocation of costKnown ? item.batchAllocations : []) {
+                const costPrice = batchById.get(allocation.batchId)?.costPrice;
+                if (costPrice === undefined) {
+                    costKnown = false;
+                    break;
+                }
+                costCents += toCents(costPrice) * allocation.quantity;
+            }
+            item.costAmount = costKnown ? costCents / 100 : null;
+        }
+        const costTotal = productItems.every((item) => item.costAmount !== null)
+            ? productItems.reduce((sum, item) => sum + (item.costAmount ?? 0), 0)
+            : null;
+
+        takenByBatchId.forEach((taken, batchId) => {
+            transaction.update(firestore.collection('batches').doc(batchId), {
+                quantity: batchById.get(batchId)!.quantity - taken,
                 updatedAt: timestamp,
             });
         });
 
-        allocationRefs.forEach(({ item, allocation }) => {
-            const movementRef = firestore.collection('stockMovements').doc();
-            transaction.set(movementRef, {
-                type: 'sale_adjustment',
-                productId: item.productId,
-                batchId: allocation.batchId,
-                quantity: allocation.quantity,
-                referenceId: saleRef.id,
-                userId: input.cashierId,
-                createdAt: timestamp,
-            });
-        });
+        for (const item of productItems) {
+            for (const allocation of item.batchAllocations) {
+                const movementRef = firestore.collection('stockMovements').doc();
+                transaction.set(movementRef, {
+                    type: 'sale_adjustment',
+                    productId: item.productId,
+                    batchId: allocation.batchId,
+                    quantity: allocation.quantity,
+                    referenceId: saleRef.id,
+                    userId: cashierId,
+                    // Fecha del hecho = fecha de negocio (SPEC 51); la de registro
+                    // queda en `recordedAt`.
+                    createdAt: businessAt,
+                    recordedAt: timestamp,
+                });
+            }
+        }
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
+
+        if (lateSync) {
+            // Mismo turno, mismo cajón: el efectivo de la venta tardía no está en
+            // el corte congelado, así que el turno vuelve a pedir revisión aunque
+            // su ajuste ya se hubiera aprobado. Se suma sobre lo leído en esta
+            // transacción, en centavos.
+            const previous = cashSessionDoc.data()?.lateSales as
+                { count?: number; cashTotal?: number } | undefined;
+            transaction.update(cashSessionRef, {
+                hasPendingAdjustment: true,
+                adjustmentStatus: 'pending',
+                lateSales: {
+                    count: (previous?.count ?? 0) + 1,
+                    cashTotal: fromCents(
+                        toCents(previous?.cashTotal ?? 0) + toCents(tender.cashAmount ?? 0),
+                    ),
+                },
+            });
+        }
 
         // El uso se consume en la misma transacción que la venta. `updatedAt`
         // sube para que el pull del POS traiga el `usedCount` nuevo. Anular o
@@ -1380,6 +1829,12 @@ const applySale = async (input: {
                 : {}),
             ...(saleCoupon ? { coupon: saleCoupon, couponDiscountTotal } : {}),
             ...(couponReview ? { couponReview } : {}),
+            // Marcas de revisión de la venta offline (SPEC 52).
+            ...(stockReviewItems.length ? { stockReview: { items: stockReviewItems } } : {}),
+            ...(inactiveCatalogIds.length
+                ? { catalogReview: { inactive: [...inactiveCatalogIds] } }
+                : {}),
+            ...(lateSync ? { lateSync: true as const } : {}),
             refundedTotal: 0,
             paymentMethod: input.paymentMethod,
             amountReceived: tender.amountReceived,
@@ -1389,7 +1844,13 @@ const applySale = async (input: {
             cardPaymentReference: pointPayment?.orderId ?? tender.cardPaymentReference,
             pointPayment,
             cashSessionId: input.cashSessionId,
-            cashierId: input.cashierId,
+            cashierId,
+            // Quien subió la venta, cuando no es quien la cobró (SPEC 54).
+            ...(syncedBy ? { syncedBy } : {}),
+            // Quien autorizó el descuento en la caja: informativo (SPEC 54).
+            ...(input.discountAuthorizedBy
+                ? { discountAuthorizedBy: input.discountAuthorizedBy }
+                : {}),
             customerId,
             customerName,
             prescription,
@@ -1414,14 +1875,24 @@ const applySale = async (input: {
             voidedAt: null,
             voidedBy: null,
             createdAt: timestamp,
+            // Fecha de negocio (SPEC 51): la de los reportes, el libro y `dailyStats`.
+            businessAt,
+            soldAt: hasSoldAt ? Timestamp.fromMillis(soldAtMs) : null,
+            soldAtTrusted: trustedSoldAt,
+            // Desfase del reloj de la caja al cobrar (SPEC 65): dato informativo.
+            ...(input.clockSkewMs !== undefined && Number.isFinite(input.clockSkewMs)
+                ? { clockSkewMs: Math.round(input.clockSkewMs) }
+                : {}),
         };
 
         if (idempotencyRef) {
             transaction.create(idempotencyRef, {
                 saleId: saleRef.id,
                 folio,
-                cashierId: input.cashierId,
-                requestFingerprint: fingerprint,
+                cashierId,
+                ...(syncedBy ? { syncedBy } : {}),
+                requestFingerprint: fingerprints.resolved,
+                payloadFingerprint: fingerprints.payload,
                 createdAt: timestamp,
                 // Campo para la política TTL de Firestore sobre esta colección.
                 expiresAt: Timestamp.fromMillis(
@@ -1448,24 +1919,79 @@ const applySale = async (input: {
                 controlledGroup: rule.group,
                 quantity: item.quantity,
                 lotNumbers: item.batchAllocations
-                    .map((allocation) => lotNumberByBatchId.get(allocation.batchId))
+                    .map((allocation) => batchById.get(allocation.batchId)?.lotNumber)
                     .filter((lot): lot is string => Boolean(lot)),
                 prescription,
                 prescriptionRetained: Boolean(input.prescriptionRetained),
                 customerName,
-                userId: input.cashierId,
-                createdAt: timestamp,
+                userId: cashierId,
+                // El renglón lleva la fecha del cobro (SPEC 51); con faltante de
+                // stock registra igual la cantidad completa: la salida física
+                // ocurrió (SPEC 52).
+                createdAt: businessAt,
+                recordedAt: timestamp,
             });
+            wroteLedger = true;
         }
 
         transaction.set(saleRef, saleData);
         dailyStatsRepo.applySaleDelta(
             transaction,
-            { createdAt: timestamp.toDate(), totalCents: toCents(saleData.total) },
+            { createdAt: businessAt.toDate(), totalCents: toCents(saleData.total) },
             1,
         );
         return { id: saleRef.id, ...saleData };
     });
+
+    if (!replayed && (syncedBy || soldByIgnored)) {
+        await recordAudit(syncedBy
+            ? {
+                action: 'sale.synced_by_other',
+                entity: 'sale',
+                entityId: sale.id,
+                summary: `Venta ${sale.folio} cobrada por ${cashierId} y sincronizada ` +
+                    `por ${syncedBy}`,
+                userId: callerId,
+                roleSlug: input.roleSlug ?? null,
+                metadata: {
+                    folio: sale.folio,
+                    cashierId,
+                    syncedBy,
+                    cashSessionId: input.cashSessionId,
+                },
+            }
+            : {
+                action: 'sale.sold_by_ignored',
+                entity: 'sale',
+                entityId: sale.id,
+                summary: `Venta ${sale.folio}: el autor reportado por la caja no abrió ` +
+                    'el turno; queda a nombre de quien la sincronizó',
+                userId: callerId,
+                roleSlug: input.roleSlug ?? null,
+                metadata: {
+                    folio: sale.folio,
+                    soldBy: soldByCandidate,
+                    sessionOpenedBy: preloadedSession?.openedBy ?? null,
+                    cashierId,
+                    cashSessionId: input.cashSessionId,
+                },
+            });
+    }
+
+    if (!replayed) {
+        await recordOfflineReviewAudits({
+            sale,
+            cashierId: input.cashierId,
+            roleSlug: input.roleSlug ?? null,
+            soldAt: input.soldAt ?? null,
+            soldAtUntrustedReason,
+            sessionOpenedAt: preloadedSession?.openedAt ?? null,
+            stockReviewItems,
+            inactiveCatalogIds,
+            wroteLedger,
+            recordedAt: timestamp,
+        });
+    }
 
     if (sale.couponReview) {
         const reasons: Record<SaleCouponReview['reason'], string> = {
@@ -1521,11 +2047,14 @@ const applySale = async (input: {
             summary: `Descuento de ${discountTotal.toFixed(2)} sobre ${subtotal.toFixed(2)} ` +
                 `en la venta ${sale.folio} (arriba del ${MAX_NON_ADMIN_DISCOUNT_RATE * 100}%)`,
             userId: input.cashierId,
-            roleSlug: input.roleSlug ?? null,
+            roleSlug: capRoleSlug ?? null,
             metadata: {
                 folio: sale.folio,
                 subtotal,
                 discountTotal,
+                cashierId,
+                ...(syncedBy ? { syncedBy } : {}),
+                discountAuthorizedBy: input.discountAuthorizedBy ?? null,
                 lineOverCap: overCapLines.map((item) => ({
                     productId: isSaleServiceItem(item) ? item.serviceId : item.productId,
                     productName: saleItemName(item),
@@ -1536,6 +2065,112 @@ const applySale = async (input: {
     }
 
     return sale;
+};
+
+/** Mes local (`YYYY-MM`) de un instante, en el huso de la farmacia. */
+const localMonthOf = (at: Timestamp): string =>
+    getZonedYmd(at.toMillis(), APP_TIME_ZONE).slice(0, 7);
+
+/**
+ * Bitácora de las marcas de una venta offline (SPEC 51 y 52). Solo para una venta
+ * recién escrita: el reintento que devuelve la venta ya registrada no repite
+ * renglones. `recordAudit` se traga sus errores: la venta ya está confirmada.
+ */
+const recordOfflineReviewAudits = async (input: {
+    sale: Pick<Sale, 'id' | 'folio' | 'lateSync' | 'cashSessionId' | 'cashAmount'> & {
+        businessAt?: Timestamp;
+    };
+    cashierId: string;
+    roleSlug: string | null;
+    soldAt: string | null;
+    soldAtUntrustedReason: SoldAtUntrustedReason | null;
+    sessionOpenedAt: Timestamp | null;
+    stockReviewItems: SaleStockReviewItem[];
+    inactiveCatalogIds: string[];
+    wroteLedger: boolean;
+    recordedAt: Timestamp;
+}): Promise<void> => {
+    const { sale } = input;
+    const base = {
+        entity: 'sale' as const,
+        entityId: sale.id,
+        userId: input.cashierId,
+        roleSlug: input.roleSlug,
+    };
+
+    // El reloj adelantado es la regla de siempre (SPEC 65 se ocupa del reloj);
+    // aquí solo las dos causas nuevas.
+    if (input.soldAtUntrustedReason === 'before_session' ||
+        input.soldAtUntrustedReason === 'too_old') {
+        await recordAudit({
+            ...base,
+            action: 'sale.sold_at_untrusted',
+            summary: `Venta ${sale.folio}: la hora de cobro de la caja ` +
+                (input.soldAtUntrustedReason === 'before_session'
+                    ? 'es anterior a la apertura del turno'
+                    : 'tiene más de 7 días') +
+                '; queda con la fecha de recepción',
+            metadata: {
+                folio: sale.folio,
+                soldAt: input.soldAt,
+                reason: input.soldAtUntrustedReason,
+                sessionOpenedAt: input.sessionOpenedAt?.toDate().toISOString() ?? null,
+                recordedAt: input.recordedAt.toDate().toISOString(),
+            },
+        });
+    }
+
+    if (input.stockReviewItems.length) {
+        const pieces = input.stockReviewItems.reduce((sum, item) => sum + item.shortfall, 0);
+        await recordAudit({
+            ...base,
+            action: 'sale.stock_shortfall',
+            summary: `Venta ${sale.folio} sincronizada con faltante de stock: ` +
+                `${pieces} ${pieces === 1 ? 'pieza' : 'piezas'} sin lote`,
+            metadata: { folio: sale.folio, items: input.stockReviewItems },
+        });
+    }
+
+    if (input.inactiveCatalogIds.length) {
+        await recordAudit({
+            ...base,
+            action: 'sale.catalog_review',
+            summary: `Venta ${sale.folio} sincronizada con productos o servicios inactivos`,
+            metadata: { folio: sale.folio, inactive: input.inactiveCatalogIds },
+        });
+    }
+
+    if (sale.lateSync) {
+        await recordAudit({
+            ...base,
+            action: 'sale.late_sync',
+            summary: `Venta ${sale.folio} cobrada antes del cierre y sincronizada con el ` +
+                'turno ya cerrado: el turno queda con ajuste pendiente',
+            metadata: {
+                folio: sale.folio,
+                cashSessionId: sale.cashSessionId,
+                cashAmount: sale.cashAmount ?? null,
+            },
+        });
+    }
+
+    // Libro de controlados: el renglón cae en el mes del cobro. Si ya pasó ese
+    // mes, el libro exportado de entonces cambió y hay que reexportarlo.
+    if (input.wroteLedger && sale.businessAt &&
+        localMonthOf(sale.businessAt) < localMonthOf(input.recordedAt)) {
+        await recordAudit({
+            ...base,
+            action: 'sale.late_ledger_entry',
+            summary: `Venta ${sale.folio} de controlados registrada en el libro de ` +
+                `${localMonthOf(sale.businessAt)} después de cerrado ese mes: ` +
+                'reexporta el libro de ese periodo',
+            metadata: {
+                folio: sale.folio,
+                businessAt: sale.businessAt.toDate().toISOString(),
+                recordedAt: input.recordedAt.toDate().toISOString(),
+            },
+        });
+    }
 };
 
 /**
@@ -1560,9 +2195,19 @@ const applyVoid = async (
      * cerrando en el siguiente sync: el instante y el cajero de entonces. Sin
      * esto, la venta quedaría anulada con la hora del sync y a nombre de quien
      * sincronizó, que puede ser otro turno y otra persona.
+     *
+     * `reason` es el motivo (SPEC 62), ya validado por `voidSaleSchema`; un
+     * llamador interno que no lo manda queda con `LEGACY_VOID_REASON`.
      */
-    reported?: { voidedAt?: string; voidedBy?: string },
+    reported?: {
+        voidedAt?: string;
+        voidedBy?: string;
+        reason?: string;
+        reasonDefaulted?: boolean;
+    },
 ): Promise<Sale> => {
+    const voidReason = reported?.reason?.trim() || LEGACY_VOID_REASON;
+    const reasonDefaulted = !reported?.reason?.trim() || reported?.reasonDefaulted === true;
     const firestore = db();
     const saleRef = firestore.collection('sales').doc(id);
 
@@ -1666,9 +2311,11 @@ const applyVoid = async (
         const reportedAt = reported?.voidedAt
             ? Timestamp.fromDate(new Date(reported.voidedAt))
             : null;
+        // El piso es la fecha de negocio (SPEC 51): una venta offline anulada en la
+        // caja antes de sincronizar tiene `createdAt` posterior a su anulación.
         const reportedIsSane = reportedAt !== null &&
             reportedAt.toMillis() <= serverNow.toMillis() &&
-            reportedAt.toMillis() >= existing.createdAt.toMillis();
+            reportedAt.toMillis() >= saleBusinessAt(existing).toMillis();
         const timestamp = reportedIsSane ? reportedAt : serverNow;
         // El cajero reportado solo se respeta cuando es quien está llamando o lo manda un
         // admin: antes cualquiera firmaba la anulación (y sus movimientos y el libro de
@@ -1684,9 +2331,12 @@ const applyVoid = async (
                 throw notFound('Lote');
             }
             const currentQty = batchDoc.data()?.quantity as number;
+            // `updatedAt` de lotes y productos es el cursor del pull de las cajas:
+            // siempre hora del servidor (SPEC 56). Con la hora reportada de una
+            // anulación offline quedaba en el pasado y las cajas se la saltaban.
             transaction.update(entry.batchRef, {
                 quantity: currentQty + entry.quantity,
-                updatedAt: timestamp,
+                updatedAt: serverNow,
             });
         });
 
@@ -1699,15 +2349,21 @@ const applyVoid = async (
                 quantity: -allocation.quantity,
                 referenceId: saleRef.id,
                 userId: author,
+                // La hora reportada es la del hecho; la de registro, la del servidor.
                 createdAt: timestamp,
+                recordedAt: serverNow,
             });
         });
 
+        // Vuelve lo que salió de lotes, no lo cobrado: una partida con faltante
+        // (SPEC 52) solo descontó `batchAllocations`.
         const stockDeltaByProduct = new Map<string, number>();
         for (const item of voidedProductItems) {
+            const allocated = item.batchAllocations
+                .reduce((sum, allocation) => sum + allocation.quantity, 0);
             stockDeltaByProduct.set(
                 item.productId,
-                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
+                (stockDeltaByProduct.get(item.productId) ?? 0) + allocated,
             );
         }
         productIds.forEach((productId, index) => {
@@ -1716,7 +2372,7 @@ const applyVoid = async (
             const baseline = typeof denorm === 'number' ? denorm : 0;
             transaction.update(firestore.collection('products').doc(productId), {
                 totalStock: Math.max(0, baseline + delta),
-                updatedAt: timestamp,
+                updatedAt: serverNow,
             });
         });
 
@@ -1743,25 +2399,30 @@ const applyVoid = async (
                 customerName: existing.customerName,
                 userId: author,
                 createdAt: timestamp,
+                recordedAt: serverNow,
             });
         }
 
-        transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author });
-        // Resta del día en que se hizo la venta, no del día de la anulación.
+        transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author, voidReason });
+        // Resta del día en que se hizo la venta (su fecha de negocio, SPEC 51), no
+        // del día de la anulación.
         dailyStatsRepo.applySaleDelta(
             transaction,
-            { createdAt: existing.createdAt.toDate(), totalCents: toCents(existing.total) },
+            {
+                createdAt: saleBusinessAt(existing).toDate(),
+                totalCents: toCents(existing.total),
+            },
             -1,
         );
 
-        return { ...existing, voidedAt: timestamp, voidedBy: author };
+        return { ...existing, voidedAt: timestamp, voidedBy: author, voidReason };
     });
 
     await recordAudit({
         action: 'sale.voided',
         entity: 'sale',
         entityId: sale.id,
-        summary: `Venta ${sale.folio} anulada por ${sale.total.toFixed(2)}`,
+        summary: `Venta ${sale.folio} anulada por ${sale.total.toFixed(2)}: ${voidReason}`,
         userId: voidedBy,
         roleSlug: roleSlug ?? null,
         metadata: {
@@ -1769,6 +2430,9 @@ const applyVoid = async (
             total: sale.total,
             paymentMethod: sale.paymentMethod,
             items: sale.items.length,
+            reason: voidReason,
+            // POS anterior a SPEC 62: el motivo lo puso el servidor.
+            ...(reasonDefaulted ? { reasonDefaulted: true } : {}),
             // Anulación hecha sin red y cerrada en el sync: quién la hizo en la
             // caja y cuándo, frente a quién la sincronizó (`userId`).
             ...(reported?.voidedBy || reported?.voidedAt
@@ -1828,6 +2492,12 @@ export const listSales = async (filters: {
     search?: string;
     /** Solo las marcadas con `promotionReview` (promo aceptada fuera de vigencia). */
     promotionReview?: boolean;
+    /**
+     * Solo las ventas offline con esta marca de revisión (SPEC 52): faltante de
+     * stock, catálogo inactivo o turno ya cerrado. Filtro en memoria sobre la
+     * ventana de fechas, como `promotionReview` con turno.
+     */
+    review?: SaleReviewKind;
     /** Solo las de esta forma de pago (SPEC 19). */
     paymentMethod?: PaymentMethod;
     page?: number;
@@ -1866,7 +2536,9 @@ export const listSales = async (filters: {
         }),
     ).length > 0;
 
-    if (!filters.search && (!wantsFieldFilter || inQuery)) {
+    // La marca de revisión (SPEC 52) siempre corre en memoria: son pocas ventas y
+    // la ventana tiene fecha, no vale un índice por marca.
+    if (!filters.search && !filters.review && (!wantsFieldFilter || inQuery)) {
         const result = await salesRepo.listSalesPage({
             from: filters.from,
             to: filters.to,
@@ -1900,6 +2572,10 @@ export const listSales = async (filters: {
 
     if (filters.promotionReview) {
         filtered = filtered.filter((sale) => sale.promotionReview === true);
+    }
+
+    if (filters.review) {
+        filtered = filtered.filter(SALE_REVIEW_FILTERS[filters.review]);
     }
 
     if (filters.paymentMethod) {

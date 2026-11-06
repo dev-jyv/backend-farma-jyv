@@ -1,7 +1,7 @@
 import * as returnsRepo from '../../../repositories/sale-returns.repository';
 import * as cashSessionsRepo from '../../../repositories/cash-sessions.repository';
 import * as salesRepo from '../../../repositories/sales.repository';
-import { RefundMethod } from '../../../types';
+import { RefundMethod, saleBusinessAt } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { fromCents, toCents } from '../../../utils/taxes';
 import { getZonedYmd } from '../../../utils/timezone';
@@ -47,7 +47,11 @@ export const ventas: ReportDefinition = {
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const scope = query.scope ?? 'financial';
-        const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
+        const { items: sales } = await salesRepo.listSales({
+            from: range.from,
+            to: range.to,
+            byBusinessDate: true,
+        });
         const names = await resolveUserNames(sales.map((sale) => sale.cashierId));
         return {
             subtitle: `${SCOPE_LABELS[scope]} · ${range.label}`,
@@ -247,7 +251,9 @@ export const impuestos: ReportDefinition = {
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const [{ items: sales }, returns] = await Promise.all([
-            salesRepo.listSales({ from: range.from, to: range.to }),
+            // Por fecha de negocio (SPEC 51): la venta del 31 que sincroniza el 1
+            // declara su IVA en el mes del 31.
+            salesRepo.listSales({ from: range.from, to: range.to, byBusinessDate: true }),
             returnsRepo.listSaleReturns({ from: range.from, to: range.to }),
         ]);
         interface Day { sales: number; base: number; ieps: number; iva: number; total: number }
@@ -260,7 +266,7 @@ export const impuestos: ReportDefinition = {
         };
         let withoutBreakdown = 0;
         for (const sale of sales) {
-            const day = dayOf(sale.createdAt.toMillis());
+            const day = dayOf(saleBusinessAt(sale).toMillis());
             day.sales += 1;
             day.total += toCents(sale.total);
             if (!sale.taxSummary) {
@@ -347,6 +353,9 @@ export const devoluciones: ReportDefinition = {
     },
 };
 
+/** Cancelación registrada antes de que el motivo fuera obligatorio (SPEC 62). */
+const NO_VOID_REASON = 'Sin motivo registrado';
+
 export const cancelaciones: ReportDefinition = {
     key: 'cancelaciones',
     title: 'Ventas canceladas',
@@ -357,6 +366,7 @@ export const cancelaciones: ReportDefinition = {
         { key: 'payment', header: 'Pago', type: 'text' },
         { key: 'voidedBy', header: 'Canceló', type: 'text' },
         { key: 'voidedAt', header: 'Fecha de cancelación', type: 'text' },
+        { key: 'reason', header: 'Motivo', type: 'text' },
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
@@ -376,6 +386,8 @@ export const cancelaciones: ReportDefinition = {
                 voidedAt: sale.voidedAt
                     ? `${stampDate(sale.voidedAt)} ${stampTime(sale.voidedAt)}`
                     : '',
+                // Motivo obligatorio desde SPEC 62; las anteriores no lo tienen.
+                reason: sale.voidReason ?? NO_VOID_REASON,
                 amount: sale.total,
             }));
         return {
@@ -383,8 +395,8 @@ export const cancelaciones: ReportDefinition = {
             slug: range.slug,
             rows,
             emptyMessage: 'Sin ventas canceladas en el periodo.',
-            notes: ['El periodo filtra por la fecha de la venta. El sistema no guarda el motivo '
-                + 'de la cancelación; consulta la bitácora de auditoría.'],
+            notes: ['El periodo filtra por la fecha de la venta. Las cancelaciones anteriores '
+                + 'al motivo obligatorio aparecen como "' + NO_VOID_REASON + '".'],
         };
     },
 };

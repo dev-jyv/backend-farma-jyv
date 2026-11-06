@@ -46,13 +46,33 @@ export const idempotencyKeySchema = z.string()
     .regex(/^[A-Za-z0-9_:-]+$/, 'La llave de idempotencia solo admite [A-Za-z0-9_:-]');
 
 /**
- * Cuerpo **opcional** de la anulación. Solo lo manda el POS cuando cierra una
- * anulación que ocurrió sin red: el instante y el cajero reales son los de
- * entonces, no los del momento en que se logró sincronizar.
+ * Motivo con el que se registra la anulación de un POS anterior a SPEC 62, que no
+ * manda `reason`. El POS nuevo usa el mismo texto para sus anulaciones locales
+ * hechas antes del motivo obligatorio, así el reporte no distingue los caminos.
+ */
+export const LEGACY_VOID_REASON = 'Sin motivo (POS anterior)';
+
+const VOID_REASON_MESSAGE = 'El motivo de la anulación debe tener de 5 a 300 caracteres';
+
+/**
+ * Cuerpo de la anulación. `reason` es obligatorio desde SPEC 62 (5 a 300
+ * caracteres). Durante la transición, un cuerpo **sin la clave** `reason` (POS
+ * anterior: cuerpo vacío en línea o solo `voidedAt`/`voidedBy` al cerrar una
+ * anulación sin red) recibe `LEGACY_VOID_REASON`; una clave presente pero vacía,
+ * corta o `null` es un payload nuevo sin motivo y responde 400.
+ *
+ * `voidedAt`/`voidedBy` solo los manda el POS cuando cierra una anulación que
+ * ocurrió sin red: el instante y el cajero reales son los de entonces, no los
+ * del momento en que se logró sincronizar.
  */
 export const voidSaleSchema = z.preprocess(
     (value) => value ?? {},
     z.object({
+        reason: z.string({ invalid_type_error: VOID_REASON_MESSAGE })
+            .trim()
+            .min(5, VOID_REASON_MESSAGE)
+            .max(300, VOID_REASON_MESSAGE)
+            .optional(),
         voidedAt: parseableDate.optional(),
         /**
          * Uid del cajero que anuló en la caja. Se guarda como autor de la
@@ -60,7 +80,12 @@ export const voidSaleSchema = z.preprocess(
          * bitácora de auditoría sigue registrando al usuario del token.
          */
         voidedBy: z.string().min(1).max(128).optional(),
-    }),
+    }).transform((data) => ({
+        ...data,
+        reason: data.reason ?? LEGACY_VOID_REASON,
+        /** `true` si el motivo lo puso el servidor (POS anterior sin `reason`). */
+        reasonDefaulted: data.reason === undefined,
+    })),
 );
 
 /**
@@ -173,9 +198,10 @@ export const createSaleSchema = z.object({
     prescriptionRetained: nullable(z.boolean()),
     billing: nullable(saleBillingSchema),
     /**
-     * Hora local del cobro según la caja. Solo la usa `/sales/bulk` para decidir
-     * si una promoción estaba vigente cuando se cobró sin red; no es la fecha de
-     * la venta (`createdAt` sigue siendo la del servidor).
+     * Hora local del cobro según la caja. Solo cuenta en `/sales/bulk`: si es
+     * creíble es la fecha de negocio de la venta (`businessAt`, SPEC 51) y la hora
+     * a la que se mide la vigencia de promociones y cupones. `createdAt` sigue
+     * siendo la de recepción en el servidor.
      */
     soldAt: nullable(parseableDate),
     /**
@@ -184,6 +210,19 @@ export const createSaleSchema = z.object({
      * alcance venta dentro de `saleDiscountAmount`.
      */
     couponCode: nullable(couponCodeSchema),
+    /**
+     * Desfase del reloj de la caja contra el servidor al cobrar, en ms
+     * (`servidor − local`, SPEC 65). Informativo: se guarda en la venta tal cual
+     * (redondeado) y nunca la rechaza; `soldAt` ya viene corregido.
+     */
+    clockSkewMs: nullable(z.number().finite()),
+    /**
+     * Uid de quien **cobró** (SPEC 54). Solo cuenta en `/sales/bulk`: si es quien
+     * abrió el turno, la venta queda a su nombre aunque la suba otro usuario.
+     */
+    soldBy: nullable(z.string().trim().min(1).max(128)),
+    /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
+    discountAuthorizedBy: nullable(z.string().trim().min(1).max(128)),
 }).superRefine((data, ctx) => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&
@@ -233,12 +272,20 @@ export const createSaleSchema = z.object({
     }
 });
 
+/** Ventas por lote: el POS trocea su cola en bloques de este tamaño (SPEC 48). */
+export const BULK_SALES_MAX_ITEMS = 50;
+
 /**
  * Empuje del sync local-first del POS: todas las ventas pendientes de una caja
  * en una sola llamada, en vez de un `POST /sales` por venta.
+ *
+ * Cada venta se valida **dentro del loop** con `createSaleSchema.safeParse`
+ * (SPEC 48): con `z.array(createSaleSchema)` una sola venta inválida respondía
+ * 400 al lote entero y la cola de la caja se atoraba en cada sync. Aquí solo se
+ * valida la forma del lote.
  */
 export const bulkCreateSalesSchema = z.object({
-    items: z.array(createSaleSchema).min(1).max(200),
+    items: z.array(z.unknown()).min(1).max(BULK_SALES_MAX_ITEMS),
 });
 
 export const createSaleReturnSchema = z.object({
@@ -400,6 +447,11 @@ export const listSalesQuerySchema = z.object({
         .transform((value) => (value === undefined ? undefined : value === 'true')),
     /** Forma de pago (SPEC 19): se filtra en la consulta, no en memoria. */
     paymentMethod: z.enum(['cash', 'card', 'transfer', 'mixed']).optional(),
+    /**
+     * Ventas offline marcadas para revisión (SPEC 52): faltante de stock,
+     * catálogo inactivo o cobradas con el turno ya cerrado.
+     */
+    review: z.enum(['stock', 'catalog', 'late']).optional(),
     ...paginationFields,
     ...cursorField,
 });
@@ -407,7 +459,27 @@ export const listSalesQuerySchema = z.object({
 export const openCashSessionSchema = z.object({
     /** Puede ser negativo: hereda el efectivo del corte anterior. Ver `signedMoney`. */
     openingAmount: signedMoney,
+    /**
+     * Arqueo de apertura (SPEC 63): efectivo que el cajero contó al abrir. Con él
+     * es el fondo del turno (el Z parte de aquí). Ausente en un POS anterior.
+     */
+    openingCounted: nullable(money),
+    /**
+     * Fondo que dejó el cierre anterior, solo de referencia. Ausente en el primer
+     * turno de la caja. Puede ser negativo, igual que el fondo heredado.
+     */
+    inheritedFloat: nullable(signedMoney),
+    /**
+     * Nota del cajero cuando lo contado no coincide con lo heredado. Se recorta y
+     * se acota; no se rechaza por largo: un 400 atoraría el alta en la cola.
+     */
+    openingNote: nullable(z.string().trim().max(1000).transform(
+        (value) => value.slice(0, 200),
+    )),
 });
+
+/** `true`/`false` como texto de query. */
+const booleanQuery = z.enum(['true', 'false']).transform((value) => value === 'true');
 
 export const closeCashSessionSchema = z.object({
     /**
@@ -464,6 +536,11 @@ export const listCashSessionsQuerySchema = z.object({
     to: z.string().datetime().optional(),
     openedBy: z.string().optional(),
     adjustmentStatus: z.enum(['pending', 'approved', 'rejected']).optional(),
+    /**
+     * Turnos autocerrados por revisar (SPEC 63). Es el nombre que manda el POS
+     * (`needsReview=true`); incluye los autocierres anteriores a la marca.
+     */
+    needsReview: booleanQuery.optional(),
     ...paginationFields,
 });
 

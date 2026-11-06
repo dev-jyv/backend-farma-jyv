@@ -594,7 +594,8 @@ describe('POST /sales/bulk: resultado por índice', () => {
         paymentMethod: 'cash',
         amountReceived: 10,
         cashSessionId: 's',
-        idempotencyKey: key,
+        // La venta se valida dentro del lote (SPEC 48): la llave debe ser válida.
+        idempotencyKey: `llave-${key}-0001`,
     });
 
     afterEach(() => jest.restoreAllMocks());

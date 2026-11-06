@@ -20,21 +20,78 @@ export const createCashSession = async (
  */
 export const createCashSessionIfNoneOpen = async (
     data: Omit<CashSession, 'id' | 'openedAt'>,
-): Promise<CashSession> => db().runTransaction(async (transaction) => {
-    const open = await transaction.get(
-        collection()
-            .where('openedBy', '==', data.openedBy)
-            .where('closedAt', '==', null)
-            .limit(1),
-    );
-    if (!open.empty) {
-        throw badRequest('Ya tienes un turno de caja abierto');
+): Promise<CashSession & { previousSessionId?: string | null }> =>
+    db().runTransaction(async (transaction) => {
+        // Turno anterior (SPEC 63): solo hace falta si el arqueo de apertura no
+        // cuadró. Se lee aquí, antes de cualquier escritura.
+        const markPrevious = typeof data.openingDifference === 'number' &&
+            Math.abs(data.openingDifference) >= 0.01;
+        const [open, recentlyClosed] = await Promise.all([
+            transaction.get(
+                collection()
+                    .where('openedBy', '==', data.openedBy)
+                    .where('closedAt', '==', null)
+                    .limit(1),
+            ),
+            markPrevious
+                ? transaction.get(recentlyClosedQuery())
+                : Promise.resolve(null),
+        ]);
+        if (!open.empty) {
+            throw badRequest('Ya tienes un turno de caja abierto');
+        }
+        const payload = { ...data, openedAt: now() };
+        const ref = collection().doc();
+        transaction.create(ref, payload);
+
+        const previous = recentlyClosed
+            ? pickPreviousSession(recentlyClosed.docs, data.inheritedFloat)
+            : null;
+        if (previous) {
+            transaction.update(previous.ref, {
+                followingOpeningDifference: data.openingDifference,
+            });
+        }
+        return {
+            id: ref.id,
+            ...payload,
+            ...(markPrevious ? { previousSessionId: previous?.id ?? null } : {}),
+        };
+    });
+
+/** Cierres que se consideran "el turno anterior" al abrir (SPEC 63). */
+const PREVIOUS_SESSION_CANDIDATES = 5;
+
+/**
+ * Los últimos turnos cerrados. Los `closedAt: null` (abiertos) ordenan antes que
+ * cualquier fecha, así que en orden descendente quedan al final.
+ */
+const recentlyClosedQuery = (): FirebaseFirestore.Query =>
+    collection().orderBy('closedAt', 'desc').limit(PREVIOUS_SESSION_CANDIDATES);
+
+/**
+ * El backend no sabe de qué caja física viene el turno: "el anterior" es el
+ * último cierre, salvo que entre los recientes haya uno cuyo conteo sea
+ * exactamente el fondo heredado que mostró la caja (con varias cajas, ese es el
+ * del mismo cajón).
+ */
+const pickPreviousSession = (
+    docs: FirebaseFirestore.QueryDocumentSnapshot[],
+    inheritedFloat: number | undefined,
+): FirebaseFirestore.QueryDocumentSnapshot | null => {
+    const closed = docs.filter((doc) => doc.data().closedAt);
+    if (!closed.length) {
+        return null;
     }
-    const payload = { ...data, openedAt: now() };
-    const ref = collection().doc();
-    transaction.create(ref, payload);
-    return { id: ref.id, ...payload };
-});
+    const sameAmount = typeof inheritedFloat === 'number'
+        ? closed.find((doc) => {
+            const counted = doc.data().countedCashAmount;
+            return typeof counted === 'number' &&
+                Math.round(counted * 100) === Math.round(inheritedFloat * 100);
+        })
+        : undefined;
+    return sameAmount ?? closed[0];
+};
 
 export const getCashSessionById = async (id: string): Promise<CashSession | null> => {
     const doc = await collection().doc(id).get();
@@ -71,9 +128,16 @@ interface CloseCashSessionData {
     autoClosedByExpiry?: boolean;
 }
 
+/**
+ * Cierra el turno. Con `data` como función (SPEC 52), el resumen se arma
+ * **dentro** de la transacción con las ventas del turno leídas por consulta
+ * transaccional: una venta que confirma entre el cálculo previo y el cierre ya
+ * no queda en el turno pero fuera del corte congelado. Si una venta se escribe
+ * mientras tanto, Firestore reintenta el cierre y el resumen se rehace.
+ */
 export const closeCashSession = async (
     id: string,
-    data: CloseCashSessionData,
+    data: CloseCashSessionData | ((sales: SessionSaleRow[]) => CloseCashSessionData),
 ): Promise<CashSession> => {
     const ref = collection().doc(id);
     const timestamp = now();
@@ -81,24 +145,34 @@ export const closeCashSession = async (
     // transacción: dos cierres simultáneos (doble toque) ya no se pisan ni borran la
     // revisión de ajuste que dejó el primero.
     await db().runTransaction(async (transaction) => {
-        const current = await transaction.get(ref);
+        const [current, salesSnapshot] = await Promise.all([
+            transaction.get(ref),
+            typeof data === 'function'
+                ? transaction.get(sessionSalesQuery(id))
+                : Promise.resolve(null),
+        ]);
         if (!current.exists) {
             throw badRequest('El turno de caja no existe');
         }
         if (current.data()?.closedAt) {
             throw badRequest('El turno de caja ya está cerrado');
         }
+        const closeData = typeof data === 'function'
+            ? data(salesSnapshot!.docs.map((doc) => toSessionSaleRow(doc.data())))
+            : data;
         transaction.update(ref, {
             closedAt: timestamp,
-            closedBy: data.closedBy,
-            countedCashAmount: data.countedCashAmount,
-            expectedCashAmount: data.expectedCashAmount,
-            expectedServicesCashAmount: data.expectedServicesCashAmount ?? 0,
-            cashDifference: data.cashDifference,
-            summary: data.summary,
-            hasPendingAdjustment: data.hasPendingAdjustment ?? false,
-            adjustmentStatus: data.adjustmentStatus ?? null,
-            autoClosedByExpiry: data.autoClosedByExpiry ?? false,
+            closedBy: closeData.closedBy,
+            countedCashAmount: closeData.countedCashAmount,
+            expectedCashAmount: closeData.expectedCashAmount,
+            expectedServicesCashAmount: closeData.expectedServicesCashAmount ?? 0,
+            cashDifference: closeData.cashDifference,
+            summary: closeData.summary,
+            hasPendingAdjustment: closeData.hasPendingAdjustment ?? false,
+            adjustmentStatus: closeData.adjustmentStatus ?? null,
+            autoClosedByExpiry: closeData.autoClosedByExpiry ?? false,
+            // Autocierre sin arqueo (SPEC 63): queda para que un admin lo revise.
+            ...(closeData.autoClosedByExpiry ? { autoClosed: true, needsReview: true } : {}),
         });
     });
     const updated = await ref.get();
@@ -110,6 +184,8 @@ interface ListCashSessionsFilters {
     to?: string;
     openedBy?: string;
     adjustmentStatus?: 'pending' | 'approved' | 'rejected';
+    /** Autocerrados por revisar (SPEC 63), incluidos los autocierres anteriores a la marca. */
+    needsReview?: boolean;
     page: number;
     limit: number;
 }
@@ -150,6 +226,13 @@ export const listCashSessions = async (
         sessions = sessions.filter(
             (session) => session.adjustmentStatus === filters.adjustmentStatus,
         );
+    }
+    if (filters.needsReview !== undefined) {
+        // Un autocierre de antes de SPEC 63 no tiene `needsReview`, pero nadie lo
+        // arqueó: cuenta como por revisar.
+        const pending = (session: CashSession): boolean =>
+            session.needsReview === true || session.autoClosedByExpiry === true;
+        sessions = sessions.filter((session) => pending(session) === filters.needsReview);
     }
     // El recorte va DESPUÉS de los filtros en memoria: paginar antes devolvía
     // páginas de tamaño irregular y un total que no era el del filtro aplicado.
@@ -198,7 +281,38 @@ export interface SessionSaleRow {
     servicesCashAmount: number;
     /** Comisiones de la venta; 0 en una venta histórica. */
     commissionTotal: number;
+    /** Fecha de negocio (SPEC 51); `createdAt` en ventas anteriores. */
+    businessAt: FirebaseFirestore.Timestamp;
+    /** Llegó con el turno ya cerrado (SPEC 52). */
+    lateSync: boolean;
 }
+
+const sessionSalesQuery = (cashSessionId: string): FirebaseFirestore.Query =>
+    db().collection('sales').where('cashSessionId', '==', cashSessionId);
+
+const toSessionSaleRow = (data: FirebaseFirestore.DocumentData): SessionSaleRow => {
+    const cashAmount = (data.cashAmount as number | null | undefined) ?? null;
+    const total = data.total as number;
+    return {
+        paymentMethod: data.paymentMethod as string,
+        amountReceived: data.amountReceived as number | null,
+        change: data.change as number | null,
+        cashAmount,
+        total,
+        voidedAt: data.voidedAt ?? null,
+        hasServices: (data.hasServices as boolean | undefined) ?? false,
+        pharmacyTotal: (data.pharmacyTotal as number | undefined) ?? total,
+        servicesTotal: (data.servicesTotal as number | undefined) ?? 0,
+        pharmacyCashAmount: (data.pharmacyCashAmount as number | undefined) ??
+            (cashAmount ??
+                ((data.amountReceived as number | null ?? 0) -
+                    (data.change as number | null ?? 0))),
+        servicesCashAmount: (data.servicesCashAmount as number | undefined) ?? 0,
+        commissionTotal: (data.commissionTotal as number | undefined) ?? 0,
+        businessAt: (data.businessAt ?? data.createdAt) as FirebaseFirestore.Timestamp,
+        lateSync: data.lateSync === true,
+    };
+};
 
 /**
  * Ventas del turno para el corte.
@@ -210,30 +324,6 @@ export interface SessionSaleRow {
  * antes de existir la rama de servicios.
  */
 export const listSalesForSession = async (cashSessionId: string): Promise<SessionSaleRow[]> => {
-    const snapshot = await db()
-        .collection('sales')
-        .where('cashSessionId', '==', cashSessionId)
-        .get();
-    return snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const cashAmount = (data.cashAmount as number | null | undefined) ?? null;
-        const total = data.total as number;
-        return {
-            paymentMethod: data.paymentMethod as string,
-            amountReceived: data.amountReceived as number | null,
-            change: data.change as number | null,
-            cashAmount,
-            total,
-            voidedAt: data.voidedAt ?? null,
-            hasServices: (data.hasServices as boolean | undefined) ?? false,
-            pharmacyTotal: (data.pharmacyTotal as number | undefined) ?? total,
-            servicesTotal: (data.servicesTotal as number | undefined) ?? 0,
-            pharmacyCashAmount: (data.pharmacyCashAmount as number | undefined) ??
-                (cashAmount ??
-                    ((data.amountReceived as number | null ?? 0) -
-                        (data.change as number | null ?? 0))),
-            servicesCashAmount: (data.servicesCashAmount as number | undefined) ?? 0,
-            commissionTotal: (data.commissionTotal as number | undefined) ?? 0,
-        };
-    });
+    const snapshot = await sessionSalesQuery(cashSessionId).get();
+    return snapshot.docs.map((doc) => toSessionSaleRow(doc.data()));
 };

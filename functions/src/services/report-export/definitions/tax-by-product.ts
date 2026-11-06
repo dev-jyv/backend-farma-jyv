@@ -271,7 +271,8 @@ export const ivaPorProducto: ReportDefinition = {
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const [{ items: sales }, returns] = await Promise.all([
-            salesRepo.listSales({ from: range.from, to: range.to }),
+            // Por fecha de negocio (SPEC 51), igual que `impuestos`.
+            salesRepo.listSales({ from: range.from, to: range.to, byBusinessDate: true }),
             returnsRepo.listSaleReturns({ from: range.from, to: range.to }),
         ]);
         const catalog = await loadTaxCatalog(sales, returns);

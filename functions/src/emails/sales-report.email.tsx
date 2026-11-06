@@ -47,6 +47,16 @@ const reviewFoliosLabel = (review: SalesReport['promotionReview']): string => {
     return rest > 0 ? `${shown} y ${rest} más` : shown;
 };
 
+/** Marcas de revisión de las ventas offline (SPEC 52), en el orden del correo. */
+const SALE_REVIEW_LABELS: Array<{
+    kind: keyof SalesReport['saleReview'];
+    label: string;
+}> = [
+    { kind: 'stock', label: 'Con faltante de stock' },
+    { kind: 'catalog', label: 'Con producto o servicio inactivo' },
+    { kind: 'late', label: 'Cobradas con el turno ya cerrado' },
+];
+
 const percentLabel = (value: number | null): string =>
     value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
@@ -62,6 +72,10 @@ const monthDeltaLabel = (report: MonthlySalesReport): string => {
 export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
     const { totals, branches, expenses } = report;
     const review = report.promotionReview;
+    const saleReviews = SALE_REVIEW_LABELS
+        .map((entry) => ({ ...entry, review: report.saleReview[entry.kind] }))
+        .filter((entry) => entry.review.count > 0);
+    const saleReviewCount = saleReviews.reduce((sum, entry) => sum + entry.review.count, 0);
     const netTone = report.netResult >= 0 ? palette.positive : palette.negative;
 
     const expenseRows: DataRow[] = expenses.byCategory.map((entry) => ({
@@ -225,6 +239,27 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                             <Text style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}>
                                 {reviewFoliosLabel(review)}
                             </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {saleReviewCount > 0 ? (
+                        <ReportSection
+                            title={`Ventas sin conexión por revisar (${saleReviewCount})`}
+                        >
+                            <Text style={{ ...text.label, color: palette.expense }}>
+                                {'Se cobraron sin conexión y se registraron aunque el servidor ' +
+                                    'no pudo aplicarlas completas. Revísalas en el historial de ' +
+                                    'ventas del admin con el filtro de revisión.'}
+                            </Text>
+                            {saleReviews.map((entry) => (
+                                <Text
+                                    key={entry.kind}
+                                    style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}
+                                >
+                                    {`${entry.label} (${entry.review.count}): ` +
+                                        reviewFoliosLabel(entry.review)}
+                                </Text>
+                            ))}
                         </ReportSection>
                     ) : null}
 

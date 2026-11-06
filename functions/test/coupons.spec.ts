@@ -524,6 +524,10 @@ describe('cupones (SPEC 47)', () => {
                 deactivatedAt: Timestamp.fromMillis(daysAgo(4)),
             });
             const session = await openSession();
+            // El turno ya estaba abierto cuando se cobró: un `soldAt` anterior a
+            // la apertura no es confiable (SPEC 51).
+            await db().collection('cashSessions').doc(session.id)
+                .update({ openedAt: Timestamp.fromMillis(daysAgo(6)) });
             const inWindow = await sellWithSaleCoupon(product.id, coupon.code, session.id, {
                 offline: true,
                 soldAt: new Date(daysAgo(5)).toISOString(),

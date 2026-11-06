@@ -4,23 +4,35 @@ import { calendarTimestampVariants } from '../utils/calendar-date';
 
 const collection = () => db().collection('batches');
 
+/**
+ * Lotes vendibles (`quantity > 0`) de un producto. Los agotados se acumulan para
+ * siempre y su costo de lectura no debe crecer con el historial. La desigualdad
+ * obliga a ordenar primero por `quantity`; la caducidad se ordena en memoria
+ * (`sortBatchesByExpiry`). Índice: productId + quantity.
+ *
+ * Se expone la consulta, no solo su resultado, porque `createSale` la lee también
+ * con `transaction.get(query)` para repartir FEFO sobre el estado fresco (SPEC 50).
+ */
+export const availableBatchesQuery = (productId: string): FirebaseFirestore.Query =>
+    collection()
+        .where('productId', '==', productId)
+        .where('quantity', '>', 0)
+        .orderBy('quantity');
+
+/** Documentos de lote → `Batch[]` ordenados por caducidad (FEFO). */
+export const toBatchesByExpiry = (
+    docs: FirebaseFirestore.QueryDocumentSnapshot[],
+): Batch[] => docs
+    .map((doc) => ({ id: doc.id, ...doc.data() } as Batch))
+    .sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+
 export const listBatchesByProduct = async (
     productId: string,
     options: { onlyAvailable?: boolean } = {},
 ): Promise<Batch[]> => {
     if (options.onlyAvailable) {
-        // Solo lotes vendibles (`quantity > 0`): los agotados se acumulan para
-        // siempre y su costo de lectura no debe crecer con el historial. La
-        // desigualdad obliga a ordenar primero por `quantity`; la caducidad se
-        // ordena en memoria. Índice: productId + quantity.
-        const snapshot = await collection()
-            .where('productId', '==', productId)
-            .where('quantity', '>', 0)
-            .orderBy('quantity')
-            .get();
-        return snapshot.docs
-            .map((doc) => ({ id: doc.id, ...doc.data() } as Batch))
-            .sort((a, b) => a.expiryDate.toMillis() - b.expiryDate.toMillis());
+        const snapshot = await availableBatchesQuery(productId).get();
+        return toBatchesByExpiry(snapshot.docs);
     }
     const snapshot = await collection()
         .where('productId', '==', productId)

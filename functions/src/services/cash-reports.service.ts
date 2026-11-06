@@ -41,7 +41,10 @@ export const renderCashReportHtml = (input: {
     const title = input.kind === 'X' ? 'Lectura X (parcial)' : 'Corte Z (cierre)';
 
     const rows: Array<[string, string]> = [
-        ['Fondo inicial', formatCurrency(input.session.openingAmount)],
+        // Con arqueo de apertura (SPEC 63) el fondo es lo contado al abrir.
+        ['Fondo inicial', formatCurrency(
+            input.session.openingCounted ?? input.session.openingAmount,
+        )],
         ['Ventas', `${input.summary.salesCount}`],
         ...Object.entries(input.summary.byMethod).map(([method, totals]): [string, string] => [
             `${METHOD_LABELS[method] ?? method} (${totals.count})`,
@@ -64,6 +67,14 @@ export const renderCashReportHtml = (input: {
     }
     if (input.summary.voidedCount > 0) {
         rows.push(['Ventas anuladas', `${input.summary.voidedCount}`]);
+    }
+    // Cobrado y en el cajón, pero sin venta registrada (SPEC 53). Informativo:
+    // no entra al esperado. Sin pendientes el ticket sale como siempre.
+    if ((input.summary.unreconciledCash ?? 0) > 0) {
+        rows.push([
+            'No conciliadas (efectivo)',
+            formatCurrency(input.summary.unreconciledCash),
+        ]);
     }
 
     /**
