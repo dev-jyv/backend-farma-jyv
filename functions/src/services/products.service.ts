@@ -22,6 +22,7 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
+import { productNameKey } from '../utils/product-match';
 import { boxConfigProblem, boxPriceExceedsPieces } from '../utils/box-sale';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
@@ -826,7 +827,8 @@ export const assertProductsCreatable = async (
         // Los códigos de barras comparten espacio con el SKU de caja, igual que
         // en `assertNoDuplicate` del repositorio.
         claim(sku, 'sku', 'SKU');
-        claim(name, 'name', 'nombre');
+        // Mismo nombre normalizado (SPEC 60), no el texto exacto.
+        claim(productNameKey(name, input.concentration?.trim()), 'name', 'nombre');
         claim(barcode, 'code', 'código de barras');
         claim(boxBarcode, 'code', 'código de barras');
         categoryIds.add(input.categoryId);
@@ -843,6 +845,7 @@ export const assertProductsCreatable = async (
         await productsRepo.assertUniqueOutsideTransaction({
             sku: input.sku.trim(),
             name: input.name.trim(),
+            concentration: input.concentration?.trim(),
             barcode: input.barcode?.trim() || undefined,
             boxBarcode: input.boxBarcode?.trim() || undefined,
         });

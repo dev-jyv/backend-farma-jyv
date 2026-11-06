@@ -16,7 +16,8 @@ import {
     notFound,
     withDefaultSyncCode,
 } from '../utils/errors';
-import { AuditActor } from './audit.service';
+import { isSameProduct } from '../utils/product-match';
+import { AuditActor, recordAudit } from './audit.service';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as productsRepo from '../repositories/products.repository';
@@ -307,16 +308,27 @@ const applyStockEntry = async (input: {
             // huérfano y cada reintento chocaba por SKU (SPEC 55).
             await inventoryService.assertActiveSupplier(invoice.supplierId);
             inventoryService.assertValidExpiryAndQuantity([input]);
-            await productsService.assertProductsCreatable([input.product!]);
-
-            // `createProduct` recibe el actor dentro del mismo objeto de entrada.
-            product = await productsService.createProduct({ ...input.product!, actor });
+            const resolved = await createOrAdoptProduct(input.product!, actor, {
+                invoiceId: input.invoiceId,
+                deviceId: input.deviceId,
+            });
+            product = resolved.product;
             keyProductId = product.id;
             if (idempotencyRef) {
-                // Justo después del alta: el reintento reutiliza este producto en
-                // vez de crear otro. Si la función muere antes de esta escritura,
-                // el reintento lo adopta por SKU (creado después de `reservedAt`).
+                // Justo después del alta (o de adoptar el existente): el reintento
+                // reutiliza este producto en vez de crear otro. Si la función muere
+                // antes de esta escritura, el reintento lo adopta por SKU.
                 await idempotencyRef.set({ productId: product.id }, { merge: true });
+            }
+            // Un producto adoptado ya puede tener esta partida en la factura.
+            if (resolved.adopted && input.confirmDuplicate !== true) {
+                await assertNotPossibleDuplicate({
+                    invoiceId: input.invoiceId,
+                    productId: product.id,
+                    lotNumber: input.lotNumber,
+                    quantity: input.quantity,
+                    idempotencyKey: input.idempotencyKey,
+                });
             }
         }
 
@@ -363,6 +375,128 @@ const applyStockEntry = async (input: {
     };
 };
 
+type InlineProduct = Omit<Parameters<typeof productsService.createProduct>[0], 'actor'>;
+
+/** Códigos del 409 de producto duplicado (SPEC 60). */
+const DUPLICATE_PRODUCT_CODES = new Set<string>([
+    'PRODUCT_DUPLICATE',
+    'PRODUCT_SKU_TAKEN',
+    'PRODUCT_NAME_TAKEN',
+]);
+
+/** Campos del alta en línea que se comparan con el existente al adoptarlo. */
+const ADOPTION_COMPARED_FIELDS = [
+    'name', 'sku', 'barcode', 'activeIngredient', 'concentration', 'categoryId', 'unit',
+    'salePrice', 'minStock', 'hasIva', 'hasIvaZero', 'hasIeps', 'iepsRate',
+    'controlledGroup', 'requiresPrescription',
+] as const;
+
+/**
+ * Alta en línea de la caja (SPEC 60). Si el producto ya existe —409 por SKU,
+ * nombre normalizado o código de barras— y es **el mismo** según la regla única
+ * (`isSameProduct`: código de barras cuando los dos lo tienen, si no `nameKey`),
+ * se usa el existente y la partida entra sobre él. Lo que la caja capturó del
+ * producto (nombre, precio...) se ignora y queda en la bitácora: el catálogo no
+ * se reescribe desde una entrada.
+ *
+ * Si no es el mismo, 409 `PRODUCT_DUPLICATE` con `details.existing` para que la
+ * caja lo muestre ("Ya existe otro producto con ese SKU: <nombre>").
+ */
+const createOrAdoptProduct = async (
+    input: InlineProduct,
+    actor: AuditActor,
+    context: { invoiceId: string; deviceId?: string },
+): Promise<{ product: Product; adopted: boolean }> => {
+    try {
+        // Todo lo que `createProduct` rechazaría se revisa antes (SPEC 55).
+        await productsService.assertProductsCreatable([input]);
+        // `createProduct` recibe el actor dentro del mismo objeto de entrada.
+        const product = await productsService.createProduct({ ...input, actor });
+        return { product, adopted: false };
+    } catch (error) {
+        const existing = await resolveAdoptableProduct(error, input);
+        if (!existing) {
+            throw error;
+        }
+        await auditAdoption(existing, input, actor, context);
+        return { product: existing, adopted: true };
+    }
+};
+
+/**
+ * El producto existente de un 409 de duplicado si es el mismo que el capturado;
+ * `null` si el error es otro (se relanza tal cual). Si es otro producto, o el
+ * mismo pero inactivo, lanza 409 `PRODUCT_DUPLICATE`.
+ */
+const resolveAdoptableProduct = async (
+    error: unknown,
+    input: InlineProduct,
+): Promise<Product | null> => {
+    if (!(error instanceof AppError) || error.statusCode !== 409 ||
+        !error.syncCode || !DUPLICATE_PRODUCT_CODES.has(error.syncCode)) {
+        return null;
+    }
+    const existingId = (error.details?.existing as { id?: unknown } | undefined)?.id;
+    const existing = typeof existingId === 'string'
+        ? await productsRepo.getProductById(existingId)
+        : null;
+    if (!existing) {
+        return null;
+    }
+    if (!isSameProduct(input, existing)) {
+        throw productsRepo.duplicateProductError(
+            'sku',
+            existing,
+            'PRODUCT_DUPLICATE',
+            `${error.message} (${existing.name}) y no es el mismo producto: ` +
+                'revisa el código de barras o el nombre antes de recibirlo',
+        );
+    }
+    if (!existing.isActive) {
+        throw productsRepo.duplicateProductError(
+            'sku',
+            existing,
+            'PRODUCT_DUPLICATE',
+            `${error.message} (${existing.name}) pero está inactivo: ` +
+                'reactívalo en el catálogo para recibir mercancía',
+        );
+    }
+    return existing;
+};
+
+const auditAdoption = async (
+    existing: Product,
+    input: InlineProduct,
+    actor: AuditActor,
+    context: { invoiceId: string; deviceId?: string },
+): Promise<void> => {
+    const ignored: Record<string, { before: unknown; after: unknown }> = {};
+    for (const field of ADOPTION_COMPARED_FIELDS) {
+        const captured = input[field as keyof InlineProduct];
+        const current = existing[field as keyof Product];
+        if (captured !== undefined && captured !== current) {
+            ignored[field] = { before: current ?? null, after: captured };
+        }
+    }
+    await recordAudit({
+        action: 'product.adopted_on_entry',
+        entity: 'product',
+        entityId: existing.id,
+        summary: `Entrada de caja sobre el producto existente ${existing.name} ` +
+            `(${existing.sku}); se ignoraron los datos capturados del producto`,
+        userId: actor.userId,
+        roleSlug: actor.roleSlug ?? null,
+        // `before` es el catálogo (lo que queda) y `after` lo que mandó la caja.
+        changes: Object.keys(ignored).length ? ignored : null,
+        metadata: {
+            invoiceId: context.invoiceId,
+            deviceId: context.deviceId ?? null,
+            capturedSku: input.sku,
+            capturedName: input.name,
+        },
+    });
+};
+
 const idempotencyExpiry = (): Date => new Date(Date.now() + IDEMPOTENCY_TTL_MS);
 
 /**
@@ -383,8 +517,8 @@ const releaseIdempotencyKey = async (
 /**
  * Producto que dejó un intento anterior de la llave: el que quedó anotado en ella
  * o, si la función murió antes de anotarlo, el de ese SKU creado **después** de
- * la reserva. Uno anterior con ese SKU es otro producto, y `createProduct` debe
- * decir que el SKU choca.
+ * la reserva. Uno anterior con ese SKU no lo dio de alta esta llave: el alta lo
+ * adopta solo si es el mismo producto (SPEC 60) o responde que el SKU choca.
  */
 const findLeftoverProduct = async (params: {
     productId?: string;

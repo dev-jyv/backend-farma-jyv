@@ -18,6 +18,11 @@ export const SYNC_ERROR_CODES = [
     'BATCH_EXPIRED',
     'PRODUCT_NOT_FOUND',
     'PRODUCT_INACTIVE',
+    // Alta de producto duplicada (SPEC 60): `details.existing` trae el producto que
+    // ya existe para que la caja decida si es el mismo y lo adopta.
+    'PRODUCT_DUPLICATE',
+    'PRODUCT_SKU_TAKEN',
+    'PRODUCT_NAME_TAKEN',
     // Turno de caja: bloqueo visible.
     'SESSION_CLOSED',
     'SESSION_FORBIDDEN',

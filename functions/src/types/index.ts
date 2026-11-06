@@ -157,6 +157,11 @@ export type AuditAction =
      */
     | 'product.box_price_review'
     | 'product.deactivated'
+    /**
+     * Una entrada de la caja traía un producto nuevo que ya existía y se usó el
+     * existente (SPEC 60): los datos capturados en la caja se ignoraron.
+     */
+    | 'product.adopted_on_entry'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
@@ -297,6 +302,12 @@ export interface Category {
 export interface Product {
     id: string;
     name: string;
+    /**
+     * Nombre + concentración normalizados (SPEC 60, `utils/product-match.ts`). Único
+     * entre productos activos; ausente en productos anteriores al backfill, que se
+     * siguen comparando por nombre exacto.
+     */
+    nameKey?: string;
     sku: string;
     barcode?: string;
     activeIngredient?: string;
