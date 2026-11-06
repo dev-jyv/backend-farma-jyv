@@ -326,6 +326,15 @@ export interface Product {
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
+    /**
+     * Última vez que cambió `salePrice` / `isActive` (SPEC 56). `updatedAt` no
+     * sirve para eso: sube con cada venta y cada entrada. Con ellos un PATCH de la
+     * caja que trae `baseUpdatedAt` sabe si el panel cambió el precio o el estado
+     * después de su copia. Ausentes en productos que no los han cambiado desde
+     * que existe el campo: entonces no hay conflicto que declarar.
+     */
+    salePriceChangedAt?: Timestamp;
+    isActiveChangedAt?: Timestamp;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }

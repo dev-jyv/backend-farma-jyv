@@ -8,11 +8,17 @@ export interface AppErrorOptions {
     syncCode?: SyncErrorCode;
     /** Por default lo decide el código (o el status ≥ 500 si no hay código). */
     retryable?: boolean;
+    /**
+     * Datos adicionales que viajan en `error.details` junto a `code` y
+     * `retryable` (p. ej. `current` en `CATALOG_CONFLICT`). Nunca los pisan.
+     */
+    details?: Record<string, unknown>;
 }
 
 export class AppError extends Error {
     public readonly syncCode?: SyncErrorCode;
     public readonly retryable: boolean;
+    public readonly details?: Record<string, unknown>;
 
     constructor(
         public readonly statusCode: number,
@@ -23,6 +29,7 @@ export class AppError extends Error {
         super(message);
         this.name = 'AppError';
         this.syncCode = options.syncCode;
+        this.details = options.details;
         this.retryable = options.retryable ??
             (options.syncCode ? isRetryableSyncErrorCode(options.syncCode) : statusCode >= 500);
     }
@@ -64,7 +71,10 @@ export const withDefaultSyncCode = (error: unknown, syncCode: SyncErrorCode): un
     if (!(error instanceof AppError) || error.statusCode >= 500 || error.syncCode) {
         return error;
     }
-    const tagged = new AppError(error.statusCode, error.code, error.message, { syncCode });
+    const tagged = new AppError(error.statusCode, error.code, error.message, {
+        syncCode,
+        details: error.details,
+    });
     tagged.stack = error.stack;
     return tagged;
 };

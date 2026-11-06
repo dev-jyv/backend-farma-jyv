@@ -144,6 +144,12 @@ export const updateProductSchema = z
         boxQuantity: boxQuantitySchema.nullable().optional(),
         boxPrice: positiveMoney.nullable().optional(),
         boxBarcode: barcodeSchema.nullable().optional(),
+        /**
+         * `updatedAt` remoto de la copia con la que editó la caja (SPEC 56). Si
+         * el panel cambió `salePrice` o `isActive` después y el PATCH los toca,
+         * responde 409 `CATALOG_CONFLICT`. Sin él (panel, POS viejo), sin cambios.
+         */
+        baseUpdatedAt: parseableDate.optional(),
     })
     .refine((data) => !(data.hasIva === true && data.hasIvaZero === true), {
         message: 'Un producto no puede tener IVA e IVA cero al mismo tiempo',

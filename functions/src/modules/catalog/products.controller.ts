@@ -55,7 +55,8 @@ export class ProductsController {
         const result = await productsService.listProductsForSync({
             updatedSince: query.updatedSince,
         });
-        return { data: result.items };
+        // `serverTime` se tomó antes de leer: es el cursor seguro de la caja (SPEC 56).
+        return { data: result.items, meta: { serverTime: result.serverTime } };
     }
 
     /**
@@ -183,10 +184,13 @@ export class ProductsController {
         @Body(new ZodValidationPipe(updateProductSchema)) body: UpdateProductInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const product = await productsService.updateProduct(params.id, body, {
-            userId: user.uid,
-            roleSlug: user.role.slug,
-        });
+        const { baseUpdatedAt, ...changes } = body;
+        const product = await productsService.updateProduct(
+            params.id,
+            changes,
+            { userId: user.uid, roleSlug: user.role.slug },
+            { baseUpdatedAt },
+        );
         return { data: product };
     }
 

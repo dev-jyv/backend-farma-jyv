@@ -13,7 +13,7 @@ import {
     SupplierSummary,
     isSaleProductItem,
 } from '../types';
-import { badRequest, notFound } from '../utils/errors';
+import { AppError, badRequest, notFound } from '../utils/errors';
 import {
     buildListMeta,
     buildListResult,
@@ -333,7 +333,20 @@ const toSyncProduct = (product: Product, batches: Batch[]): SyncProduct => {
  * solo guarda `categoryId`) ni cae a `getTotalStock` por producto, que eran
  * lecturas por producto en cada sync.
  */
-const readProductsForSync = async (updatedSince?: string): Promise<{ items: SyncProduct[] }> => {
+/**
+ * Respuesta del pull. `serverTime` (SPEC 56) es la hora del servidor tomada
+ * **antes** de leer: lo que cambie durante la lectura cae después de ella, así
+ * que la caja nunca se salta un cambio si la usa como cursor (menos su margen).
+ * El `updatedAt` máximo recibido no sirve: una venta toma su hora antes de
+ * confirmar y puede aparecer con una hora anterior a la de otro cambio ya leído.
+ */
+export interface ProductsSyncResult {
+    items: SyncProduct[];
+    serverTime: string;
+}
+
+const readProductsForSync = async (updatedSince?: string): Promise<ProductsSyncResult> => {
+    const serverTime = new Date().toISOString();
     const products = await productsRepo.listProducts({
         activeOnly: false,
         updatedSince,
@@ -348,6 +361,7 @@ const readProductsForSync = async (updatedSince?: string): Promise<{ items: Sync
         items: products.map((product) =>
             toSyncProduct(product, batchesByProduct.get(product.id) ?? []),
         ),
+        serverTime,
     };
 };
 
@@ -373,14 +387,14 @@ interface SyncCatalogCache {
 }
 
 let syncCache: SyncCatalogCache | null = null;
-let syncInflight: Promise<{ items: SyncProduct[] }> | null = null;
+let syncInflight: Promise<ProductsSyncResult> | null = null;
 
 export const clearProductsSyncCache = (): void => {
     syncCache = null;
     syncInflight = null;
 };
 
-const loadFullCatalogForSync = async (): Promise<{ items: SyncProduct[] }> => {
+const loadFullCatalogForSync = async (): Promise<ProductsSyncResult> => {
     // El corte se toma ANTES de leer: un cambio durante la lectura se vuelve a
     // traer en el siguiente delta en lugar de perderse.
     const startedAt = Date.now();
@@ -404,12 +418,15 @@ const loadFullCatalogForSync = async (): Promise<{ items: SyncProduct[] }> => {
     }
 
     const items = [...syncCache!.byId.values()].sort((a, b) => a.name.localeCompare(b.name));
-    return { items };
+    // El corte de esta carga (tomado antes de leer) es lo más reciente que el
+    // catálogo mezclado garantiza: quien se sumó a la lectura en curso recibe un
+    // cursor anterior a su petición, nunca uno posterior.
+    return { items, serverTime: new Date(startedAt).toISOString() };
 };
 
 export const listProductsForSync = async (filters: {
     updatedSince?: string;
-}): Promise<{ items: SyncProduct[] }> => {
+}): Promise<ProductsSyncResult> => {
     if (filters.updatedSince) {
         return readProductsForSync(filters.updatedSince);
     }
@@ -473,8 +490,11 @@ export const listProducts = async (filters: {
     updatedSince?: string;
 }): Promise<{
     items: Array<ProductWithCategory & { stock: number }>;
-    meta: ListMeta;
+    /** `serverTime` solo con `updatedSince` (SPEC 56): el cursor seguro del pull. */
+    meta: ListMeta & { serverTime?: string };
 }> => {
+    // Antes de cualquier lectura, igual que en `/products/sync`.
+    const serverTime = filters.updatedSince ? new Date().toISOString() : undefined;
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const search = filters.search?.trim();
 
@@ -541,7 +561,10 @@ export const listProducts = async (filters: {
 
     return {
         items: withDetails,
-        meta: buildListMeta(page, limit, total),
+        meta: {
+            ...buildListMeta(page, limit, total),
+            ...(serverTime ? { serverTime } : {}),
+        },
     };
 };
 
@@ -914,6 +937,14 @@ export const updateProduct = async (
         boxBarcode: string | null;
     }>,
     actor?: AuditActor,
+    options: {
+        /**
+         * `updatedAt` de la copia con la que editó la caja (SPEC 56). Si el panel
+         * cambió precio o estado después y el PATCH los toca, esos dos no se
+         * escriben, el resto sí, y se responde 409 `CATALOG_CONFLICT`.
+         */
+        baseUpdatedAt?: string;
+    } = {},
 ): Promise<Product> => {
     const existing = await productsRepo.getProductById(id);
     if (!existing) {
@@ -937,7 +968,7 @@ export const updateProduct = async (
     const sku = input.sku?.trim();
     const barcode = input.barcode?.trim();
 
-    const updated = await productsRepo.updateProduct(id, {
+    const result = await productsRepo.updateProductChecked(id, {
         name,
         sku,
         barcode,
@@ -957,7 +988,8 @@ export const updateProduct = async (
         boxQuantity: input.boxQuantity,
         boxPrice: input.boxPrice,
         boxBarcode: input.boxBarcode === null ? null : input.boxBarcode?.trim(),
-    });
+    }, { baseUpdatedAt: options.baseUpdatedAt });
+    const { product: updated, conflict: catalogConflict } = result;
 
     await auditProductUpdate(existing, updated, actor);
     await auditBoxPriceReview(existing, updated, actor);
@@ -965,6 +997,20 @@ export const updateProduct = async (
         await retirePromotionsBrokenByPrice(updated, actor);
     }
     catalogSnapshot.clearCatalogSnapshot();
+    if (catalogConflict) {
+        // Lo demás ya se guardó; la caja decide entre el valor del panel y el suyo
+        // (reenviar sin `baseUpdatedAt` fuerza el suyo).
+        throw new AppError(
+            409,
+            'CONFLICT',
+            'El precio o el estado del producto cambió en el panel después de la ' +
+                'última sincronización de la caja',
+            {
+                syncCode: 'CATALOG_CONFLICT',
+                details: { current: catalogConflict.current },
+            },
+        );
+    }
     return updated;
 };
 

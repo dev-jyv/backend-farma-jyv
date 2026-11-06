@@ -74,6 +74,7 @@ describe('catálogo de códigos de sincronización', () => {
             'ALREADY_VOIDED',
             'HAS_RETURNS',
             'VOID_FORBIDDEN',
+            'CATALOG_CONFLICT',
             'INTERNAL',
         ]);
     });
