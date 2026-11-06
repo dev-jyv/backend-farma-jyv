@@ -2,6 +2,7 @@ import { recordAudit, AuditActor } from './audit.service';
 import { BlockedSalesAlertDecision, evaluateBlockedSalesAlert } from './pos-health-alerts.service';
 import * as diagnosticsRepo from '../repositories/pos-diagnostics.repository';
 import * as commandsRepo from '../repositories/pos-commands.repository';
+import * as usersRepo from '../repositories/users.repository';
 import {
     PosCommand,
     PosCommandType,
@@ -141,13 +142,32 @@ export const reportDiagnostics = async (
     return { commands };
 };
 
+/**
+ * uid → nombre visible, para que el panel no muestre uids. Usa el perfil
+ * cacheado del guard (`getUserProfile`, 60 s), y son pocos uids distintos (los
+ * cajeros de las cajas y los admins que mandan comandos). Un uid que ya no
+ * existe, o una lectura que falla, queda en `null`: el nombre es cortesía y no
+ * debe tumbar la pantalla.
+ */
+const resolveUserNames = async (uids: Iterable<string>): Promise<Map<string, string | null>> => {
+    const unique = [...new Set([...uids].filter(Boolean))];
+    const entries = await Promise.all(unique.map(async (uid) => {
+        const profile = await usersRepo.getUserProfile(uid).catch(() => null);
+        const name = profile?.displayName?.trim() || profile?.email?.trim() || null;
+        return [uid, name] as const;
+    }));
+    return new Map(entries);
+};
+
 export const listDiagnostics = async (): Promise<PosDiagnosticsSnapshot[]> => {
     const [snapshots, pendingByDevice] = await Promise.all([
         diagnosticsRepo.listDiagnostics(),
         commandsRepo.countPendingByDevice(),
     ]);
+    const names = await resolveUserNames(snapshots.map((snapshot) => snapshot.reportedBy));
     return snapshots.map((snapshot) => ({
         ...snapshot,
+        reportedByName: names.get(snapshot.reportedBy) ?? null,
         pendingCommands: pendingByDevice.get(snapshot.deviceId) ?? 0,
     }));
 };
@@ -163,7 +183,21 @@ export const getDeviceDiagnostics = async (
     if (!snapshot) {
         throw notFound('Diagnóstico de la caja');
     }
-    return { snapshot: { ...snapshot, pendingCommands }, commands };
+    const names = await resolveUserNames([
+        snapshot.reportedBy,
+        ...commands.map((command) => command.createdBy),
+    ]);
+    return {
+        snapshot: {
+            ...snapshot,
+            reportedByName: names.get(snapshot.reportedBy) ?? null,
+            pendingCommands,
+        },
+        commands: commands.map((command) => ({
+            ...command,
+            createdByName: names.get(command.createdBy) ?? null,
+        })),
+    };
 };
 
 export interface CreatePosCommandInput {

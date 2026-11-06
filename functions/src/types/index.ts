@@ -2032,6 +2032,12 @@ export interface PosDiagnosticsInput {
         name: string;
         pushError: string | null;
         catalogPushError: string | null;
+        /** Ausentes en cajas sin actualizar y en snapshots viejos. */
+        sku?: string | null;
+        barcode?: string | null;
+        /** Existencias locales del producto (lo que no ha subido). */
+        stock?: number | null;
+        createdAt?: string | null;
     }>;
     recentSyncRuns: Array<{
         entity: string;
@@ -2075,6 +2081,11 @@ export interface PosCommand {
     note: string | null;
     status: PosCommandStatus;
     createdBy: string;
+    /**
+     * Nombre de quien creó el comando, resuelto al leer (no se guarda): el panel
+     * mostraba el uid. `null` si el usuario ya no existe.
+     */
+    createdByName?: string | null;
     createdAt: string;
     completedAt: string | null;
     result: string | null;
@@ -2083,6 +2094,8 @@ export interface PosCommand {
 export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
     receivedAt: string;
     reportedBy: string;
+    /** Nombre del cajero que reportó, resuelto al leer. `null` si ya no existe. */
+    reportedByName?: string | null;
     /**
      * Cuándo se avisó por correo que la caja dejó de reportar (ISO), o `null`.
      * Cada reporte nuevo lo limpia, así que una caída posterior vuelve a avisar.
