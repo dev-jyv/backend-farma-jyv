@@ -108,7 +108,12 @@ describe('createStockEntry: idempotencia', () => {
         };
 
         await stockEntriesService.createStockEntry({ ...base, idempotencyKey: unique('a') });
-        await stockEntriesService.createStockEntry({ ...base, idempotencyKey: unique('b') });
+        // Partida idéntica con otra llave: desde SPEC 58 entra solo confirmada.
+        await stockEntriesService.createStockEntry({
+            ...base,
+            idempotencyKey: unique('b'),
+            confirmDuplicate: true,
+        });
 
         expect((await productsService.getProduct(product.id)).stock).toBe(4);
     });

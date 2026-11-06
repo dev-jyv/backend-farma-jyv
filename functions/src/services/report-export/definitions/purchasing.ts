@@ -53,7 +53,9 @@ export const comprasProveedor: ReportDefinition = {
     ],
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
-        const entries = await entriesRepo.listInventoryEntries({ from: range.from, to: range.to });
+        // Una entrada cancelada (SPEC 58) ya restó sus piezas: no fue una compra.
+        const entries = (await entriesRepo.listInventoryEntries({ from: range.from, to: range.to }))
+            .filter((entry) => !entry.cancelledAt);
         const suppliers = await suppliersRepo.getSuppliersByIds(
             entries.map((entry) => entry.supplierId),
         );

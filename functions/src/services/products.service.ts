@@ -81,7 +81,9 @@ const loadInvoiceSummary = async (
 const loadPurchaseHistory = async (
     productId: string,
 ): Promise<ProductPurchaseHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const supplierCache = new Map<string, Supplier | null>();
     const invoiceCache = new Map<string, InvoiceSummary | null>();
     const history: ProductPurchaseHistoryItem[] = [];
@@ -150,7 +152,9 @@ const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryIt
 const loadInvoiceHistory = async (
     productId: string,
 ): Promise<ProductInvoiceHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const grouped = new Map<string, { quantityReceived: number; lastReceivedAt: number }>();
 
     for (const entry of entries) {

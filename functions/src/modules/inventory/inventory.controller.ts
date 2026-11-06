@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import {
     bulkCreateEntriesSchema,
+    cancelInventoryEntrySchema,
     directInventoryEntrySchema,
     idParamSchema,
     inventoryEntrySchema,
@@ -44,6 +45,7 @@ type InventoryEntryInput = z.infer<typeof inventoryEntrySchema>;
 type DirectInventoryEntryInput = z.infer<typeof directInventoryEntrySchema>;
 type BulkCreateEntriesInput = z.infer<typeof bulkCreateEntriesSchema>;
 type InventoryExitInput = z.infer<typeof inventoryExitSchema>;
+type CancelInventoryEntryInput = z.infer<typeof cancelInventoryEntrySchema>;
 type InventoryAlertsQuery = z.infer<typeof inventoryAlertsQuerySchema>;
 type CreateInventoryCountInput = z.infer<typeof createInventoryCountSchema>;
 type ListInventoryCountsQuery = z.infer<typeof listInventoryCountsQuerySchema>;
@@ -291,6 +293,27 @@ export class InventoryController {
     @RequirePermission('inventory', 'read')
     async getEntry(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
         const entry = await inventoryService.getEntry(params.id);
+        return { data: entry };
+    }
+
+    /**
+     * Cancelación con contramovimiento (SPEC 58): `inventory:write` más el slug
+     * (admin o gerente), que revisa el servicio.
+     */
+    @Post('entries/:id/cancel')
+    @RequirePermission('inventory')
+    @HttpCode(200)
+    async cancelEntry(
+        @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(cancelInventoryEntrySchema)) body: CancelInventoryEntryInput,
+        @CurrentUser() user: AuthUser,
+    ) {
+        const entry = await inventoryService.cancelEntry({
+            entryId: params.id,
+            reason: body.reason,
+            userId: user.uid,
+            roleSlug: user.role.slug,
+        });
         return { data: entry };
     }
 

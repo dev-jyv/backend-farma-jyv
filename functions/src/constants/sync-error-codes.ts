@@ -28,6 +28,8 @@ export const SYNC_ERROR_CODES = [
     // Entradas de mercancía.
     'ENTRY_IN_PROGRESS',
     'ENTRY_AMBIGUOUS',
+    // La factura ya tiene una entrada igual con otra llave (SPEC 58): bloqueo visible.
+    'ENTRY_POSSIBLE_DUPLICATE',
     // Anulaciones.
     'ALREADY_VOIDED',
     'HAS_RETURNS',

@@ -244,9 +244,12 @@ describe('createStockEntry: emparejamiento por llave (SPEC 55)', () => {
                 idempotencyKey: unique('segunda'),
             });
 
+            // La segunda ya está aplicada con otra llave: desde SPEC 58 la partida
+            // gemela entra solo si el cajero la confirma.
             const reintento = await stockEntriesService.createStockEntry({
                 ...partida,
                 idempotencyKey: primera,
+                confirmDuplicate: true,
             });
 
             expect(reintento.entry.id).not.toBe(segunda.entry.id);

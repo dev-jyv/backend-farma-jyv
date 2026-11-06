@@ -139,7 +139,12 @@ export type StockMovementType =
      * encontró más de lo registrado, negativa si encontró menos. No usar merma
      * (`exit_waste`) para descuadres: falsea el reporte de mermas.
      */
-    | 'adjustment_count';
+    | 'adjustment_count'
+    /**
+     * Contramovimiento de una entrada cancelada (SPEC 58). Cantidad **negativa**:
+     * las piezas que esa entrada había sumado al lote.
+     */
+    | 'entry_cancel';
 
 /** Acciones auditadas en `auditLogs`. Ver `services/audit.service.ts`. */
 export type AuditAction =
@@ -197,6 +202,8 @@ export type AuditAction =
     /** Cierre o reapertura de periodos contables. */
     | 'accountingPeriod.closed'
     | 'inventory.count_adjusted'
+    /** Entrada de mercancía cancelada con contramovimiento (SPEC 58). */
+    | 'inventory.entry_cancelled'
     | 'role.created'
     | 'role.updated'
     | 'role.permissions_changed'
@@ -248,6 +255,7 @@ export type AuditEntity =
     | 'bankMovement'
     | 'accountingSettings'
     | 'inventoryCount'
+    | 'inventoryEntry'
     | 'role'
     | 'user'
     | 'medicalRecord'
@@ -869,6 +877,12 @@ export interface Invoice {
     outstanding?: boolean;
     supplierId: string;
     invoiceNumber: string;
+    /**
+     * Folio normalizado (SPEC 58): mayúsculas, sin espacios ni guiones y sin ceros
+     * a la izquierda en lo numérico. La unicidad por proveedor se valida sobre él.
+     * Ausente en facturas anteriores, que se siguen comparando por texto.
+     */
+    folioKey?: string;
     invoiceDate: Timestamp;
     /** Vencimiento pactado con el proveedor; ausente = sin plazo registrado. */
     dueDate?: Timestamp | null;
@@ -964,6 +978,13 @@ export interface InventoryEntry {
      * reconoce como suya una entrada con su misma llave o sin llave.
      */
     idempotencyKey?: string;
+    /**
+     * Cancelación con contramovimiento (SPEC 58): las piezas se restaron de sus
+     * lotes con movimientos `entry_cancel`. La entrada no se borra.
+     */
+    cancelledAt?: Timestamp;
+    cancelledBy?: string;
+    cancelReason?: string;
     createdAt: Timestamp;
     createdBy: string;
     updatedAt: Timestamp;

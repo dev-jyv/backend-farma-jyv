@@ -203,8 +203,10 @@ describe('mismo lote con otra caducidad', () => {
         expect(ok.warnings).toBeUndefined();
         expect(ok.details).toBeUndefined();
 
+        // Otra cantidad: con la misma sería un posible duplicado (SPEC 58).
         const result = await stockEntriesService.createStockEntry({
             ...base,
+            quantity: 4,
             lotNumber: 'X-9',
             expiryDate: '2030-03-31',
             idempotencyKey: unique('k'),
@@ -212,7 +214,7 @@ describe('mismo lote con otra caducidad', () => {
         expect(result.warnings).toEqual(['LOT_EXPIRY_MISMATCH']);
         expect(result.details).toEqual({ warnings: ['LOT_EXPIRY_MISMATCH'] });
         expect('warnings' in result.entry).toBe(false);
-        expect(result.stock).toBe(6);
+        expect(result.stock).toBe(7);
     });
 });
 

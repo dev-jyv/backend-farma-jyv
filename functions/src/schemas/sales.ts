@@ -312,7 +312,10 @@ export const exportControlledLedgerQuerySchema = z.object({
 export const listAuditLogsQuerySchema = z.object({
     action: z.string().min(1).max(60).optional(),
     entity: z
-        .enum(['product', 'sale', 'saleReturn', 'cashSession', 'inventoryCount', 'role', 'user'])
+        .enum([
+            'product', 'sale', 'saleReturn', 'cashSession', 'inventoryCount', 'inventoryEntry',
+            'role', 'user',
+        ])
         .optional(),
     entityId: z.string().min(1).optional(),
     userId: z.string().min(1).optional(),

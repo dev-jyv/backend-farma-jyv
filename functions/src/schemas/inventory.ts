@@ -110,6 +110,7 @@ export const listMovementsQuerySchema = z.object({
             'sale_adjustment',
             'return_in',
             'adjustment_count',
+            'entry_cancel',
         ])
         .optional(),
     from: z.string().optional(),
@@ -211,6 +212,16 @@ export const updateInvoiceAccountingSchema = z.object({
     (data) => data.dueDate !== undefined || data.taxes !== undefined,
     { message: 'No hay nada que corregir' },
 );
+
+/**
+ * Cancelación de una entrada de mercancía (SPEC 58): el motivo queda en la
+ * entrada, en cada contramovimiento y en la bitácora.
+ */
+export const cancelInventoryEntrySchema = z.object({
+    reason: z.string().trim()
+        .min(5, 'El motivo debe tener al menos 5 caracteres')
+        .max(300, 'El motivo admite como máximo 300 caracteres'),
+});
 
 /** Cancelación de un abono: exige motivo, porque queda en la bitácora. */
 export const voidSupplierPaymentSchema = z.object({

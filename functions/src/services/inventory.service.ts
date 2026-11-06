@@ -15,7 +15,8 @@ import {
     StockMovementWithDetails,
     Supplier,
 } from '../types';
-import { badRequest, notFound } from '../utils/errors';
+import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
+import { writeAuditInTransaction } from './audit.service';
 import { matchesProductSearch } from '../utils/product-search';
 import {
     buildListMeta,
@@ -266,7 +267,11 @@ export const listEntries = async (filters: {
 }): Promise<{ items: InventoryEntryWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const window = resolveHistoryWindow(filters.from, filters.to);
-    let entries = await entriesRepo.listInventoryEntries({ ...filters, from: window.from });
+    // Las entradas de **una** factura se leen todas (son pocas): el detalle suma
+    // "Capturado: $X de $Y" (SPEC 58) y una ventana de 30 días dejaba fuera las
+    // partidas de una factura vieja.
+    const from = filters.invoiceId && !filters.from ? undefined : window.from;
+    let entries = await entriesRepo.listInventoryEntries({ ...filters, from });
 
     const caches = createEnrichCaches();
 
@@ -817,6 +822,151 @@ export const recordExit = async (input: {
     });
 
     return result;
+};
+
+/** Cancelar una entrada mueve existencias ya recibidas: solo admin o gerente (SPEC 58). */
+export const assertCanCancelEntry = (roleSlug: string | null | undefined): void => {
+    if (roleSlug !== 'admin' && roleSlug !== 'manager') {
+        throw forbidden('Solo un administrador o gerente puede cancelar una entrada');
+    }
+};
+
+/**
+ * Cancela una entrada con **contramovimiento** (SPEC 58): a cada lote se le restan
+ * las piezas que esa entrada le sumó, con un movimiento `entry_cancel` negativo por
+ * partida, se baja `products.totalStock`, se marca la entrada `cancelledAt` y se
+ * audita `inventory.entry_cancelled`, todo en una transacción. Nada se borra.
+ *
+ * Si algún lote ya no tiene esas piezas (se vendieron o salieron), no se cancela
+ * nada: 400 con el detalle. Eso se resuelve con un conteo, no restando a ciegas.
+ *
+ * El costo del lote no se recalcula: el promedio ponderado (SPEC 59) no se puede
+ * deshacer sin saber qué piezas salieron, y la spec no lo pide.
+ */
+export const cancelEntry = async (input: {
+    entryId: string;
+    reason: string;
+    userId: string;
+    roleSlug?: string | null;
+}): Promise<InventoryEntryWithDetails> => {
+    assertCanCancelEntry(input.roleSlug);
+    const reason = input.reason.trim();
+    const firestore = db();
+    const entryRef = firestore.collection('inventoryEntries').doc(input.entryId);
+    const timestamp = now();
+
+    const cancelled = await firestore.runTransaction(async (transaction) => {
+        // --- Lecturas -----------------------------------------------------------
+        const entryDoc = await transaction.get(entryRef);
+        if (!entryDoc.exists) {
+            throw notFound('Entrada de inventario');
+        }
+        const entry = { id: entryDoc.id, ...entryDoc.data() } as InventoryEntry;
+        if (entry.cancelledAt) {
+            throw conflict('Esta entrada ya fue cancelada');
+        }
+        if (entry.items.some((item) => !item.batchId)) {
+            throw badRequest(
+                'La entrada no registra el lote de cada partida; corrígela con un conteo',
+            );
+        }
+
+        const toRemoveByBatch = new Map<string, number>();
+        for (const item of entry.items) {
+            toRemoveByBatch.set(
+                item.batchId,
+                (toRemoveByBatch.get(item.batchId) ?? 0) + item.quantity,
+            );
+        }
+        const batchIds = [...toRemoveByBatch.keys()];
+        const batchDocs = await transaction.getAll(
+            ...batchIds.map((id) => firestore.collection('batches').doc(id)),
+        );
+
+        const shortages: string[] = [];
+        batchDocs.forEach((doc, index) => {
+            const batchId = batchIds[index];
+            const needed = toRemoveByBatch.get(batchId)!;
+            const lot = entry.items.find((item) => item.batchId === batchId)!.lotNumber;
+            const available = doc.exists ? (doc.data()!.quantity as number) : 0;
+            if (available < needed) {
+                shortages.push(
+                    `lote ${lot}: la entrada sumó ${needed} y quedan ${Math.max(available, 0)}`,
+                );
+            }
+        });
+        if (shortages.length) {
+            throw badRequest(
+                'No se puede cancelar: ya salieron piezas de esta entrada ' +
+                `(${shortages.join('; ')}). Corrige las existencias con un conteo.`,
+            );
+        }
+
+        // --- Escrituras ---------------------------------------------------------
+        batchDocs.forEach((doc, index) => {
+            transaction.update(doc.ref, {
+                quantity: FieldValue.increment(-toRemoveByBatch.get(batchIds[index])!),
+                updatedAt: timestamp,
+            });
+        });
+
+        const removedByProduct = new Map<string, number>();
+        for (const item of entry.items) {
+            removedByProduct.set(
+                item.productId,
+                (removedByProduct.get(item.productId) ?? 0) + item.quantity,
+            );
+            const movement: Omit<StockMovement, 'id'> = {
+                type: 'entry_cancel',
+                productId: item.productId,
+                batchId: item.batchId,
+                quantity: -item.quantity,
+                reason,
+                referenceId: entry.id,
+                userId: input.userId,
+                createdAt: timestamp,
+            };
+            transaction.set(firestore.collection('stockMovements').doc(), movement);
+        }
+        for (const [productId, removed] of removedByProduct) {
+            transaction.update(firestore.collection('products').doc(productId), {
+                totalStock: FieldValue.increment(-removed),
+                updatedAt: timestamp,
+            });
+        }
+
+        const cancellation = {
+            cancelledAt: timestamp,
+            cancelledBy: input.userId,
+            cancelReason: reason,
+            updatedAt: timestamp,
+            updatedBy: input.userId,
+        };
+        transaction.update(entryRef, cancellation);
+
+        writeAuditInTransaction(transaction, {
+            action: 'inventory.entry_cancelled',
+            entity: 'inventoryEntry',
+            entityId: entry.id,
+            summary: `Entrada cancelada: ${reason}`,
+            userId: input.userId,
+            roleSlug: input.roleSlug ?? null,
+            metadata: {
+                invoiceId: entry.invoiceId ?? null,
+                supplierId: entry.supplierId,
+                items: entry.items.map((item) => ({
+                    productId: item.productId,
+                    batchId: item.batchId,
+                    lotNumber: item.lotNumber,
+                    quantity: item.quantity,
+                })),
+            },
+        });
+
+        return { ...entry, ...cancellation };
+    });
+
+    return enrichEntry(cancelled);
 };
 
 export const listMovements = async (filters: {

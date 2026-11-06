@@ -71,6 +71,7 @@ describe('catálogo de códigos de sincronización', () => {
             'DEFERRED',
             'ENTRY_IN_PROGRESS',
             'ENTRY_AMBIGUOUS',
+            'ENTRY_POSSIBLE_DUPLICATE',
             'ALREADY_VOIDED',
             'HAS_RETURNS',
             'VOID_FORBIDDEN',

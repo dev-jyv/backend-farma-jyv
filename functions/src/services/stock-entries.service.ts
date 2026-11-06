@@ -8,6 +8,7 @@ import {
 } from '../types';
 import { db } from '../utils/firestore';
 import { normalizeLotKey } from '../utils/batch-lot';
+import { formatLocalDateTime } from '../utils/timezone';
 import {
     AppError,
     conflict,
@@ -174,6 +175,8 @@ const applyStockEntry = async (input: {
      * validar la caducidad contra el día de la captura.
      */
     capturedAt?: string;
+    /** "Sí, es otra partida": el cajero confirmó un posible duplicado (SPEC 58). */
+    confirmDuplicate?: boolean;
 }): Promise<StockEntryResult> => {
     // Se comprueba antes de tocar el catálogo: dar de alta un producto para una
     // factura que no existe deja basura en `products` sin nada que la respalde.
@@ -280,6 +283,20 @@ const applyStockEntry = async (input: {
     let product: Product;
     let recorded: RecordedEntry;
     try {
+        // Factura recapturada (SPEC 58): antes de tocar catálogo o inventario. Un
+        // 409 libera la llave como cualquier rechazo, así que el reenvío confirmado
+        // con la misma llave entra.
+        const knownProductId = input.productId ?? leftoverProduct?.id;
+        if (knownProductId && input.confirmDuplicate !== true) {
+            await assertNotPossibleDuplicate({
+                invoiceId: input.invoiceId,
+                productId: knownProductId,
+                lotNumber: input.lotNumber,
+                quantity: input.quantity,
+                idempotencyKey: input.idempotencyKey,
+            });
+        }
+
         if (input.productId) {
             product = await resolveExistingProduct(input.productId, input.productUpdate, actor);
         } else if (leftoverProduct) {
@@ -441,6 +458,53 @@ const findAppliedEntry = async (params: {
             item.quantity === params.quantity,
     )) ?? null;
     return { match, ambiguous: !match && sameLot.length > 0 };
+};
+
+/**
+ * Partida que repite una ya aplicada en la factura con **otra** llave (o sin
+ * llave, capturada en el panel): mismo producto, lote normalizado y cantidad
+ * (SPEC 58). Es la forma en que entra dos veces la misma mercancía —foto y PDF,
+ * documento borrado y vuelto a subir, dos cajas, IA más captura manual—, pero
+ * también puede ser una partida repetida legítima, así que no se rechaza en
+ * silencio: 409 `ENTRY_POSSIBLE_DUPLICATE` y el cajero decide. Las entradas
+ * canceladas no cuentan.
+ */
+const assertNotPossibleDuplicate = async (params: {
+    invoiceId: string;
+    productId: string;
+    lotNumber: string;
+    quantity: number;
+    idempotencyKey?: string;
+}): Promise<void> => {
+    const lot = normalizeLotKey(params.lotNumber);
+    const existing = (await entriesRepo.listInventoryEntries({ invoiceId: params.invoiceId }))
+        .filter((entry) => !entry.cancelledAt)
+        .filter((entry) => !params.idempotencyKey ||
+            entry.idempotencyKey !== params.idempotencyKey)
+        .find((entry) => entry.items.some((item) =>
+            item.productId === params.productId &&
+            normalizeLotKey(item.lotNumber) === lot &&
+            item.quantity === params.quantity));
+    if (!existing) {
+        return;
+    }
+    const createdAt = existing.createdAt.toDate();
+    throw new AppError(
+        409,
+        'CONFLICT',
+        `Esta factura ya tiene una entrada de ${params.quantity} piezas del lote ` +
+            `${params.lotNumber.trim()} de este producto (capturada el ` +
+            `${formatLocalDateTime(createdAt)}). Si es otra partida, confírmala; si es la ` +
+            'misma mercancía capturada otra vez, descártala.',
+        {
+            syncCode: 'ENTRY_POSSIBLE_DUPLICATE',
+            // La caja lee la entrada existente en `details.existing` (SPEC 58). Las
+            // entradas no tienen folio propio: se manda su id y su fecha.
+            details: {
+                existing: { entryId: existing.id, createdAt: createdAt.toISOString() },
+            },
+        },
+    );
 };
 
 /**

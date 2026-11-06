@@ -59,6 +59,11 @@ export const createStockEntrySchema = z
          * capturada sin red el día 5 con caducidad del 6, se acepta aunque suba el 7.
          */
         capturedAt: z.string().datetime({ offset: true }).optional(),
+        /**
+         * "Sí, es otra partida" (SPEC 58): el cajero confirmó que una partida igual a
+         * otra ya aplicada en la factura (otra llave) es mercancía distinta.
+         */
+        confirmDuplicate: z.boolean().optional(),
     })
     .superRefine((data, ctx) => {
         const capturedMs = data.capturedAt ? Date.parse(data.capturedAt) : Date.now();
