@@ -48,4 +48,16 @@ describe('grafo de imports del arranque de api', () => {
         });
         expect([...mockLoaded].sort()).toEqual([...WATCHED].sort());
     });
+
+    it('el aviso de venta no conciliada (SPEC 53) va tras un import diferido', async () => {
+        await jest.isolateModulesAsync(async () => {
+            await import('../src/services/unreconciled-sales.service');
+        });
+        expect([...mockLoaded]).toEqual([]);
+
+        await jest.isolateModulesAsync(async () => {
+            await import('../src/services/unreconciled-sales-alert-sender.service');
+        });
+        expect([...mockLoaded].sort()).toEqual([...WATCHED].sort());
+    });
 });

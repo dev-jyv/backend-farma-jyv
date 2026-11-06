@@ -123,7 +123,7 @@ const buildRequestFingerprint = (input: {
     items: SaleLineItem[];
     total: number;
     paymentMethod: PaymentMethod;
-    cashSessionId: string;
+    cashSessionId: string | null;
     couponCode?: string;
 }): string => createHash('sha256')
     .update(JSON.stringify({
@@ -582,7 +582,12 @@ const applySale = async (input: {
     cardPaymentReference?: string;
     /** Reparto con tarjeta en mixto sin terminal Point (ver `resolveTender`). */
     cardAmount?: number;
-    cashSessionId: string;
+    /**
+     * Turno al que entra la venta. Solo puede faltar al registrar una venta no
+     * conciliada que nunca tuvo turno (SPEC 53): `POST /sales` y `/sales/bulk`
+     * lo exigen en el esquema.
+     */
+    cashSessionId?: string | null;
     cashierId: string;
     customerId?: string;
     customerName?: string;
@@ -615,7 +620,10 @@ const applySale = async (input: {
 
     const firestore = db();
     const saleRef = firestore.collection('sales').doc();
-    const cashSessionRef = firestore.collection('cashSessions').doc(input.cashSessionId);
+    const cashSessionId = input.cashSessionId ?? null;
+    const cashSessionRef = cashSessionId
+        ? firestore.collection('cashSessions').doc(cashSessionId)
+        : null;
     const counterRef = firestore.collection('counters').doc(SALES_COUNTER_ID);
     const timestamp = now();
 
@@ -1093,7 +1101,7 @@ const applySale = async (input: {
         items: saleItems,
         total,
         paymentMethod: input.paymentMethod,
-        cashSessionId: input.cashSessionId,
+        cashSessionId,
         couponCode,
     });
     const idempotencyRef = input.idempotencyKey
@@ -1270,7 +1278,7 @@ const applySale = async (input: {
         }
 
         const [cashSessionDoc, counterDoc, ...batchAndProductDocs] = await Promise.all([
-            transaction.get(cashSessionRef),
+            cashSessionRef ? transaction.get(cashSessionRef) : Promise.resolve(null),
             transaction.get(counterRef),
             ...uniqueBatchEntries.map(([, entry]) => transaction.get(entry.batchRef)),
             ...productIds.map((productId) =>
@@ -1279,17 +1287,20 @@ const applySale = async (input: {
         const batchDocs = batchAndProductDocs.slice(0, uniqueBatchEntries.length);
         const productDocs = batchAndProductDocs.slice(uniqueBatchEntries.length);
 
-        if (!cashSessionDoc.exists) {
+        // Sin turno solo llega una venta no conciliada que nunca lo tuvo (SPEC 53).
+        if (cashSessionDoc && !cashSessionDoc.exists) {
             throw notFound('Turno de caja');
         }
         // El turno es de quien lo abrió: sin esto un cajero puede cargar ventas en
         // efectivo al turno de otro y dejarle el faltante en su corte.
-        assertCanAccessSession(
-            { openedBy: cashSessionDoc.data()!.openedBy as string },
-            input.cashierId,
-            input.roleSlug,
-        );
-        if (cashSessionDoc.data()?.closedAt) {
+        if (cashSessionDoc) {
+            assertCanAccessSession(
+                { openedBy: cashSessionDoc.data()!.openedBy as string },
+                input.cashierId,
+                input.roleSlug,
+            );
+        }
+        if (cashSessionDoc?.data()?.closedAt) {
             throw badRequest('El turno de caja ya está cerrado', 'SESSION_CLOSED');
         }
 
@@ -1388,7 +1399,7 @@ const applySale = async (input: {
             cardAmount: tender.cardAmount,
             cardPaymentReference: pointPayment?.orderId ?? tender.cardPaymentReference,
             pointPayment,
-            cashSessionId: input.cashSessionId,
+            cashSessionId,
             cashierId: input.cashierId,
             customerId,
             customerName,

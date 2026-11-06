@@ -228,6 +228,25 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                         </ReportSection>
                     ) : null}
 
+                    {report.kind === 'daily' && report.unreconciledPending.count > 0 ? (
+                        <ReportSection
+                            title={`Ventas no conciliadas pendientes (${
+                                report.unreconciledPending.count})`}
+                        >
+                            <Text style={{ ...text.label, color: palette.negative }}>
+                                {'Se cobraron en caja pero el servidor no pudo registrarlas: ' +
+                                    'no están en las cifras de este reporte ni en el corte. ' +
+                                    'Regístralas o descártalas en «Ventas no conciliadas» ' +
+                                    'del panel. Incluye las pendientes de días anteriores.'}
+                            </Text>
+                            <Text style={{ ...text.value, textAlign: 'left', margin: '8px 0 0' }}>
+                                {`${formatCurrency(report.unreconciledPending.total)} cobrados ` +
+                                    `en ${report.unreconciledPending.count} ` +
+                                    (report.unreconciledPending.count === 1 ? 'venta' : 'ventas')}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
                     <ReportSection title="Farmacia vs consultorio">
                         <Row>
                             <BranchCard

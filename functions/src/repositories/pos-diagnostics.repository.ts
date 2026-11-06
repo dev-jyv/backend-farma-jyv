@@ -181,3 +181,27 @@ export const listDiagnostics = async (): Promise<StoredPosDiagnostics[]> => {
     const snapshot = await collection().orderBy('receivedAt', 'desc').get();
     return snapshot.docs.map((doc) => mapSnapshot(doc.data()));
 };
+
+/**
+ * `deviceId` → nombre de la caja, en una sola llamada y solo con el campo
+ * `deviceName` (máscara): lo usan listados y correos que citan la caja. Una caja
+ * sin diagnóstico queda fuera del mapa.
+ */
+export const getDeviceNames = async (deviceIds: Iterable<string>): Promise<Map<string, string>> => {
+    const unique = [...new Set([...deviceIds].filter(Boolean))];
+    const names = new Map<string, string>();
+    if (unique.length === 0) {
+        return names;
+    }
+    const docs = await db().getAll(
+        ...unique.map((deviceId) => diagnosticsRef(deviceId)),
+        { fieldMask: ['deviceName'] },
+    );
+    for (const doc of docs) {
+        const name = (doc.data()?.deviceName as string | undefined)?.trim();
+        if (doc.exists && name) {
+            names.set(doc.id, name);
+        }
+    }
+    return names;
+};

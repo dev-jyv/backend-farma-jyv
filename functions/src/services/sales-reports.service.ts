@@ -13,6 +13,7 @@ import * as salesRepo from '../repositories/sales.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as dailyStatsRepo from '../repositories/daily-stats.repository';
+import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
 
 export const REPORTS_TIME_ZONE = APP_TIME_ZONE;
 const MX_UTC_OFFSET = '-06:00';
@@ -136,6 +137,16 @@ export interface ReportPromotionReview {
     folios: string[];
 }
 
+/**
+ * Ventas no conciliadas **pendientes** de cualquier fecha (SPEC 53): dinero
+ * cobrado que no está en las cifras de arriba ni en el corte hasta que alguien
+ * lo resuelva en el panel.
+ */
+export interface ReportUnreconciledPending {
+    count: number;
+    total: number;
+}
+
 export interface DailySalesReport {
     kind: 'daily';
     title: string;
@@ -153,6 +164,7 @@ export interface DailySalesReport {
     sales: ReportSaleRow[];
     topProducts: ReportTopProduct[];
     promotionReview: ReportPromotionReview;
+    unreconciledPending: ReportUnreconciledPending;
 }
 
 export interface MonthlySalesReport {
@@ -447,10 +459,11 @@ const listSalesBetween = async (fromIso: string, toIso: string): Promise<Sale[]>
 export const buildDailyReport = async (isoDate: string): Promise<DailySalesReport> => {
     const from = `${isoDate}T00:00:00.000${MX_UTC_OFFSET}`;
     const to = `${isoDate}T23:59:59.999${MX_UTC_OFFSET}`;
-    const [sales, expenseMovements, refundTotal] = await Promise.all([
+    const [sales, expenseMovements, refundTotal, unreconciledPending] = await Promise.all([
         listSalesBetween(from, to),
         listExpensesBetween(from, to),
         sumRefunds(from, to),
+        unreconciledRepo.summarizePendingUnreconciledSales(),
     ]);
 
     const rows: ReportSaleRow[] = sales
@@ -482,6 +495,7 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
         sales: rows,
         topProducts: buildTopProducts(sales),
         promotionReview: buildPromotionReview(sales),
+        unreconciledPending,
     };
 };
 

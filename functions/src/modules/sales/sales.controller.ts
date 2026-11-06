@@ -20,6 +20,7 @@ import {
     voidSaleSchema,
     createUnreconciledSaleSchema,
     listUnreconciledSalesQuerySchema,
+    resolveUnreconciledSaleSchema,
 } from '../../schemas';
 import * as salesService from '../../services/sales.service';
 import * as receiptsService from '../../services/receipts.service';
@@ -40,6 +41,7 @@ type IdParam = z.infer<typeof idParamSchema>;
 type VoidSaleInput = z.infer<typeof voidSaleSchema>;
 type CreateUnreconciledInput = z.infer<typeof createUnreconciledSaleSchema>;
 type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
+type ResolveUnreconciledInput = z.infer<typeof resolveUnreconciledSaleSchema>;
 
 /**
  * Sin llave, un reintento por corte de red vuelve a cobrar y a descontar stock.
@@ -182,15 +184,24 @@ export class SalesController {
         return { data: result.items, meta: result.meta };
     }
 
-    /** La marca como atendida; el documento se conserva como rastro. */
+    /**
+     * Resuelve una venta no conciliada (SPEC 53): `register` la crea como venta
+     * offline con el payload guardado; `discard` la descarta con motivo. El
+     * documento se conserva como rastro. `sales:write` (admin y gerente).
+     */
     @Post('unreconciled/:id/resolve')
     @RequirePermission('sales')
     async resolveUnreconciled(
         @Param(new ZodValidationPipe(idParamSchema)) params: IdParam,
+        @Body(new ZodValidationPipe(resolveUnreconciledSaleSchema)) body: ResolveUnreconciledInput,
         @CurrentUser() user: AuthUser,
     ) {
-        await unreconciledSalesService.resolveUnreconciledSale(params.id, user.uid);
-        return { data: { id: params.id, resolved: true } };
+        const result = await unreconciledSalesService.resolveUnreconciledSale(
+            params.id,
+            body,
+            { userId: user.uid, roleSlug: user.role.slug },
+        );
+        return { data: result };
     }
 
     @Get()

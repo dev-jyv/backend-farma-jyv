@@ -155,6 +155,8 @@ export type AuditAction =
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
+    /** Venta no conciliada registrada como venta o descartada con motivo (SPEC 53). */
+    | 'sale.unreconciled_resolved'
     | 'sale.discount_override'
     /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
     | 'sale.promotion_out_of_window'
@@ -1197,10 +1199,18 @@ export interface PointPaymentSnapshot {
  * en `sales` descuadraría el inventario, así que vive aquí hasta que alguien la
  * concilie a mano.
  */
+export type UnreconciledSaleResolution = 'register' | 'discard';
+
 export interface UnreconciledSale {
+    /**
+     * `<deviceId|cashierId>:<localId>` (SPEC 53). Los documentos anteriores usan
+     * el `localId` solo y se listan y resuelven igual.
+     */
     id: string;
     /** Id de la venta en el SQLite de la caja: la liga entre las dos bases. */
     localId: string;
+    /** Caja que la cobró; `null` en POS viejos y documentos anteriores. */
+    deviceId: string | null;
     /** Folio provisional con el que se imprimió el ticket (`PENDIENTE-…`). */
     localFolio: string | null;
     /** Motivo con el que el backend rechazó la venta. */
@@ -1214,7 +1224,18 @@ export interface UnreconciledSale {
     occurredAt: Timestamp | null;
     resolvedAt: Timestamp | null;
     resolvedBy: string | null;
+    /** Cómo se resolvió; `null` pendiente o resuelta antes de SPEC 53. */
+    resolution: UnreconciledSaleResolution | null;
+    resolutionReason: string | null;
+    /** Venta creada al registrarla (`register`). */
+    resolvedSaleId: string | null;
     createdAt: Timestamp;
+}
+
+/** Fila del listado: con nombres para que el panel no muestre uids. */
+export interface UnreconciledSaleListItem extends UnreconciledSale {
+    cashierName: string | null;
+    deviceName: string | null;
 }
 
 export interface Sale {
