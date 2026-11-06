@@ -19,6 +19,11 @@ const SYSTEM_PROMPT = [
     'Extrae solo lo que se ve en el documento; si un dato no aparece o es ilegible usa null.',
     'Nunca inventes datos.',
     'Montos como números sin símbolo ni separadores de miles. Fechas en formato YYYY-MM-DD.',
+    'En los documentos mexicanos las fechas vienen como DD/MM/AAAA (día primero): ' +
+        '"05/11/2026" es el 5 de noviembre de 2026, nunca el 11 de mayo. Una fecha que solo ' +
+        'trae "MM/AAAA" significa el último día de ese mes ("02/2027" = 2027-02-28).',
+    '"cfdiUuid" es el folio fiscal (UUID) del CFDI si aparece, con el formato ' +
+        'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX; si no aparece, null.',
     'Tasas de impuesto como fracción (IVA 16% = 0.16). Moneda en código ISO 4217 (MXN, USD).',
     'En cada concepto, "barcode" es su código de barras EAN/UPC (8 a 14 dígitos) si aparece; ' +
         'en un CFDI suele venir como NoIdentificacion. Si no hay código de barras, null.',

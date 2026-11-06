@@ -2,9 +2,14 @@ import { z } from 'zod';
 import { cursorField, isoDate, money, paginationFields, positiveMoney, qty } from './common';
 import { createProductSchema } from './catalog';
 import { idempotencyKeySchema } from './sales';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 
+/** Hoy en la farmacia: después de las 18:00 de México el día UTC ya es mañana. */
+const localToday = (): string => getZonedYmd(Date.now(), APP_TIME_ZONE);
+
+/** No se recibe mercancía vencida; "hoy" es el día local (SPEC 59). */
 const expiryDateSchema = isoDate.refine(
-    (value) => value >= new Date().toISOString().slice(0, 10),
+    (value) => value >= localToday(),
     { message: 'La fecha de caducidad no puede estar en el pasado' },
 );
 
@@ -222,7 +227,7 @@ export const createSupplierPaymentSchema = z.object({
     paymentMethod: z.enum(['cash', 'transfer', 'card']),
     /** Ausente = hoy. No se admite futuro: un pago que no ocurrió no es pago. */
     paidAt: isoDate
-        .refine((value) => value <= new Date().toISOString().slice(0, 10), {
+        .refine((value) => value <= localToday(), {
             message: 'La fecha del pago no puede estar en el futuro',
         })
         .optional(),

@@ -25,7 +25,8 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
-import { toCalendarTimestamp } from '../utils/calendar-date';
+import { calendarDayOf, toCalendarTimestamp } from '../utils/calendar-date';
+import { deterministicBatchId, normalizeLotKey, weightedBatchCost } from '../utils/batch-lot';
 import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
@@ -117,11 +118,22 @@ const normalizeExpiryDate = (expiryDate: string): string =>
 const defaultLotNumber = (productId: string, expiryDate: string) =>
     `${productId.slice(0, 8)}-${expiryDate.replace(/\D/g, '').slice(0, 8)}`;
 
+/** Lote dentro de una entrada: producto + lote normalizado + caducidad (SPEC 59). */
 const batchKey = (productId: string, lotNumber: string, expiryDate: string) =>
-    `${productId}::${lotNumber}::${normalizeExpiryDate(expiryDate)}`;
+    `${productId}::${normalizeLotKey(lotNumber)}::${normalizeExpiryDate(expiryDate)}`;
 
 const productLotKey = (productId: string, lotNumber: string) =>
-    `${productId}::${lotNumber}`;
+    `${productId}::${normalizeLotKey(lotNumber)}`;
+
+/**
+ * Advertencias que no rechazan una entrada (SPEC 59). `LOT_EXPIRY_MISMATCH`: el
+ * mismo lote del producto ya existe con otra caducidad. Se acepta —la factura
+ * puede tener razón— y la caja lo muestra para que alguien la revise.
+ */
+export type EntryWarning = 'LOT_EXPIRY_MISMATCH';
+
+/** Entrada registrada, con las advertencias de la captura (no se guardan). */
+export type RecordedEntry = InventoryEntryWithDetails & { warnings?: EntryWarning[] };
 
 const loadProductWithCategory = async (product: Product): Promise<ProductWithCategory> => {
     const category = await categoriesRepo.getCategoryById(product.categoryId);
@@ -383,31 +395,37 @@ const persistEntryItems = async (input: {
     notes?: string;
     /** Llave con la que la caja registró la partida (SPEC 55). */
     idempotencyKey?: string;
-}): Promise<InventoryEntry> => {
+}): Promise<{ entry: InventoryEntry; warnings: EntryWarning[] }> => {
     const firestore = db();
+    const batches = firestore.collection('batches');
     const entryRef = firestore.collection('inventoryEntries').doc();
     const timestamp = now();
-    type BatchLookup = { productId: string; lotNumber: string; expiryDate: string };
-    const uniqueBatches = new Map<string, BatchLookup>();
+    type BatchTarget = {
+        productId: string;
+        lotNumber: string;
+        lotKey: string;
+        expiryDate: string;
+    };
+    const uniqueBatches = new Map<string, BatchTarget>();
+    // Por producto + lote normalizado: las formas en que llegó escrito, para
+    // encontrar los lotes anteriores (sin `lotKey`) por su texto.
+    type LotGroup = { productId: string; lotKey: string; spellings: Set<string> };
+    const lotGroups = new Map<string, LotGroup>();
 
     for (const item of input.items) {
-        const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
-        uniqueBatches.set(key, {
+        const lotKey = normalizeLotKey(item.lotNumber);
+        uniqueBatches.set(batchKey(item.productId, item.lotNumber, item.expiryDate), {
             productId: item.productId,
             lotNumber: item.lotNumber,
+            lotKey,
             expiryDate: item.expiryDate,
         });
+        const groupKey = productLotKey(item.productId, item.lotNumber);
+        const group = lotGroups.get(groupKey) ??
+            { productId: item.productId, lotKey, spellings: new Set<string>([lotKey]) };
+        group.spellings.add(item.lotNumber);
+        lotGroups.set(groupKey, group);
     }
-
-    const existingBatches = new Map<string, Batch | null>();
-    await Promise.all(
-        [...uniqueBatches.entries()].map(async ([key, { productId, lotNumber, expiryDate }]) => {
-            existingBatches.set(
-                key,
-                await batchesRepo.findBatchByProductLotAndExpiry(productId, lotNumber, expiryDate),
-            );
-        }),
-    );
 
     const stockDeltaByProduct = new Map<string, number>();
     for (const item of input.items) {
@@ -418,52 +436,95 @@ const persistEntryItems = async (input: {
     }
 
     return firestore.runTransaction(async (transaction) => {
+        // --- Lecturas (todas antes de cualquier escritura) -----------------------
+        // El lote existente se decide **dentro** de la transacción (SPEC 59): fuera
+        // de ella, dos entradas simultáneas del mismo lote nuevo creaban dos lotes.
+        const lotsByGroup = new Map<string, Batch[]>();
+        await Promise.all([...lotGroups.entries()].map(async ([groupKey, group]) => {
+            const [byKey, byText] = await Promise.all([
+                transaction.get(batches
+                    .where('productId', '==', group.productId)
+                    .where('lotKey', '==', group.lotKey)),
+                // Lotes anteriores a `lotKey`: se buscan por las formas en que llegó
+                // escrito el lote (Firestore admite hasta 30 valores en `in`).
+                transaction.get(batches
+                    .where('productId', '==', group.productId)
+                    .where('lotNumber', 'in', [...group.spellings].slice(0, 30))),
+            ]);
+            const found = new Map<string, Batch>();
+            for (const doc of [...byKey.docs, ...byText.docs]) {
+                const batch = { id: doc.id, ...doc.data() } as Batch;
+                if ((batch.lotKey ?? normalizeLotKey(batch.lotNumber)) === group.lotKey) {
+                    found.set(batch.id, batch);
+                }
+            }
+            lotsByGroup.set(groupKey, [...found.values()]);
+        }));
+
         const batchState = new Map<string, Batch>();
+        const newBatchIds = new Map<string, string>();
+        const warnings = new Set<EntryWarning>();
+        await Promise.all([...uniqueBatches.entries()].map(async ([key, target]) => {
+            const sameLot = lotsByGroup.get(productLotKey(target.productId, target.lotNumber))
+                ?? [];
+            if (sameLot.some((batch) => calendarDayOf(batch.expiryDate) !== target.expiryDate)) {
+                warnings.add('LOT_EXPIRY_MISMATCH');
+            }
+            // El documento determinista se lee siempre: es el que hace chocar a dos
+            // entradas simultáneas del mismo lote nuevo.
+            const id = deterministicBatchId(target.productId, target.lotKey, target.expiryDate);
+            const doc = await transaction.get(batches.doc(id));
+            const existing = doc.exists
+                ? ({ id: doc.id, ...doc.data() } as Batch)
+                : sameLot.find((batch) => calendarDayOf(batch.expiryDate) === target.expiryDate);
+            if (existing) {
+                batchState.set(key, existing);
+            } else {
+                newBatchIds.set(key, id);
+            }
+        }));
+
+        // --- Escrituras -----------------------------------------------------------
         const entryItems: InventoryEntryItem[] = [];
-
-        for (const [key, existingBatch] of existingBatches) {
-            if (!existingBatch) {
-                continue;
-            }
-
-            const batchDoc = await transaction.get(
-                firestore.collection('batches').doc(existingBatch.id),
-            );
-
-            if (!batchDoc.exists) {
-                throw notFound('Lote');
-            }
-
-            batchState.set(key, { id: batchDoc.id, ...batchDoc.data() } as Batch);
-        }
 
         for (const item of input.items) {
             const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
+            const lotKey = normalizeLotKey(item.lotNumber);
             const existingBatch = batchState.get(key);
             const movementRef = firestore.collection('stockMovements').doc();
             let batch: Batch;
 
             if (existingBatch) {
-                const batchRef = firestore.collection('batches').doc(existingBatch.id);
+                const batchRef = batches.doc(existingBatch.id);
                 const newQuantity = existingBatch.quantity + item.quantity;
                 batch = {
                     ...existingBatch,
+                    lotKey,
                     quantity: newQuantity,
-                    costPrice: item.costPrice ?? existingBatch.costPrice,
+                    // Promedio ponderado (SPEC 59): antes ganaba el último costo y
+                    // las piezas que ya estaban quedaban valuadas a otro precio.
+                    costPrice: weightedBatchCost(
+                        existingBatch.quantity,
+                        existingBatch.costPrice,
+                        item.quantity,
+                        item.costPrice,
+                    ),
                     supplierId: existingBatch.supplierId ?? input.supplierId,
                     updatedAt: timestamp,
                 };
                 transaction.update(batchRef, {
+                    lotKey,
                     quantity: newQuantity,
                     costPrice: batch.costPrice,
                     supplierId: batch.supplierId,
                     updatedAt: timestamp,
                 });
             } else {
-                const batchRef = firestore.collection('batches').doc();
+                const batchRef = batches.doc(newBatchIds.get(key)!);
                 const batchData = {
                     productId: item.productId,
                     lotNumber: item.lotNumber,
+                    lotKey,
                     expiryDate: toCalendarTimestamp(item.expiryDate),
                     quantity: item.quantity,
                     costPrice: item.costPrice,
@@ -533,8 +594,16 @@ const persistEntryItems = async (input: {
             });
         }
 
-        return { id: entryRef.id, ...entryData };
+        return { entry: { id: entryRef.id, ...entryData }, warnings: [...warnings] };
     });
+};
+
+/** La entrada enriquecida, con sus advertencias solo si hubo alguna. */
+const withWarnings = async (
+    recorded: { entry: InventoryEntry; warnings: EntryWarning[] },
+): Promise<RecordedEntry> => {
+    const entry = await enrichEntry(recorded.entry);
+    return recorded.warnings.length ? { ...entry, warnings: recorded.warnings } : entry;
 };
 
 export const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
@@ -554,7 +623,7 @@ export const recordEntry = async (input: {
     userId: string;
     /** Se guarda en la entrada para emparejar reintentos (SPEC 55). */
     idempotencyKey?: string;
-}): Promise<InventoryEntryWithDetails> => {
+}): Promise<RecordedEntry> => {
     const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
     if (!invoice) {
         throw notFound('Factura');
@@ -562,7 +631,7 @@ export const recordEntry = async (input: {
 
     await assertActiveSupplier(invoice.supplierId);
     const normalizedItems = await normalizeAndValidateItems(input.items);
-    const entry = await persistEntryItems({
+    const recorded = await persistEntryItems({
         supplierId: invoice.supplierId,
         items: normalizedItems,
         userId: input.userId,
@@ -571,7 +640,7 @@ export const recordEntry = async (input: {
         idempotencyKey: input.idempotencyKey,
     });
 
-    return enrichEntry(entry);
+    return withWarnings(recorded);
 };
 
 type DirectEntryItemInput = {
@@ -588,7 +657,7 @@ export const recordDirectEntry = async (input: {
     notes?: string;
     items: DirectEntryItemInput[];
     userId: string;
-}): Promise<InventoryEntryWithDetails> => {
+}): Promise<RecordedEntry> => {
     if (!input.items.length) {
         throw badRequest('Debe incluir al menos un producto');
     }
@@ -626,7 +695,7 @@ export const recordDirectEntry = async (input: {
     }
 
     const normalizedItems = await normalizeAndValidateItems(resolvedItems);
-    const entry = await persistEntryItems({
+    const recorded = await persistEntryItems({
         supplierId: input.supplierId,
         items: normalizedItems,
         userId: input.userId,
@@ -634,7 +703,7 @@ export const recordDirectEntry = async (input: {
         notes: input.notes,
     });
 
-    return enrichEntry(entry);
+    return withWarnings(recorded);
 };
 
 export const bulkCreateEntries = async (

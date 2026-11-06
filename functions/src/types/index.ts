@@ -665,6 +665,11 @@ export interface Batch {
     id: string;
     productId: string;
     lotNumber: string;
+    /**
+     * Lote en mayúsculas y sin espacios (SPEC 59): la llave con la que se reconoce
+     * el mismo lote escrito distinto. Ausente en lotes anteriores.
+     */
+    lotKey?: string;
     expiryDate: Timestamp;
     quantity: number;
     costPrice?: number;

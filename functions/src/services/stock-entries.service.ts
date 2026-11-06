@@ -7,6 +7,7 @@ import {
     Product,
 } from '../types';
 import { db } from '../utils/firestore';
+import { normalizeLotKey } from '../utils/batch-lot';
 import {
     AppError,
     conflict,
@@ -20,6 +21,7 @@ import * as invoicesRepo from '../repositories/invoices.repository';
 import * as productsRepo from '../repositories/products.repository';
 import * as invoicesService from '../services/invoices.service';
 import * as inventoryService from './inventory.service';
+import { EntryWarning, RecordedEntry } from './inventory.service';
 import * as productsService from './products.service';
 
 /**
@@ -41,6 +43,13 @@ export interface StockEntryResult {
     product: Product;
     /** Existencias del producto después de sumar la partida. */
     stock: number;
+    /**
+     * Advertencias que no rechazan la partida (SPEC 59), p. ej.
+     * `LOT_EXPIRY_MISMATCH`. Van también en `details.warnings`, la forma que usa
+     * la regla funcional de la spec; la caja lee cualquiera de las dos.
+     */
+    warnings?: EntryWarning[];
+    details?: { warnings: EntryWarning[] };
 }
 
 /**
@@ -160,6 +169,11 @@ const applyStockEntry = async (input: {
     idempotencyKey?: string;
     /** Caja que capturó la entrada (SPEC 54). */
     deviceId?: string;
+    /**
+     * Momento de la captura en la caja (SPEC 59). Solo lo usa el schema para
+     * validar la caducidad contra el día de la captura.
+     */
+    capturedAt?: string;
 }): Promise<StockEntryResult> => {
     // Se comprueba antes de tocar el catálogo: dar de alta un producto para una
     // factura que no existe deja basura en `products` sin nada que la respalde.
@@ -264,7 +278,7 @@ const applyStockEntry = async (input: {
     // Producto dado de alta por esta llave (en este intento o en uno anterior).
     let keyProductId = leftoverProduct?.id;
     let product: Product;
-    let entry: InventoryEntryWithDetails;
+    let recorded: RecordedEntry;
     try {
         if (input.productId) {
             product = await resolveExistingProduct(input.productId, input.productUpdate, actor);
@@ -289,7 +303,7 @@ const applyStockEntry = async (input: {
             }
         }
 
-        entry = await inventoryService.recordEntry({
+        recorded = await inventoryService.recordEntry({
             invoiceId: input.invoiceId,
             items: [
                 {
@@ -313,6 +327,7 @@ const applyStockEntry = async (input: {
         throw error;
     }
 
+    const { warnings, ...entry } = recorded;
     if (idempotencyRef) {
         // Cierra la llave en cuanto existe la entrada: de aquí en adelante el
         // reintento la devuelve en vez de crear otra.
@@ -323,7 +338,12 @@ const applyStockEntry = async (input: {
     // para devolver la cifra con la que la caja pinta "quedará en N".
     const stock = await productsService.getProduct(product.id);
 
-    return { entry, product, stock: stock.stock };
+    return {
+        entry,
+        product,
+        stock: stock.stock,
+        ...(warnings?.length ? { warnings, details: { warnings } } : {}),
+    };
 };
 
 const idempotencyExpiry = (): Date => new Date(Date.now() + IDEMPOTENCY_TTL_MS);
@@ -404,7 +424,8 @@ const findAppliedEntry = async (params: {
     since: Timestamp;
     idempotencyKey: string;
 }): Promise<{ match: InventoryEntry | null; ambiguous: boolean }> => {
-    const lot = params.lotNumber.trim();
+    // Mismo lote aunque venga escrito distinto ("abc 12" / "ABC12", SPEC 59).
+    const lot = normalizeLotKey(params.lotNumber);
     const entries = (await entriesRepo.listInventoryEntries({ invoiceId: params.invoiceId }))
         .filter((entry) => entry.createdAt.toMillis() >= params.since.toMillis())
         // Una entrada con otra llave es otra partida, aunque sea idéntica: dos
@@ -412,11 +433,11 @@ const findAppliedEntry = async (params: {
         .filter((entry) => !entry.idempotencyKey ||
             entry.idempotencyKey === params.idempotencyKey);
     const sameLot = entries.filter((entry) => entry.items.some(
-        (item) => item.productId === params.productId && item.lotNumber === lot,
+        (item) => item.productId === params.productId && normalizeLotKey(item.lotNumber) === lot,
     ));
     const match = sameLot.find((entry) => entry.items.some(
         (item) => item.productId === params.productId &&
-            item.lotNumber === lot &&
+            normalizeLotKey(item.lotNumber) === lot &&
             item.quantity === params.quantity,
     )) ?? null;
     return { match, ambiguous: !match && sameLot.length > 0 };
