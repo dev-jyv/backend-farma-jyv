@@ -180,6 +180,11 @@ export type AuditAction =
     | 'sale.returned'
     /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
     | 'pointOrder.refunded'
+    /**
+     * Al abrir turno el efectivo contado no coincidió con el fondo heredado del
+     * cierre anterior (SPEC 63); el turno anterior queda marcado.
+     */
+    | 'cash.opening_difference'
     | 'cash_session.closed_with_difference'
     | 'cash_session.adjustment_reviewed'
     /** Entrada o salida de efectivo hecha por un admin desde la caja de la farmacia. */
@@ -1533,6 +1538,28 @@ export interface CashSession {
      * sin cajero presente.
      */
     autoClosedByExpiry?: boolean;
+    /**
+     * Cierre automático por expiración (SPEC 63): `true` junto con
+     * `needsReview`. Nadie contó el cajón, así que un admin debe revisarlo.
+     */
+    autoClosed?: boolean;
+    /** Autocierre sin arqueo pendiente de revisión (SPEC 63). */
+    needsReview?: boolean;
+    /**
+     * Arqueo de apertura (SPEC 63). `openingCounted` es lo que el cajero contó al
+     * abrir y es el fondo del turno (`openingAmount` lo copia); `inheritedFloat`
+     * lo que dejó el cierre anterior; `openingDifference = contado − heredado`.
+     * Ausentes en turnos de un POS anterior.
+     */
+    openingCounted?: number;
+    inheritedFloat?: number;
+    openingDifference?: number;
+    openingNote?: string;
+    /**
+     * Diferencia que encontró el turno **siguiente** al abrir con el fondo que
+     * dejó este (SPEC 63): el faltante o sobrante es de este turno, no de aquel.
+     */
+    followingOpeningDifference?: number;
     /**
      * Ventas offline que llegaron con el turno ya cerrado (SPEC 52). El corte
      * congelado no las incluye: `cashTotal` es el efectivo que entró al cajón y

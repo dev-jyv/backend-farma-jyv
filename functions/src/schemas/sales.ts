@@ -452,7 +452,27 @@ export const listSalesQuerySchema = z.object({
 export const openCashSessionSchema = z.object({
     /** Puede ser negativo: hereda el efectivo del corte anterior. Ver `signedMoney`. */
     openingAmount: signedMoney,
+    /**
+     * Arqueo de apertura (SPEC 63): efectivo que el cajero contó al abrir. Con él
+     * es el fondo del turno (el Z parte de aquí). Ausente en un POS anterior.
+     */
+    openingCounted: nullable(money),
+    /**
+     * Fondo que dejó el cierre anterior, solo de referencia. Ausente en el primer
+     * turno de la caja. Puede ser negativo, igual que el fondo heredado.
+     */
+    inheritedFloat: nullable(signedMoney),
+    /**
+     * Nota del cajero cuando lo contado no coincide con lo heredado. Se recorta y
+     * se acota; no se rechaza por largo: un 400 atoraría el alta en la cola.
+     */
+    openingNote: nullable(z.string().trim().max(1000).transform(
+        (value) => value.slice(0, 200),
+    )),
 });
+
+/** `true`/`false` como texto de query. */
+const booleanQuery = z.enum(['true', 'false']).transform((value) => value === 'true');
 
 export const closeCashSessionSchema = z.object({
     /**
@@ -509,6 +529,11 @@ export const listCashSessionsQuerySchema = z.object({
     to: z.string().datetime().optional(),
     openedBy: z.string().optional(),
     adjustmentStatus: z.enum(['pending', 'approved', 'rejected']).optional(),
+    /**
+     * Turnos autocerrados por revisar (SPEC 63). Es el nombre que manda el POS
+     * (`needsReview=true`); incluye los autocierres anteriores a la marca.
+     */
+    needsReview: booleanQuery.optional(),
     ...paginationFields,
 });
 

@@ -215,10 +215,53 @@ export const assertCanAccessSession = (
 export const getCurrentSession = async (userId: string): Promise<CashSession | null> =>
     cashSessionsRepo.getOpenSessionForUser(userId);
 
-export const openSession = async (userId: string, openingAmount: number): Promise<CashSession> => {
-    return cashSessionsRepo.createCashSessionIfNoneOpen({
+/** Arqueo de apertura que manda el POS (SPEC 63); todo opcional por compatibilidad. */
+export interface OpeningCountInput {
+    openingCounted?: number;
+    inheritedFloat?: number;
+    openingNote?: string;
+}
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
+
+/**
+ * Fondo del turno: lo **contado** al abrir cuando hubo arqueo (SPEC 63), o el
+ * `openingAmount` de siempre. El Z parte de aquí, no de lo heredado.
+ */
+export const sessionFloat = (
+    session: Pick<CashSession, 'openingAmount' | 'openingCounted'>,
+): number => (typeof session.openingCounted === 'number'
+    ? session.openingCounted
+    : session.openingAmount);
+
+/**
+ * Abre el turno. Con arqueo de apertura (SPEC 63) el fondo es lo contado y la
+ * diferencia contra lo heredado queda en el turno nuevo y, si no es cero, en el
+ * anterior (`followingOpeningDifference`) y en la bitácora: el faltante del
+ * turno anterior ya no aparece en el corte de quien abre. Sin `openingCounted`
+ * (POS anterior) todo sigue como antes.
+ */
+export const openSession = async (
+    userId: string,
+    openingAmount: number,
+    opening: OpeningCountInput & { roleSlug?: string | null } = {},
+): Promise<CashSession> => {
+    const counted = opening.openingCounted;
+    const hasCount = typeof counted === 'number';
+    const inherited = hasCount && typeof opening.inheritedFloat === 'number'
+        ? opening.inheritedFloat
+        : undefined;
+    const openingDifference = inherited !== undefined
+        ? round2(counted! - inherited)
+        : undefined;
+    const note = hasCount ? opening.openingNote?.trim() || undefined : undefined;
+
+    const created = await cashSessionsRepo.createCashSessionIfNoneOpen({
         openedBy: userId,
-        openingAmount,
+        openingAmount: hasCount ? counted! : openingAmount,
+        ...(hasCount ? { openingCounted: counted } : {}),
+        ...(inherited !== undefined ? { inheritedFloat: inherited, openingDifference } : {}),
+        ...(note ? { openingNote: note } : {}),
         expectedCashAmount: null,
         countedCashAmount: null,
         cashDifference: null,
@@ -226,6 +269,29 @@ export const openSession = async (userId: string, openingAmount: number): Promis
         closedBy: null,
         closedAt: null,
     });
+    const { previousSessionId, ...session } = created;
+
+    // Contado igual a lo heredado: sin auditoría (SPEC 63).
+    if (openingDifference !== undefined && Math.abs(openingDifference) >= 0.01) {
+        await recordAudit({
+            action: 'cash.opening_difference',
+            entity: 'cashSession',
+            entityId: session.id,
+            summary: `Apertura de turno con diferencia de ${openingDifference.toFixed(2)} ` +
+                `contra el fondo heredado (heredado ${inherited!.toFixed(2)}, ` +
+                `contado ${counted!.toFixed(2)})`,
+            userId,
+            roleSlug: opening.roleSlug ?? null,
+            metadata: {
+                openingCounted: counted,
+                inheritedFloat: inherited,
+                openingDifference,
+                openingNote: note ?? null,
+                previousSessionId: previousSessionId ?? null,
+            },
+        });
+    }
+    return session;
 };
 
 export const getSessionSummary = async (
@@ -251,7 +317,7 @@ export const getSessionSummary = async (
         returnsRepo.listReturnsForSession(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
+        sessionFloat(session),
         sales,
         movements,
         returns,
@@ -307,7 +373,7 @@ export const buildXReport = async (
         returnsRepo.listReturnsForSession(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
+        sessionFloat(session),
         sales,
         movements,
         returns,
@@ -412,7 +478,7 @@ export const closeSession = async (
     };
     const closed = await cashSessionsRepo.closeCashSession(id, (sales) => {
         const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-            session.openingAmount,
+            sessionFloat(session),
             sales,
             movements,
             returns,
@@ -696,6 +762,7 @@ export const listCashSessions = async (filters: {
     to?: string;
     openedBy?: string;
     adjustmentStatus?: CashAdjustmentStatus;
+    needsReview?: boolean;
     page?: number;
     limit?: number;
 }): Promise<{ items: CashSessionWithUsers[]; meta: ListMeta }> => {
