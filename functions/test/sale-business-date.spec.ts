@@ -7,6 +7,7 @@ import * as dailyStatsService from '../src/services/daily-stats.service';
 import * as productsService from '../src/services/products.service';
 import * as salesReportsService from '../src/services/sales-reports.service';
 import * as salesService from '../src/services/sales.service';
+import * as cashSessionsServiceModule from '../src/services/cash-sessions.service';
 import { SalesController } from '../src/modules/sales/sales.controller';
 import { AuthUser } from '../src/types';
 import { db, toTimestamp } from '../src/utils/firestore';
@@ -315,5 +316,94 @@ describe('SPEC 51 — fecha de cobro como fecha de negocio', () => {
         const audits = await auditsOf(sale.id, 'sale.late_ledger_entry');
         expect(audits).toHaveLength(1);
         expect(audits[0].summary).toContain('2026-11');
+    });
+});
+
+/**
+ * Caja real, 06/11: el turno del 05/11 13:56 se creó en el servidor al
+ * sincronizar al día siguiente. Sin la hora de apertura de la caja, `openedAt`
+ * era la de recepción y las 21 ventas del turno quedaban "antes de la
+ * apertura". Con `openedAt` en el alta, el servidor guarda `reportedOpenedAt` y
+ * juzga el `soldAt` contra ella.
+ */
+describe('hora de apertura que reporta la caja', () => {
+    const cashSessionsService = cashSessionsServiceModule;
+    const NOW = Date.parse('2026-11-06T13:27:52-06:00');
+
+    it('resolveReportedOpenedAt: solo una hora anterior a ahora y de los últimos 7 días', () => {
+        const ayer = '2026-11-05T13:56:00-06:00';
+        expect(cashSessionsService.resolveReportedOpenedAt(ayer, NOW)?.toMillis())
+            .toBe(Date.parse(ayer));
+        expect(cashSessionsService.resolveReportedOpenedAt(undefined, NOW)).toBeUndefined();
+        expect(cashSessionsService.resolveReportedOpenedAt('basura', NOW)).toBeUndefined();
+        // En el futuro: reloj adelantado, no aporta nada.
+        expect(cashSessionsService.resolveReportedOpenedAt(
+            new Date(NOW + 60 * 1000).toISOString(), NOW,
+        )).toBeUndefined();
+        expect(cashSessionsService.resolveReportedOpenedAt(
+            new Date(NOW - 8 * DAY_MS).toISOString(), NOW,
+        )).toBeUndefined();
+    });
+
+    it('el alta guarda la apertura de la caja: sus ventas ya no son previas', async () => {
+        const cajero = unique('cajero-tarde');
+        const openedAt = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+        const session = await cashSessionsService.openSession(cajero, 0, { openedAt });
+
+        expect(session.reportedOpenedAt?.toMillis()).toBe(Date.parse(openedAt));
+        // `openedAt` sigue siendo la de recepción: listados y expiración no cambian.
+        expect(session.openedAt.toMillis()).toBeGreaterThan(Date.parse(openedAt));
+
+        const product = await createProduct();
+        await addBatch(product.id, 5, '2030-01-01');
+        const soldAt = new Date(Date.parse(openedAt) + 60 * 60 * 1000).toISOString();
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1, unitPrice: 20 }],
+            paymentMethod: 'cash',
+            amountReceived: 20,
+            cashSessionId: session.id,
+            cashierId: cajero,
+            offline: true,
+            soldAt,
+        });
+
+        expect(sale.soldAtTrusted).toBe(true);
+        expect(sale.businessAt?.toMillis()).toBe(Date.parse(soldAt));
+        expect(await auditsOf(sale.id, 'sale.sold_at_untrusted')).toHaveLength(0);
+    });
+
+    it('un soldAt anterior a la apertura de la caja sigue sin creerse', async () => {
+        const cajero = unique('cajero-tarde');
+        const openedAt = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const session = await cashSessionsService.openSession(cajero, 0, { openedAt });
+        const product = await createProduct();
+        await addBatch(product.id, 5, '2030-01-01');
+
+        const sale = await salesService.createSale({
+            items: [{ productId: product.id, quantity: 1, unitPrice: 20 }],
+            paymentMethod: 'cash',
+            amountReceived: 20,
+            cashSessionId: session.id,
+            cashierId: cajero,
+            offline: true,
+            soldAt: new Date(Date.parse(openedAt) - 60 * 60 * 1000).toISOString(),
+        });
+
+        expect(sale.soldAtTrusted).toBe(false);
+        const [audit] = await auditsOf(sale.id, 'sale.sold_at_untrusted');
+        expect(audit.metadata).toMatchObject({
+            reason: 'before_session',
+            sessionOpenedAt: openedAt,
+        });
+    });
+
+    it('una fecha ilegible no rechaza el alta: el turno abre con la de recepción', async () => {
+        const session = await cashSessionsService.openSession(unique('cajero'), 0, {
+            openedAt: 'no-es-fecha',
+        });
+        expect(session.id).toBeDefined();
+        expect(session.reportedOpenedAt).toBeUndefined();
+        const doc = await db().collection('cashSessions').doc(session.id).get();
+        expect(doc.get('reportedOpenedAt')).toBeUndefined();
     });
 });

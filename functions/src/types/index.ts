@@ -1675,6 +1675,13 @@ export interface CashSession {
     /** Autocierre sin arqueo pendiente de revisión (SPEC 63). */
     needsReview?: boolean;
     /**
+     * Hora de apertura que reportó la caja, cuando es anterior a `openedAt` (la
+     * de recepción) y creíble: no en el futuro, no más de 7 días atrás. Ausente
+     * en turnos abiertos en línea o de un POS anterior. Solo la usa `createSale`
+     * para juzgar si un `soldAt` es anterior a la apertura.
+     */
+    reportedOpenedAt?: Timestamp;
+    /**
      * Arqueo de apertura (SPEC 63). `openingCounted` es lo que el cajero contó al
      * abrir y es el fondo del turno (`openingAmount` lo copia); `inheritedFloat`
      * lo que dejó el cierre anterior; `openingDifference = contado − heredado`.

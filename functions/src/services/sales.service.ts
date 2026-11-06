@@ -1085,7 +1085,10 @@ const applySale = async (input: {
     // recepción. En línea siempre es la de recepción.
     let soldAtUntrustedReason: SoldAtUntrustedReason | null = null;
     if (hasSoldAt) {
-        const openedAtMs = preloadedSession?.openedAt?.toMillis();
+        // La apertura que reportó la caja si la hay: un turno creado en el servidor
+        // al sincronizar tiene `openedAt` posterior a todas sus ventas.
+        const openedAtMs = (preloadedSession?.reportedOpenedAt ??
+            preloadedSession?.openedAt)?.toMillis();
         if (soldAtMs > timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS) {
             soldAtUntrustedReason = 'clock_ahead';
         } else if (openedAtMs !== undefined && soldAtMs < openedAtMs &&
@@ -2009,7 +2012,8 @@ const applySale = async (input: {
             roleSlug: input.roleSlug ?? null,
             soldAt: input.soldAt ?? null,
             soldAtUntrustedReason,
-            sessionOpenedAt: preloadedSession?.openedAt ?? null,
+            sessionOpenedAt: preloadedSession?.reportedOpenedAt ??
+                preloadedSession?.openedAt ?? null,
             stockReviewItems,
             inactiveCatalogIds,
             wroteLedger,

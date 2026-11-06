@@ -221,6 +221,7 @@ export class CashSessionsController {
             openingCounted: body.openingCounted,
             inheritedFloat: body.inheritedFloat,
             openingNote: body.openingNote,
+            openedAt: body.openedAt,
             roleSlug: user.role.slug,
         });
         return { data: session };
