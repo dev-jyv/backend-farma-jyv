@@ -73,3 +73,17 @@ export const resolveUnreconciledSale = async (
 ): Promise<void> => {
     await collection().doc(id).update({ resolvedAt: now(), resolvedBy });
 };
+
+/**
+ * No conciliadas **pendientes** de un turno (SPEC 53), para el corte. Una sola
+ * igualdad sobre `cashSessionId` (índice de un campo, automático); lo resuelto se
+ * descarta en memoria: un turno tiene pocas.
+ */
+export const listPendingUnreconciledForSession = async (
+    cashSessionId: string,
+): Promise<UnreconciledSale[]> => {
+    const snapshot = await collection().where('cashSessionId', '==', cashSessionId).get();
+    return snapshot.docs
+        .map((doc) => mapSale(doc.id, doc.data()))
+        .filter((sale) => sale.resolvedAt === null);
+};

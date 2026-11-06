@@ -11,6 +11,7 @@ import {
     ExpenseCategory,
     PaymentMethod,
     SaleReturn,
+    UnreconciledSale,
 } from '../types';
 import { badRequest, forbidden, notFound } from '../utils/errors';
 import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
@@ -18,6 +19,7 @@ import * as cashSessionsRepo from '../repositories/cash-sessions.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as readingsRepo from '../repositories/cash-readings.repository';
+import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
 import { renderCashReportHtml } from './cash-reports.service';
 import { ReceiptWidth } from './receipts.service';
 import { db, now } from '../utils/firestore';
@@ -44,6 +46,7 @@ const buildSummary = (
     sales: cashSessionsRepo.SessionSaleRow[],
     movements: CashMovement[],
     returns: SaleReturn[],
+    unreconciledCash: number,
 ): {
     summary: CashSessionSummary;
     expectedCashAmount: number;
@@ -173,6 +176,7 @@ const buildSummary = (
             movements: movementTotals,
             grandTotal: round(grandTotal - returnTotals.total),
             cashInDrawer,
+            unreconciledCash,
             // El bloque solo existe si el turno vio servicios: un corte de un turno
             // sin ellos queda **byte a byte** como el de antes.
             ...(sawServices
@@ -189,6 +193,39 @@ const buildSummary = (
                 : {}),
         },
     };
+};
+
+/**
+ * Efectivo de una venta no conciliada, leído del payload que la caja intentó
+ * registrar (SPEC 53): en efectivo es el total; en mixto, el total menos la
+ * parte con tarjeta (o lo recibido, si el payload no trae el reparto); con
+ * tarjeta o transferencia, nada.
+ */
+const unreconciledCashOf = (sale: UnreconciledSale): number => {
+    const payload = sale.payload ?? {};
+    const total = Number.isFinite(sale.total) ? sale.total : 0;
+    if (payload.paymentMethod === 'cash') {
+        return total;
+    }
+    if (payload.paymentMethod === 'mixed') {
+        if (typeof payload.cardAmount === 'number') {
+            return Math.max(0, total - payload.cardAmount);
+        }
+        if (typeof payload.amountReceived === 'number') {
+            return Math.max(0, Math.min(total, payload.amountReceived));
+        }
+    }
+    return 0;
+};
+
+/** Efectivo de las no conciliadas pendientes del turno, en centavos exactos. */
+const loadUnreconciledCash = async (cashSessionId: string): Promise<number> => {
+    const pending = await unreconciledRepo.listPendingUnreconciledForSession(cashSessionId);
+    const cents = pending.reduce(
+        (sum, sale) => sum + Math.round(unreconciledCashOf(sale) * 100),
+        0,
+    );
+    return cents / 100;
 };
 
 /**
@@ -311,22 +348,26 @@ export const getSessionSummary = async (
     }
     assertCanAccessSession(session, userId, roleSlug);
 
-    const [sales, movements, returns] = await Promise.all([
+    const [sales, movements, returns, unreconciledCash] = await Promise.all([
         cashSessionsRepo.listSalesForSession(id),
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
         sessionFloat(session),
         sales,
         movements,
         returns,
+        unreconciledCash,
     );
 
     if (session.closedAt && session.summary) {
         return {
             session,
-            summary: session.summary,
+            // El corte congelado, con las no conciliadas de **ahora**: una venta
+            // puede caer ahí después del cierre y ese efectivo está en el cajón.
+            summary: { ...session.summary, unreconciledCash },
             expectedCashAmount: session.expectedCashAmount ?? expectedCashAmount,
             expectedServicesCashAmount:
                 session.expectedServicesCashAmount ?? expectedServicesCashAmount,
@@ -367,16 +408,18 @@ export const buildXReport = async (
         throw badRequest('El turno de caja ya está cerrado: usa el corte Z');
     }
 
-    const [sales, movements, returns] = await Promise.all([
+    const [sales, movements, returns, unreconciledCash] = await Promise.all([
         cashSessionsRepo.listSalesForSession(id),
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
     const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
         sessionFloat(session),
         sales,
         movements,
         returns,
+        unreconciledCash,
     );
 
     let reading: CashReading | null = null;
@@ -459,9 +502,10 @@ export const closeSession = async (
     // y el cierre aparece en el corte congelado en vez de quedar en el turno pero
     // fuera del resumen. Si llega mientras la transacción corre, Firestore la
     // reintenta y el resumen se rehace con ella.
-    const [movements, returns] = await Promise.all([
+    const [movements, returns, unreconciledCash] = await Promise.all([
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
+        loadUnreconciledCash(id),
     ]);
     // La marca la manda el cliente, pero solo se respeta si el turno de verdad venció:
     // con `true` en cualquier cierre un faltante nunca llegaba a la cola de revisión.
@@ -482,6 +526,7 @@ export const closeSession = async (
             sales,
             movements,
             returns,
+            unreconciledCash,
         );
         /**
          * El cajón es **uno**: el cajero cuenta el efectivo una sola vez y hay una

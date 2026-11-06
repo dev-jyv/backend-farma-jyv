@@ -1644,6 +1644,14 @@ export interface CashSessionSummary {
     cashInDrawer: number;
     /** Corte de servicios; solo presente si el turno cobró alguno. */
     services?: CashServicesTotals;
+    /**
+     * Efectivo de las ventas **no conciliadas pendientes** de este turno
+     * (SPEC 53): se cobró y está en el cajón, pero no es una venta registrada.
+     * Informativo: no entra a `cashInDrawer`. En un turno cerrado se calcula al
+     * consultar (puede llegar una después del cierre); los cortes congelados
+     * antes de SPEC 53 no lo traen.
+     */
+    unreconciledCash: number;
 }
 
 export type PointOperatingMode = 'PDV' | 'STANDALONE' | 'UNDEFINED';

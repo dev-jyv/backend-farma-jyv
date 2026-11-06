@@ -68,6 +68,14 @@ export const renderCashReportHtml = (input: {
     if (input.summary.voidedCount > 0) {
         rows.push(['Ventas anuladas', `${input.summary.voidedCount}`]);
     }
+    // Cobrado y en el cajón, pero sin venta registrada (SPEC 53). Informativo:
+    // no entra al esperado. Sin pendientes el ticket sale como siempre.
+    if ((input.summary.unreconciledCash ?? 0) > 0) {
+        rows.push([
+            'No conciliadas (efectivo)',
+            formatCurrency(input.summary.unreconciledCash),
+        ]);
+    }
 
     /**
      * Bloque de servicios: aparece **solo si hubo actividad de servicios** en el
