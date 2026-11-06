@@ -13,7 +13,7 @@ import {
     SupplierSummary,
     isSaleProductItem,
 } from '../types';
-import { badRequest, notFound } from '../utils/errors';
+import { badRequest, conflict, notFound } from '../utils/errors';
 import {
     buildListMeta,
     buildListResult,
@@ -22,7 +22,8 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { matchesProductSearch } from '../utils/product-search';
-import { boxPriceExceedsPieces } from '../utils/box-sale';
+import { productNameKey } from '../utils/product-match';
+import { boxConfigProblem, boxPriceExceedsPieces } from '../utils/box-sale';
 import { getFileUrl } from '../utils/storage';
 import { Timestamp } from 'firebase-admin/firestore';
 import * as productsRepo from '../repositories/products.repository';
@@ -81,7 +82,9 @@ const loadInvoiceSummary = async (
 const loadPurchaseHistory = async (
     productId: string,
 ): Promise<ProductPurchaseHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const supplierCache = new Map<string, Supplier | null>();
     const invoiceCache = new Map<string, InvoiceSummary | null>();
     const history: ProductPurchaseHistoryItem[] = [];
@@ -150,7 +153,9 @@ const loadSalesHistory = async (productId: string): Promise<ProductSaleHistoryIt
 const loadInvoiceHistory = async (
     productId: string,
 ): Promise<ProductInvoiceHistoryItem[]> => {
-    const entries = await entriesRepo.listInventoryEntries({ productId });
+    // Las entradas canceladas (SPEC 58) no son compras ni mercancía recibida.
+    const entries = (await entriesRepo.listInventoryEntries({ productId }))
+        .filter((entry) => !entry.cancelledAt);
     const grouped = new Map<string, { quantityReceived: number; lastReceivedAt: number }>();
 
     for (const entry of entries) {
@@ -776,6 +781,75 @@ export const createProduct = async (input: {
 
     catalogSnapshot.clearCatalogSnapshot();
     return created;
+};
+
+/**
+ * Revisa, **sin escribir nada**, que cada alta se pueda crear: lo mismo que
+ * `createProduct` rechazaría (nombre/SKU, precios, categoría, caja, unicidad
+ * contra el catálogo) y además que no choquen entre sí.
+ *
+ * Existe para las entradas con productos en línea (SPEC 55): se corre antes de
+ * dar de alta el primero, porque un rechazo después deja un producto huérfano y
+ * cada reintento choca por SKU. No cierra la carrera con otra alta simultánea;
+ * eso lo sigue haciendo la transacción de `createProduct`.
+ */
+export const assertProductsCreatable = async (
+    inputs: Array<Omit<Parameters<typeof createProduct>[0], 'actor'>>,
+): Promise<void> => {
+    const seen = new Map<string, string>();
+    const claim = (value: string | undefined, namespace: string, label: string): void => {
+        if (!value) {
+            return;
+        }
+        const key = `${namespace}:${value}`;
+        if (seen.has(key)) {
+            throw conflict(`Dos productos nuevos de la entrada tienen el mismo ${label}`);
+        }
+        seen.set(key, label);
+    };
+
+    const categoryIds = new Set<string>();
+    for (const input of inputs) {
+        const name = input.name.trim();
+        const sku = input.sku.trim();
+        const barcode = input.barcode?.trim() || undefined;
+        const boxBarcode = input.boxBarcode?.trim() || undefined;
+        if (!name || !sku) {
+            throw badRequest('Nombre y SKU son requeridos');
+        }
+        if (input.salePrice < 0 || input.minStock < 0) {
+            throw badRequest('Precio y stock mínimo deben ser positivos');
+        }
+        const boxProblem = boxConfigProblem({ ...input, boxBarcode });
+        if (boxProblem) {
+            throw badRequest(boxProblem);
+        }
+        // Los códigos de barras comparten espacio con el SKU de caja, igual que
+        // en `assertNoDuplicate` del repositorio.
+        claim(sku, 'sku', 'SKU');
+        // Mismo nombre normalizado (SPEC 60), no el texto exacto.
+        claim(productNameKey(name, input.concentration?.trim()), 'name', 'nombre');
+        claim(barcode, 'code', 'código de barras');
+        claim(boxBarcode, 'code', 'código de barras');
+        categoryIds.add(input.categoryId);
+    }
+
+    for (const categoryId of categoryIds) {
+        const category = await categoriesRepo.getCategoryById(categoryId);
+        if (!category || !category.isActive) {
+            throw notFound('Categoría');
+        }
+    }
+
+    for (const input of inputs) {
+        await productsRepo.assertUniqueOutsideTransaction({
+            sku: input.sku.trim(),
+            name: input.name.trim(),
+            concentration: input.concentration?.trim(),
+            barcode: input.barcode?.trim() || undefined,
+            boxBarcode: input.boxBarcode?.trim() || undefined,
+        });
+    }
 };
 
 type CreateProductInput = {

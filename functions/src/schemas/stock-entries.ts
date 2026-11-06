@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { money, qty } from './common';
 import { createProductSchema, updateProductSchema } from './catalog';
 import { idempotencyKeySchema } from './sales';
+import { posDeviceIdSchema } from './pos-health';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 
 /**
  * Entrada de stock desde la caja: **una** partida contra una factura ya
@@ -11,13 +13,13 @@ import { idempotencyKeySchema } from './sales';
  * pieza por pieza, con la factura enfrente.
  */
 
-/** Mismo criterio que `schemas/inventory.ts`: no se recibe mercancía vencida. */
+/**
+ * No se recibe mercancía vencida. La comparación es contra el día de la
+ * **captura** en la farmacia (ver `capturedAt` abajo), no contra el día UTC.
+ */
 const expiryDateSchema = z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de caducidad debe tener formato YYYY-MM-DD')
-    .refine((value) => value >= new Date().toISOString().slice(0, 10), {
-        message: 'La fecha de caducidad no puede estar en el pasado',
-    });
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha de caducidad debe tener formato YYYY-MM-DD');
 
 const lotNumberSchema = z.string().trim().min(1, 'El número de lote es requerido').max(40);
 
@@ -45,6 +47,35 @@ export const createStockEntrySchema = z
          * fantasma que nadie cuadra contra la factura.
          */
         idempotencyKey: idempotencyKeySchema.optional(),
+        /**
+         * Caja que capturó la entrada (SPEC 54). Con él la llave es
+         * `<deviceId>:<llave>`: si otro usuario inicia sesión en esa caja y la cola
+         * reenvía la entrada, sigue siendo la misma llave y no se aplica dos veces.
+         */
+        deviceId: posDeviceIdSchema.optional(),
+        /**
+         * Momento de la captura en la caja (ISO con zona, SPEC 59). La caducidad se
+         * valida contra **ese** día en `America/Mexico_City`, no contra el del sync:
+         * capturada sin red el día 5 con caducidad del 6, se acepta aunque suba el 7.
+         */
+        capturedAt: z.string().datetime({ offset: true }).optional(),
+        /**
+         * "Sí, es otra partida" (SPEC 58): el cajero confirmó que una partida igual a
+         * otra ya aplicada en la factura (otra llave) es mercancía distinta.
+         */
+        confirmDuplicate: z.boolean().optional(),
+    })
+    .superRefine((data, ctx) => {
+        const capturedMs = data.capturedAt ? Date.parse(data.capturedAt) : Date.now();
+        // Un `capturedAt` mal formado ya trae su propio error.
+        if (Number.isFinite(capturedMs) &&
+            data.expiryDate < getZonedYmd(capturedMs, APP_TIME_ZONE)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['expiryDate'],
+                message: 'La fecha de caducidad no puede estar en el pasado',
+            });
+        }
     })
     .refine((data) => Boolean(data.productId) !== Boolean(data.product), {
         message: 'La entrada debe incluir productId o product, no ambos',

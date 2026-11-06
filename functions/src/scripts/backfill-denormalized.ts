@@ -1,11 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as admin from 'firebase-admin';
+import { productNameKey } from '../utils/product-match';
 
 /**
  * Backfill de los campos denormalizados que solo existen en altas nuevas:
  *
  *  - `products.totalStock`            — suma de los lotes del producto.
+ *  - `products.nameKey`               — nombre + concentración normalizados
+ *                                        (SPEC 60, `utils/product-match.ts`).
  *  - `sales.productIds[]`             — ids de producto de la venta.
  *  - `inventoryEntries.productIds[]`  — ids de producto de la entrada.
  *  - `batches.supplierId`             — proveedor del lote, vía el movimiento de
@@ -32,7 +35,7 @@ const BATCH_LIMIT = 400;
 type Target = 'products' | 'sales' | 'entries' | 'batches';
 const ALL_TARGETS: Target[] = ['products', 'sales', 'entries', 'batches'];
 
-interface Options {
+export interface Options {
     dryRun: boolean;
     force: boolean;
     targets: Target[];
@@ -136,7 +139,7 @@ const initAdmin = (): void => {
     );
 };
 
-interface Stats {
+export interface Stats {
     scanned: number;
     updated: number;
     skipped: number;
@@ -224,6 +227,57 @@ const backfillProductTotalStock = async (
 
     await writer.flush();
     return stats;
+};
+
+/** Lo que el backfill de `nameKey` escribiría (o escribió) en un producto. */
+export interface NameKeyChange {
+    id: string;
+    name: string;
+    nameKey: string;
+}
+
+/**
+ * `products.nameKey` (SPEC 60). Sin `--force` solo los que no lo tienen; con
+ * `--force` también los que lo tienen distinto del calculado. En dry-run devuelve
+ * (y el script imprime) cada `nameKey` que escribiría.
+ *
+ * No fusiona ni desactiva nada: los activos que ya comparten `nameKey` se cuentan
+ * en `collisions` para el reporte operativo aparte (fuera de esta spec).
+ */
+export const backfillProductNameKey = async (
+    firestore: FirebaseFirestore.Firestore,
+    options: Pick<Options, 'dryRun' | 'force'>,
+): Promise<Stats & { changes: NameKeyChange[]; collisions: number }> => {
+    const stats = emptyStats();
+    const writer = new BatchWriter(firestore, options.dryRun);
+    const changes: NameKeyChange[] = [];
+    const activeByKey = new Map<string, number>();
+
+    const products = await firestore.collection('products').get();
+    for (const doc of products.docs) {
+        stats.scanned += 1;
+        const data = doc.data();
+        const computed = productNameKey(
+            data.name as string | undefined,
+            data.concentration as string | undefined,
+        );
+        if (computed && data.isActive !== false) {
+            activeByKey.set(computed, (activeByKey.get(computed) ?? 0) + 1);
+        }
+        const current = data.nameKey as string | undefined;
+        if (!computed || current === computed || (!options.force && current)) {
+            stats.skipped += 1;
+            continue;
+        }
+
+        await writer.update(doc.ref, { nameKey: computed });
+        changes.push({ id: doc.id, name: String(data.name ?? ''), nameKey: computed });
+        stats.updated += 1;
+    }
+
+    await writer.flush();
+    const collisions = [...activeByKey.values()].filter((count) => count > 1).length;
+    return { ...stats, changes, collisions };
 };
 
 /** `sales` e `inventoryEntries` comparten forma: items[] con productId. */
@@ -332,6 +386,19 @@ const run = async (): Promise<void> => {
 
     if (options.targets.includes('products')) {
         results.push(['products.totalStock', await backfillProductTotalStock(firestore, options)]);
+        const nameKeys = await backfillProductNameKey(firestore, options);
+        results.push(['products.nameKey', nameKeys]);
+        if (options.dryRun) {
+            for (const change of nameKeys.changes) {
+                console.log(`  nameKey ${change.id}: "${change.name}" -> "${change.nameKey}"`);
+            }
+        }
+        if (nameKeys.collisions > 0) {
+            console.log(
+                `  Aviso: ${nameKeys.collisions} nameKey compartidos por productos activos ` +
+                '(duplicados previos; se fusionan aparte, este backfill no los toca).',
+            );
+        }
     }
     if (options.targets.includes('sales')) {
         results.push(['sales.productIds', await backfillProductIds(firestore, 'sales', options)]);
@@ -358,12 +425,15 @@ const run = async (): Promise<void> => {
     }
 };
 
-run()
-    .then(() => {
-        console.log('Backfill completado');
-        process.exit(0);
-    })
-    .catch((error) => {
-        console.error('Error en el backfill:', error);
-        process.exit(1);
-    });
+// Solo al ejecutarse como script: las pruebas importan los backfills sueltos.
+if (require.main === module) {
+    run()
+        .then(() => {
+            console.log('Backfill completado');
+            process.exit(0);
+        })
+        .catch((error) => {
+            console.error('Error en el backfill:', error);
+            process.exit(1);
+        });
+}

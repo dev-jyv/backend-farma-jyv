@@ -15,7 +15,13 @@ import {
     StockMovementWithDetails,
     Supplier,
 } from '../types';
-import { badRequest, notFound } from '../utils/errors';
+import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
+import { writeAuditInTransaction } from './audit.service';
+import {
+    ledgerGroupOf,
+    readEntryLedgerRowsInTransaction,
+    writeStockLedgerEntryInTransaction,
+} from './controlled.service';
 import { matchesProductSearch } from '../utils/product-search';
 import {
     buildListMeta,
@@ -25,7 +31,8 @@ import {
     parsePagination,
 } from '../utils/pagination';
 import { db, now } from '../utils/firestore';
-import { toCalendarTimestamp } from '../utils/calendar-date';
+import { calendarDayOf, toCalendarTimestamp } from '../utils/calendar-date';
+import { deterministicBatchId, normalizeLotKey, weightedBatchCost } from '../utils/batch-lot';
 import * as productsRepo from '../repositories/products.repository';
 import * as batchesRepo from '../repositories/batches.repository';
 import * as movementsRepo from '../repositories/stock-movements.repository';
@@ -117,11 +124,22 @@ const normalizeExpiryDate = (expiryDate: string): string =>
 const defaultLotNumber = (productId: string, expiryDate: string) =>
     `${productId.slice(0, 8)}-${expiryDate.replace(/\D/g, '').slice(0, 8)}`;
 
+/** Lote dentro de una entrada: producto + lote normalizado + caducidad (SPEC 59). */
 const batchKey = (productId: string, lotNumber: string, expiryDate: string) =>
-    `${productId}::${lotNumber}::${normalizeExpiryDate(expiryDate)}`;
+    `${productId}::${normalizeLotKey(lotNumber)}::${normalizeExpiryDate(expiryDate)}`;
 
 const productLotKey = (productId: string, lotNumber: string) =>
-    `${productId}::${lotNumber}`;
+    `${productId}::${normalizeLotKey(lotNumber)}`;
+
+/**
+ * Advertencias que no rechazan una entrada (SPEC 59). `LOT_EXPIRY_MISMATCH`: el
+ * mismo lote del producto ya existe con otra caducidad. Se acepta —la factura
+ * puede tener razón— y la caja lo muestra para que alguien la revise.
+ */
+export type EntryWarning = 'LOT_EXPIRY_MISMATCH';
+
+/** Entrada registrada, con las advertencias de la captura (no se guardan). */
+export type RecordedEntry = InventoryEntryWithDetails & { warnings?: EntryWarning[] };
 
 const loadProductWithCategory = async (product: Product): Promise<ProductWithCategory> => {
     const category = await categoriesRepo.getCategoryById(product.categoryId);
@@ -254,7 +272,11 @@ export const listEntries = async (filters: {
 }): Promise<{ items: InventoryEntryWithDetails[]; meta: ListMeta }> => {
     const { page, limit } = parsePagination(filters.page, filters.limit);
     const window = resolveHistoryWindow(filters.from, filters.to);
-    let entries = await entriesRepo.listInventoryEntries({ ...filters, from: window.from });
+    // Las entradas de **una** factura se leen todas (son pocas): el detalle suma
+    // "Capturado: $X de $Y" (SPEC 58) y una ventana de 30 días dejaba fuera las
+    // partidas de una factura vieja.
+    const from = filters.invoiceId && !filters.from ? undefined : window.from;
+    let entries = await entriesRepo.listInventoryEntries({ ...filters, from });
 
     const caches = createEnrichCaches();
 
@@ -361,7 +383,7 @@ const normalizeAndValidateItems = async (
 // Corre antes de crear cualquier producto inline en recordDirectEntry: si un
 // ítem posterior tiene datos inválidos, falla aquí y no deja productos huérfanos
 // sin lote/entrada asociada (ver normalizeAndValidateItems para el resto).
-const assertValidExpiryAndQuantity = (
+export const assertValidExpiryAndQuantity = (
     items: Array<{ expiryDate: string; quantity: number }>,
 ): void => {
     for (const item of items) {
@@ -381,31 +403,42 @@ const persistEntryItems = async (input: {
     source: InventoryEntrySource;
     invoiceId?: string;
     notes?: string;
-}): Promise<InventoryEntry> => {
+    /** Llave con la que la caja registró la partida (SPEC 55). */
+    idempotencyKey?: string;
+    /** Para el libro de controlados (SPEC 61). */
+    supplierName?: string;
+    invoiceFolio?: string;
+}): Promise<{ entry: InventoryEntry; warnings: EntryWarning[] }> => {
     const firestore = db();
+    const batches = firestore.collection('batches');
     const entryRef = firestore.collection('inventoryEntries').doc();
     const timestamp = now();
-    type BatchLookup = { productId: string; lotNumber: string; expiryDate: string };
-    const uniqueBatches = new Map<string, BatchLookup>();
+    type BatchTarget = {
+        productId: string;
+        lotNumber: string;
+        lotKey: string;
+        expiryDate: string;
+    };
+    const uniqueBatches = new Map<string, BatchTarget>();
+    // Por producto + lote normalizado: las formas en que llegó escrito, para
+    // encontrar los lotes anteriores (sin `lotKey`) por su texto.
+    type LotGroup = { productId: string; lotKey: string; spellings: Set<string> };
+    const lotGroups = new Map<string, LotGroup>();
 
     for (const item of input.items) {
-        const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
-        uniqueBatches.set(key, {
+        const lotKey = normalizeLotKey(item.lotNumber);
+        uniqueBatches.set(batchKey(item.productId, item.lotNumber, item.expiryDate), {
             productId: item.productId,
             lotNumber: item.lotNumber,
+            lotKey,
             expiryDate: item.expiryDate,
         });
+        const groupKey = productLotKey(item.productId, item.lotNumber);
+        const group = lotGroups.get(groupKey) ??
+            { productId: item.productId, lotKey, spellings: new Set<string>([lotKey]) };
+        group.spellings.add(item.lotNumber);
+        lotGroups.set(groupKey, group);
     }
-
-    const existingBatches = new Map<string, Batch | null>();
-    await Promise.all(
-        [...uniqueBatches.entries()].map(async ([key, { productId, lotNumber, expiryDate }]) => {
-            existingBatches.set(
-                key,
-                await batchesRepo.findBatchByProductLotAndExpiry(productId, lotNumber, expiryDate),
-            );
-        }),
-    );
 
     const stockDeltaByProduct = new Map<string, number>();
     for (const item of input.items) {
@@ -416,52 +449,104 @@ const persistEntryItems = async (input: {
     }
 
     return firestore.runTransaction(async (transaction) => {
+        // --- Lecturas (todas antes de cualquier escritura) -----------------------
+        // El lote existente se decide **dentro** de la transacción (SPEC 59): fuera
+        // de ella, dos entradas simultáneas del mismo lote nuevo creaban dos lotes.
+        const lotsByGroup = new Map<string, Batch[]>();
+        await Promise.all([...lotGroups.entries()].map(async ([groupKey, group]) => {
+            const [byKey, byText] = await Promise.all([
+                transaction.get(batches
+                    .where('productId', '==', group.productId)
+                    .where('lotKey', '==', group.lotKey)),
+                // Lotes anteriores a `lotKey`: se buscan por las formas en que llegó
+                // escrito el lote (Firestore admite hasta 30 valores en `in`).
+                transaction.get(batches
+                    .where('productId', '==', group.productId)
+                    .where('lotNumber', 'in', [...group.spellings].slice(0, 30))),
+            ]);
+            const found = new Map<string, Batch>();
+            for (const doc of [...byKey.docs, ...byText.docs]) {
+                const batch = { id: doc.id, ...doc.data() } as Batch;
+                if ((batch.lotKey ?? normalizeLotKey(batch.lotNumber)) === group.lotKey) {
+                    found.set(batch.id, batch);
+                }
+            }
+            lotsByGroup.set(groupKey, [...found.values()]);
+        }));
+
         const batchState = new Map<string, Batch>();
+        const newBatchIds = new Map<string, string>();
+        const warnings = new Set<EntryWarning>();
+        await Promise.all([...uniqueBatches.entries()].map(async ([key, target]) => {
+            const sameLot = lotsByGroup.get(productLotKey(target.productId, target.lotNumber))
+                ?? [];
+            if (sameLot.some((batch) => calendarDayOf(batch.expiryDate) !== target.expiryDate)) {
+                warnings.add('LOT_EXPIRY_MISMATCH');
+            }
+            // El documento determinista se lee siempre: es el que hace chocar a dos
+            // entradas simultáneas del mismo lote nuevo.
+            const id = deterministicBatchId(target.productId, target.lotKey, target.expiryDate);
+            const doc = await transaction.get(batches.doc(id));
+            const existing = doc.exists
+                ? ({ id: doc.id, ...doc.data() } as Batch)
+                : sameLot.find((batch) => calendarDayOf(batch.expiryDate) === target.expiryDate);
+            if (existing) {
+                batchState.set(key, existing);
+            } else {
+                newBatchIds.set(key, id);
+            }
+        }));
+
+        // Productos de la entrada, leídos aquí para asentar en el libro de
+        // controlados con el grupo vigente al recibir (SPEC 61).
+        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
+        const productDocs = await transaction.getAll(
+            ...uniqueProductIds.map((id) => firestore.collection('products').doc(id)),
+        );
+        const productById = new Map(productDocs.map((doc) =>
+            [doc.id, doc.exists ? ({ id: doc.id, ...doc.data() } as Product) : null]));
+
+        // --- Escrituras -----------------------------------------------------------
         const entryItems: InventoryEntryItem[] = [];
-
-        for (const [key, existingBatch] of existingBatches) {
-            if (!existingBatch) {
-                continue;
-            }
-
-            const batchDoc = await transaction.get(
-                firestore.collection('batches').doc(existingBatch.id),
-            );
-
-            if (!batchDoc.exists) {
-                throw notFound('Lote');
-            }
-
-            batchState.set(key, { id: batchDoc.id, ...batchDoc.data() } as Batch);
-        }
 
         for (const item of input.items) {
             const key = batchKey(item.productId, item.lotNumber, item.expiryDate);
+            const lotKey = normalizeLotKey(item.lotNumber);
             const existingBatch = batchState.get(key);
             const movementRef = firestore.collection('stockMovements').doc();
             let batch: Batch;
 
             if (existingBatch) {
-                const batchRef = firestore.collection('batches').doc(existingBatch.id);
+                const batchRef = batches.doc(existingBatch.id);
                 const newQuantity = existingBatch.quantity + item.quantity;
                 batch = {
                     ...existingBatch,
+                    lotKey,
                     quantity: newQuantity,
-                    costPrice: item.costPrice ?? existingBatch.costPrice,
+                    // Promedio ponderado (SPEC 59): antes ganaba el último costo y
+                    // las piezas que ya estaban quedaban valuadas a otro precio.
+                    costPrice: weightedBatchCost(
+                        existingBatch.quantity,
+                        existingBatch.costPrice,
+                        item.quantity,
+                        item.costPrice,
+                    ),
                     supplierId: existingBatch.supplierId ?? input.supplierId,
                     updatedAt: timestamp,
                 };
                 transaction.update(batchRef, {
+                    lotKey,
                     quantity: newQuantity,
                     costPrice: batch.costPrice,
                     supplierId: batch.supplierId,
                     updatedAt: timestamp,
                 });
             } else {
-                const batchRef = firestore.collection('batches').doc();
+                const batchRef = batches.doc(newBatchIds.get(key)!);
                 const batchData = {
                     productId: item.productId,
                     lotNumber: item.lotNumber,
+                    lotKey,
                     expiryDate: toCalendarTimestamp(item.expiryDate),
                     quantity: item.quantity,
                     costPrice: item.costPrice,
@@ -486,6 +571,30 @@ const persistEntryItems = async (input: {
             };
             transaction.set(movementRef, movementData);
 
+            // Libro de control (SPEC 61): un renglón por partida de un grupo que
+            // lo lleva, en la misma transacción que la entrada.
+            const product = productById.get(item.productId);
+            const ledgerGroup = ledgerGroupOf(product);
+            if (product && ledgerGroup) {
+                writeStockLedgerEntryInTransaction(transaction, {
+                    type: 'entry',
+                    productId: item.productId,
+                    productName: product.name,
+                    controlledGroup: ledgerGroup,
+                    quantity: item.quantity,
+                    lotNumber: item.lotNumber,
+                    batchId: batch.id,
+                    expiryDate: item.expiryDate,
+                    supplierId: input.supplierId,
+                    supplierName: input.supplierName ?? null,
+                    invoiceId: input.invoiceId ?? null,
+                    invoiceFolio: input.invoiceFolio ?? null,
+                    entryId: entryRef.id,
+                    userId: input.userId,
+                    createdAt: timestamp,
+                });
+            }
+
             entryItems.push({
                 productId: item.productId,
                 lotNumber: item.lotNumber,
@@ -496,7 +605,6 @@ const persistEntryItems = async (input: {
             });
         }
 
-        const uniqueProductIds = [...new Set(input.items.map((item) => item.productId))];
         const entryData: Omit<InventoryEntry, 'id'> = {
             supplierId: input.supplierId,
             source: input.source,
@@ -508,6 +616,7 @@ const persistEntryItems = async (input: {
             updatedBy: input.userId,
             ...(input.invoiceId ? { invoiceId: input.invoiceId } : {}),
             ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+            ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         };
         transaction.set(entryRef, entryData);
 
@@ -530,11 +639,19 @@ const persistEntryItems = async (input: {
             });
         }
 
-        return { id: entryRef.id, ...entryData };
+        return { entry: { id: entryRef.id, ...entryData }, warnings: [...warnings] };
     });
 };
 
-const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
+/** La entrada enriquecida, con sus advertencias solo si hubo alguna. */
+const withWarnings = async (
+    recorded: { entry: InventoryEntry; warnings: EntryWarning[] },
+): Promise<RecordedEntry> => {
+    const entry = await enrichEntry(recorded.entry);
+    return recorded.warnings.length ? { ...entry, warnings: recorded.warnings } : entry;
+};
+
+export const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
     const supplier = await suppliersRepo.getSupplierById(supplierId);
     if (!supplier) {
         throw notFound('Proveedor');
@@ -549,23 +666,28 @@ export const recordEntry = async (input: {
     invoiceId: string;
     items: EntryItemInput[];
     userId: string;
-}): Promise<InventoryEntryWithDetails> => {
+    /** Se guarda en la entrada para emparejar reintentos (SPEC 55). */
+    idempotencyKey?: string;
+}): Promise<RecordedEntry> => {
     const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
     if (!invoice) {
         throw notFound('Factura');
     }
 
-    await assertActiveSupplier(invoice.supplierId);
+    const supplier = await assertActiveSupplier(invoice.supplierId);
     const normalizedItems = await normalizeAndValidateItems(input.items);
-    const entry = await persistEntryItems({
+    const recorded = await persistEntryItems({
         supplierId: invoice.supplierId,
         items: normalizedItems,
         userId: input.userId,
         source: 'invoice',
         invoiceId: input.invoiceId,
+        idempotencyKey: input.idempotencyKey,
+        supplierName: supplier.name,
+        invoiceFolio: invoice.invoiceNumber,
     });
 
-    return enrichEntry(entry);
+    return withWarnings(recorded);
 };
 
 type DirectEntryItemInput = {
@@ -582,13 +704,20 @@ export const recordDirectEntry = async (input: {
     notes?: string;
     items: DirectEntryItemInput[];
     userId: string;
-}): Promise<InventoryEntryWithDetails> => {
+}): Promise<RecordedEntry> => {
     if (!input.items.length) {
         throw badRequest('Debe incluir al menos un producto');
     }
 
     assertValidExpiryAndQuantity(input.items);
-    await assertActiveSupplier(input.supplierId);
+    const supplier = await assertActiveSupplier(input.supplierId);
+
+    // Todas las altas se revisan antes de crear la primera: si la segunda choca
+    // por SKU, la primera ya no queda huérfana en el catálogo (SPEC 55).
+    const inlineProducts = input.items.flatMap((item) => (item.product ? [item.product] : []));
+    if (inlineProducts.length > 0) {
+        await productsService.assertProductsCreatable(inlineProducts);
+    }
 
     const resolvedItems: EntryItemInput[] = [];
     for (const item of input.items) {
@@ -613,15 +742,16 @@ export const recordDirectEntry = async (input: {
     }
 
     const normalizedItems = await normalizeAndValidateItems(resolvedItems);
-    const entry = await persistEntryItems({
+    const recorded = await persistEntryItems({
         supplierId: input.supplierId,
         items: normalizedItems,
         userId: input.userId,
         source: 'direct',
         notes: input.notes,
+        supplierName: supplier.name,
     });
 
-    return enrichEntry(entry);
+    return withWarnings(recorded);
 };
 
 export const bulkCreateEntries = async (
@@ -687,8 +817,10 @@ export const recordExit = async (input: {
     const movementRef = firestore.collection('stockMovements').doc();
     const timestamp = now();
 
+    const productRef = firestore.collection('products').doc(input.productId);
+
     const result = await firestore.runTransaction(async (transaction) => {
-        const batchDoc = await transaction.get(batchRef);
+        const [batchDoc, productDoc] = await transaction.getAll(batchRef, productRef);
         if (!batchDoc.exists) {
             throw notFound('Lote');
         }
@@ -723,6 +855,27 @@ export const recordExit = async (input: {
         };
         transaction.set(movementRef, movementData);
 
+        // Libro de control (SPEC 61): la merma o caducidad de un controlado se
+        // asienta con cantidad negativa en la misma transacción.
+        const ledgerProduct = productDoc.exists
+            ? ({ id: productDoc.id, ...productDoc.data() } as Product)
+            : product;
+        const ledgerGroup = ledgerGroupOf(ledgerProduct);
+        if (ledgerGroup) {
+            writeStockLedgerEntryInTransaction(transaction, {
+                type: movementType,
+                productId: input.productId,
+                productName: ledgerProduct.name,
+                controlledGroup: ledgerGroup,
+                quantity: -input.quantity,
+                lotNumber: current.lotNumber,
+                batchId: batch.id,
+                expiryDate: current.expiryDate ? calendarDayOf(current.expiryDate) : null,
+                userId: input.userId,
+                createdAt: timestamp,
+            });
+        }
+
         return {
             batch: {
                 id: batch.id,
@@ -735,6 +888,176 @@ export const recordExit = async (input: {
     });
 
     return result;
+};
+
+/** Cancelar una entrada mueve existencias ya recibidas: solo admin o gerente (SPEC 58). */
+export const assertCanCancelEntry = (roleSlug: string | null | undefined): void => {
+    if (roleSlug !== 'admin' && roleSlug !== 'manager') {
+        throw forbidden('Solo un administrador o gerente puede cancelar una entrada');
+    }
+};
+
+/**
+ * Cancela una entrada con **contramovimiento** (SPEC 58): a cada lote se le restan
+ * las piezas que esa entrada le sumó, con un movimiento `entry_cancel` negativo por
+ * partida, se baja `products.totalStock`, se marca la entrada `cancelledAt` y se
+ * audita `inventory.entry_cancelled`, todo en una transacción. Nada se borra.
+ *
+ * Si algún lote ya no tiene esas piezas (se vendieron o salieron), no se cancela
+ * nada: 400 con el detalle. Eso se resuelve con un conteo, no restando a ciegas.
+ *
+ * El costo del lote no se recalcula: el promedio ponderado (SPEC 59) no se puede
+ * deshacer sin saber qué piezas salieron, y la spec no lo pide.
+ */
+export const cancelEntry = async (input: {
+    entryId: string;
+    reason: string;
+    userId: string;
+    roleSlug?: string | null;
+}): Promise<InventoryEntryWithDetails> => {
+    assertCanCancelEntry(input.roleSlug);
+    const reason = input.reason.trim();
+    const firestore = db();
+    const entryRef = firestore.collection('inventoryEntries').doc(input.entryId);
+    const timestamp = now();
+
+    const cancelled = await firestore.runTransaction(async (transaction) => {
+        // --- Lecturas -----------------------------------------------------------
+        const entryDoc = await transaction.get(entryRef);
+        if (!entryDoc.exists) {
+            throw notFound('Entrada de inventario');
+        }
+        const entry = { id: entryDoc.id, ...entryDoc.data() } as InventoryEntry;
+        if (entry.cancelledAt) {
+            throw conflict('Esta entrada ya fue cancelada');
+        }
+        if (entry.items.some((item) => !item.batchId)) {
+            throw badRequest(
+                'La entrada no registra el lote de cada partida; corrígela con un conteo',
+            );
+        }
+
+        const toRemoveByBatch = new Map<string, number>();
+        for (const item of entry.items) {
+            toRemoveByBatch.set(
+                item.batchId,
+                (toRemoveByBatch.get(item.batchId) ?? 0) + item.quantity,
+            );
+        }
+        const batchIds = [...toRemoveByBatch.keys()];
+        const batchDocs = await transaction.getAll(
+            ...batchIds.map((id) => firestore.collection('batches').doc(id)),
+        );
+
+        const shortages: string[] = [];
+        batchDocs.forEach((doc, index) => {
+            const batchId = batchIds[index];
+            const needed = toRemoveByBatch.get(batchId)!;
+            const lot = entry.items.find((item) => item.batchId === batchId)!.lotNumber;
+            const available = doc.exists ? (doc.data()!.quantity as number) : 0;
+            if (available < needed) {
+                shortages.push(
+                    `lote ${lot}: la entrada sumó ${needed} y quedan ${Math.max(available, 0)}`,
+                );
+            }
+        });
+        if (shortages.length) {
+            throw badRequest(
+                'No se puede cancelar: ya salieron piezas de esta entrada ' +
+                `(${shortages.join('; ')}). Corrige las existencias con un conteo.`,
+            );
+        }
+
+        // Renglones que la entrada asentó en el libro de controlados (SPEC 61): se
+        // contra-asientan tal cual, aunque el producto haya cambiado de grupo. Una
+        // entrada anterior al libro de entradas no tiene renglones que cancelar.
+        const ledgerRows = await readEntryLedgerRowsInTransaction(transaction, entry.id);
+
+        // --- Escrituras ---------------------------------------------------------
+        batchDocs.forEach((doc, index) => {
+            transaction.update(doc.ref, {
+                quantity: FieldValue.increment(-toRemoveByBatch.get(batchIds[index])!),
+                updatedAt: timestamp,
+            });
+        });
+
+        const removedByProduct = new Map<string, number>();
+        for (const item of entry.items) {
+            removedByProduct.set(
+                item.productId,
+                (removedByProduct.get(item.productId) ?? 0) + item.quantity,
+            );
+            const movement: Omit<StockMovement, 'id'> = {
+                type: 'entry_cancel',
+                productId: item.productId,
+                batchId: item.batchId,
+                quantity: -item.quantity,
+                reason,
+                referenceId: entry.id,
+                userId: input.userId,
+                createdAt: timestamp,
+            };
+            transaction.set(firestore.collection('stockMovements').doc(), movement);
+        }
+        for (const [productId, removed] of removedByProduct) {
+            transaction.update(firestore.collection('products').doc(productId), {
+                totalStock: FieldValue.increment(-removed),
+                updatedAt: timestamp,
+            });
+        }
+
+        for (const row of ledgerRows) {
+            writeStockLedgerEntryInTransaction(transaction, {
+                type: 'entry_cancel',
+                productId: row.productId,
+                productName: row.productName,
+                controlledGroup: row.controlledGroup,
+                quantity: -row.quantity,
+                lotNumber: row.lotNumbers[0] ?? '',
+                batchId: row.batchId ?? '',
+                expiryDate: row.expiryDate ?? null,
+                supplierId: row.supplierId ?? null,
+                supplierName: row.supplierName ?? null,
+                invoiceId: row.invoiceId ?? null,
+                invoiceFolio: row.invoiceFolio ?? null,
+                entryId: entry.id,
+                userId: input.userId,
+                createdAt: timestamp,
+            });
+        }
+
+        const cancellation = {
+            cancelledAt: timestamp,
+            cancelledBy: input.userId,
+            cancelReason: reason,
+            updatedAt: timestamp,
+            updatedBy: input.userId,
+        };
+        transaction.update(entryRef, cancellation);
+
+        writeAuditInTransaction(transaction, {
+            action: 'inventory.entry_cancelled',
+            entity: 'inventoryEntry',
+            entityId: entry.id,
+            summary: `Entrada cancelada: ${reason}`,
+            userId: input.userId,
+            roleSlug: input.roleSlug ?? null,
+            metadata: {
+                invoiceId: entry.invoiceId ?? null,
+                supplierId: entry.supplierId,
+                items: entry.items.map((item) => ({
+                    productId: item.productId,
+                    batchId: item.batchId,
+                    lotNumber: item.lotNumber,
+                    quantity: item.quantity,
+                })),
+            },
+        });
+
+        return { ...entry, ...cancellation };
+    });
+
+    return enrichEntry(cancelled);
 };
 
 export const listMovements = async (filters: {

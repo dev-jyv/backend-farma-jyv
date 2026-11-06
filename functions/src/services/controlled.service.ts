@@ -2,6 +2,7 @@ import {
     ControlledGroup,
     ControlledLedgerEntry,
     ControlledLedgerType,
+    ControlledStockLedgerType,
     Product,
     SalePrescription,
 } from '../types';
@@ -158,6 +159,91 @@ export const writeLedgerEntryInTransaction = (
 };
 
 /**
+ * Grupo con el que un producto se asienta en el libro, o `null` si su grupo no
+ * lleva libro (o no tiene). Se decide con el grupo **vigente al movimiento**: un
+ * producto que pasa de libre a controlado después no se reescribe hacia atrás.
+ */
+export const ledgerGroupOf = (
+    product: Pick<Product, 'controlledGroup'> | null | undefined,
+): ControlledGroup | null => {
+    const rule = getControlledRule(product?.controlledGroup);
+    return rule?.requiresLedger ? rule.group : null;
+};
+
+/** Movimiento de inventario de un controlado (SPEC 61). */
+export interface StockLedgerWriteInput {
+    type: ControlledStockLedgerType;
+    productId: string;
+    productName: string;
+    controlledGroup: ControlledGroup;
+    /** Con signo: positiva en `entry`, negativa en las salidas y en `entry_cancel`. */
+    quantity: number;
+    lotNumber: string;
+    batchId: string;
+    /** Caducidad del lote, `YYYY-MM-DD`. */
+    expiryDate: string | null;
+    supplierId?: string | null;
+    supplierName?: string | null;
+    invoiceId?: string | null;
+    invoiceFolio?: string | null;
+    entryId?: string | null;
+    userId: string;
+    createdAt: FirebaseFirestore.Timestamp;
+}
+
+/**
+ * Asienta en el libro una entrada, su cancelación o una salida por merma o
+ * caducidad, **dentro de la transacción** que mueve el inventario (SPEC 61).
+ * Los campos de venta van vacíos: no hay receta ni cliente.
+ */
+export const writeStockLedgerEntryInTransaction = (
+    transaction: FirebaseFirestore.Transaction,
+    input: StockLedgerWriteInput,
+): void => {
+    const ref = db().collection(CONTROLLED_LEDGER_COLLECTION).doc();
+    transaction.set(ref, {
+        type: input.type,
+        saleId: null,
+        saleFolio: null,
+        referenceFolio: null,
+        productId: input.productId,
+        productName: input.productName,
+        controlledGroup: input.controlledGroup,
+        quantity: input.quantity,
+        lotNumbers: [input.lotNumber],
+        batchId: input.batchId,
+        expiryDate: input.expiryDate,
+        supplierId: input.supplierId ?? null,
+        supplierName: input.supplierName ?? null,
+        invoiceId: input.invoiceId ?? null,
+        invoiceFolio: input.invoiceFolio ?? null,
+        ...(input.entryId ? { entryId: input.entryId } : {}),
+        prescription: null,
+        prescriptionRetained: false,
+        customerName: null,
+        userId: input.userId,
+        createdAt: input.createdAt,
+    });
+};
+
+/**
+ * Renglones `entry` que asentó una entrada de inventario, para contra-asentarlos
+ * al cancelarla. Es una **lectura de la transacción**: va antes de cualquier
+ * escritura.
+ */
+export const readEntryLedgerRowsInTransaction = async (
+    transaction: FirebaseFirestore.Transaction,
+    entryId: string,
+): Promise<ControlledLedgerEntry[]> => {
+    const snapshot = await transaction.get(
+        db().collection(CONTROLLED_LEDGER_COLLECTION).where('entryId', '==', entryId),
+    );
+    return snapshot.docs
+        .map((doc) => ledgerRepo.mapLedgerEntry(doc.id, doc.data()))
+        .filter((row) => row.type === 'entry');
+};
+
+/**
  * La exportación entrega el periodo completo sin paginar: es lo que se imprime y
  * se firma en una visita de COFEPRIS. Como saca en un solo archivo todos los
  * nombres de paciente y cédulas del periodo, se limita a administrador y gerente
@@ -171,10 +257,14 @@ export const assertCanExportControlledLedger = (roleSlug: string): void => {
     }
 };
 
-const LEDGER_TYPE_LABELS: Record<ControlledLedgerType, string> = {
+export const LEDGER_TYPE_LABELS: Record<ControlledLedgerType, string> = {
     sale: 'Venta',
     void: 'Anulación',
     return: 'Devolución',
+    entry: 'Entrada',
+    entry_cancel: 'Cancelación de entrada',
+    exit_waste: 'Merma',
+    exit_expiry: 'Caducidad',
 };
 
 const CSV_HEADERS = [
@@ -192,6 +282,9 @@ const CSV_HEADERS = [
     'Receta retenida',
     'Cliente',
     'Usuario',
+    // SPEC 61: al final, para no mover las columnas de hojas que ya existen.
+    'Proveedor',
+    'Factura',
 ];
 
 export const exportControlledLedger = async (filters: {
@@ -225,6 +318,8 @@ export const exportControlledLedger = async (filters: {
         entry.prescriptionRetained ? 'Sí' : 'No',
         entry.customerName ?? '',
         entry.userId,
+        entry.supplierName ?? '',
+        entry.invoiceFolio ?? '',
     ]));
 
     const period = [filters.from, filters.to]

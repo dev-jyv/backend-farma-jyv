@@ -53,7 +53,8 @@ const stockDelta = (type: StockMovementType, quantity: number): number => {
     case 'entry':
     case 'return_in':
     case 'adjustment_count':
-        // `adjustment_count` ya viene con signo.
+    case 'entry_cancel':
+        // `adjustment_count` y `entry_cancel` (negativo) ya vienen con signo.
         return quantity;
     case 'sale_adjustment':
         // Venta: cantidad positiva descuenta; la anulación la guarda negativa.
@@ -557,11 +558,13 @@ export const getProductAnalytics = async (
 
     // El índice de entradas puede tardar en construirse tras un deploy: sin él
     // el análisis sigue (con el costo de ventas) en vez de fallar completo.
-    const entries = await entriesRepo.listRecentEntriesByProduct(productId, ENTRIES_LIMIT)
+    const entries = (await entriesRepo.listRecentEntriesByProduct(productId, ENTRIES_LIMIT)
         .catch(() => {
             unavailable.push('entries');
             return [];
-        });
+        }))
+        // Una entrada cancelada (SPEC 58) no fue una compra.
+        .filter((entry) => !entry.cancelledAt);
 
     const [sales, returns, movements, priceLogs, batches] = await Promise.all([
         salesRepo.listSalesByProductsBetween(

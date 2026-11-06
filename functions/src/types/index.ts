@@ -139,7 +139,12 @@ export type StockMovementType =
      * encontró más de lo registrado, negativa si encontró menos. No usar merma
      * (`exit_waste`) para descuadres: falsea el reporte de mermas.
      */
-    | 'adjustment_count';
+    | 'adjustment_count'
+    /**
+     * Contramovimiento de una entrada cancelada (SPEC 58). Cantidad **negativa**:
+     * las piezas que esa entrada había sumado al lote.
+     */
+    | 'entry_cancel';
 
 /** Acciones auditadas en `auditLogs`. Ver `services/audit.service.ts`. */
 export type AuditAction =
@@ -152,6 +157,11 @@ export type AuditAction =
      */
     | 'product.box_price_review'
     | 'product.deactivated'
+    /**
+     * Una entrada de la caja traía un producto nuevo que ya existía y se usó el
+     * existente (SPEC 60): los datos capturados en la caja se ignoraron.
+     */
+    | 'product.adopted_on_entry'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
@@ -226,6 +236,8 @@ export type AuditAction =
     /** Cierre o reapertura de periodos contables. */
     | 'accountingPeriod.closed'
     | 'inventory.count_adjusted'
+    /** Entrada de mercancía cancelada con contramovimiento (SPEC 58). */
+    | 'inventory.entry_cancelled'
     | 'role.created'
     | 'role.updated'
     | 'role.permissions_changed'
@@ -277,6 +289,7 @@ export type AuditEntity =
     | 'bankMovement'
     | 'accountingSettings'
     | 'inventoryCount'
+    | 'inventoryEntry'
     | 'role'
     | 'user'
     | 'medicalRecord'
@@ -318,6 +331,12 @@ export interface Category {
 export interface Product {
     id: string;
     name: string;
+    /**
+     * Nombre + concentración normalizados (SPEC 60, `utils/product-match.ts`). Único
+     * entre productos activos; ausente en productos anteriores al backfill, que se
+     * siguen comparando por nombre exacto.
+     */
+    nameKey?: string;
     sku: string;
     barcode?: string;
     activeIngredient?: string;
@@ -379,12 +398,31 @@ export interface SalePrescription {
     folio?: string;
 }
 
-/** Movimiento del libro de control de medicamentos controlados. */
-export type ControlledLedgerType = 'sale' | 'void' | 'return';
+/**
+ * Movimiento del libro de control de medicamentos controlados. Salidas por venta
+ * (`sale`, contra-asentada por `void`/`return`) y, desde SPEC 61, entradas de
+ * mercancía (`entry`, contra-asentada por `entry_cancel`) y salidas por merma o
+ * caducidad (`exit_waste`/`exit_expiry`).
+ */
+export type ControlledLedgerType =
+    | 'sale'
+    | 'void'
+    | 'return'
+    | 'entry'
+    | 'entry_cancel'
+    | 'exit_waste'
+    | 'exit_expiry';
+
+/** Movimientos del libro que no vienen de una venta (SPEC 61). */
+export type ControlledStockLedgerType = Extract<
+    ControlledLedgerType,
+    'entry' | 'entry_cancel' | 'exit_waste' | 'exit_expiry'
+>;
 
 export interface ControlledLedgerEntry {
     id: string;
     type: ControlledLedgerType;
+    /** Vacío (`''`) en los movimientos que no son de una venta (SPEC 61). */
     saleId: string;
     saleFolio: string;
     /** Folio de la devolución cuando `type` es `return`. */
@@ -392,7 +430,11 @@ export interface ControlledLedgerEntry {
     productId: string;
     productName: string;
     controlledGroup: ControlledGroup;
-    /** Con signo: negativa en `void` y `return` (el producto regresa). */
+    /**
+     * Con signo. Venta: positiva, y negativa en `void` y `return` (el producto
+     * regresa). Entrada: positiva, y negativa en `entry_cancel`. Merma y
+     * caducidad: negativas (SPEC 61).
+     */
     quantity: number;
     lotNumbers: string[];
     prescription: SalePrescription | null;
@@ -406,6 +448,17 @@ export interface ControlledLedgerEntry {
     createdAt: Timestamp;
     /** Hora del servidor al registrar el renglón; ausente en renglones anteriores. */
     recordedAt?: Timestamp;
+    /** Movimientos de inventario (SPEC 61); ausentes en los de venta. */
+    supplierId?: string | null;
+    supplierName?: string | null;
+    invoiceId?: string | null;
+    /** Folio de la factura del proveedor (`invoices.invoiceNumber`). */
+    invoiceFolio?: string | null;
+    batchId?: string;
+    /** Caducidad del lote, `YYYY-MM-DD`. */
+    expiryDate?: string | null;
+    /** Entrada de inventario que asentó o canceló el renglón. */
+    entryId?: string;
 }
 
 export interface SaleBilling {
@@ -700,6 +753,11 @@ export interface Batch {
     id: string;
     productId: string;
     lotNumber: string;
+    /**
+     * Lote en mayúsculas y sin espacios (SPEC 59): la llave con la que se reconoce
+     * el mismo lote escrito distinto. Ausente en lotes anteriores.
+     */
+    lotKey?: string;
     expiryDate: Timestamp;
     quantity: number;
     costPrice?: number;
@@ -902,6 +960,12 @@ export interface Invoice {
     outstanding?: boolean;
     supplierId: string;
     invoiceNumber: string;
+    /**
+     * Folio normalizado (SPEC 58): mayúsculas, sin espacios ni guiones y sin ceros
+     * a la izquierda en lo numérico. La unicidad por proveedor se valida sobre él.
+     * Ausente en facturas anteriores, que se siguen comparando por texto.
+     */
+    folioKey?: string;
     invoiceDate: Timestamp;
     /** Vencimiento pactado con el proveedor; ausente = sin plazo registrado. */
     dueDate?: Timestamp | null;
@@ -992,6 +1056,18 @@ export interface InventoryEntry {
     notes?: string;
     productIds?: string[];
     items: InventoryEntryItem[];
+    /**
+     * Llave con la que la caja registró la partida (SPEC 55). Un reintento solo
+     * reconoce como suya una entrada con su misma llave o sin llave.
+     */
+    idempotencyKey?: string;
+    /**
+     * Cancelación con contramovimiento (SPEC 58): las piezas se restaron de sus
+     * lotes con movimientos `entry_cancel`. La entrada no se borra.
+     */
+    cancelledAt?: Timestamp;
+    cancelledBy?: string;
+    cancelReason?: string;
     createdAt: Timestamp;
     createdBy: string;
     updatedAt: Timestamp;

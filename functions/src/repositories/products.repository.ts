@@ -1,9 +1,11 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { Product } from '../types';
-import { badRequest, conflict } from '../utils/errors';
+import { AppError, badRequest } from '../utils/errors';
 import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 import { db, now, toTimestamp } from '../utils/firestore';
 import { boxConfigProblem } from '../utils/box-sale';
+import { productNameKey } from '../utils/product-match';
+import { SyncErrorCode } from '../constants/sync-error-codes';
 
 const collection = () => db().collection('products');
 
@@ -16,17 +18,112 @@ const UNIQUE_FIELD_LABELS: Record<UniqueField, string> = {
     boxBarcode: 'código de barras de caja',
 };
 
+/**
+ * Código que lee la caja en `details.code` (SPEC 60). El SKU y el nombre tienen el
+ * suyo porque la caja decide distinto con cada uno; un código de barras repetido
+ * es un duplicado genérico.
+ */
+const DUPLICATE_SYNC_CODES: Record<UniqueField, SyncErrorCode> = {
+    sku: 'PRODUCT_SKU_TAKEN',
+    name: 'PRODUCT_NAME_TAKEN',
+    barcode: 'PRODUCT_DUPLICATE',
+    boxBarcode: 'PRODUCT_DUPLICATE',
+};
+
+/** Lo que la caja necesita del producto existente para decidir si es el mismo. */
+export interface ExistingProductSummary {
+    id: string;
+    name: string;
+    sku: string;
+    barcode: string | null;
+}
+
+export const summarizeExistingProduct = (product: Product): ExistingProductSummary => ({
+    id: product.id,
+    name: product.name,
+    sku: product.sku,
+    barcode: product.barcode ?? null,
+});
+
+/**
+ * 409 de producto duplicado (SPEC 60). El mensaje no cambia —una caja anterior
+ * lo sigue reconociendo por el texto—; lo nuevo va en `details`: el código y el
+ * producto existente, para que la caja lo consulte y decida si lo adopta.
+ */
+export const duplicateProductError = (
+    field: UniqueField,
+    existing: Product,
+    syncCode: SyncErrorCode = DUPLICATE_SYNC_CODES[field],
+    message = `Ya existe un producto con ese ${UNIQUE_FIELD_LABELS[field]}`,
+): AppError => new AppError(409, 'CONFLICT', message, {
+    syncCode,
+    details: { existing: summarizeExistingProduct(existing) },
+});
+
+type QueryReader = (query: FirebaseFirestore.Query) => Promise<FirebaseFirestore.QuerySnapshot>;
+
+const toProduct = (doc: FirebaseFirestore.QueryDocumentSnapshot): Product =>
+    ({ id: doc.id, ...doc.data() } as Product);
+
 const findDuplicate = async (
-    transaction: FirebaseFirestore.Transaction,
+    read: QueryReader,
     field: UniqueField,
     value: string,
+    excludeId?: string,
 ): Promise<Product | null> => {
-    const snapshot = await transaction.get(collection().where(field, '==', value).limit(1));
-    if (snapshot.empty) {
+    // `limit(2)`: en una edición el primero puede ser el propio producto.
+    const snapshot = await read(collection().where(field, '==', value).limit(2));
+    const doc = snapshot.docs.find((candidate) => candidate.id !== excludeId);
+    return doc ? toProduct(doc) : null;
+};
+
+/**
+ * Producto **activo** con el mismo `nameKey` (SPEC 60): nombre + concentración
+ * normalizados, así que "Paracetamol 500 mg" choca con "paracetamol  500MG" y no
+ * con "Paracetamol 1 g". Uno inactivo no choca.
+ *
+ * Mientras un producto no tenga `nameKey` (anterior al backfill), la comparación
+ * cae a su nombre exacto: se busca por `name` y se compara su clave calculada.
+ */
+const findNameKeyDuplicate = async (
+    read: QueryReader,
+    product: { name: string; concentration?: string | null },
+    excludeId?: string,
+): Promise<Product | null> => {
+    const nameKey = productNameKey(product.name, product.concentration);
+    if (!nameKey) {
         return null;
     }
-    const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() } as Product;
+    const [byKey, byName] = await Promise.all([
+        read(collection()
+            .where('nameKey', '==', nameKey)
+            .where('isActive', '==', true)
+            .limit(2)),
+        read(collection()
+            .where('name', '==', product.name)
+            .where('isActive', '==', true)
+            .limit(10)),
+    ]);
+    const keyed = byKey.docs.find((doc) => doc.id !== excludeId);
+    if (keyed) {
+        return toProduct(keyed);
+    }
+    const legacy = byName.docs.find((doc) => {
+        const data = doc.data();
+        return doc.id !== excludeId && !data.nameKey &&
+            productNameKey(data.name as string, data.concentration as string | undefined) ===
+                nameKey;
+    });
+    return legacy ? toProduct(legacy) : null;
+};
+
+type UniqueData = {
+    sku?: string;
+    /** Con `name` se revisa el `nameKey` contra los productos activos. */
+    name?: string;
+    concentration?: string | null;
+    barcode?: string;
+    boxBarcode?: string | null;
 };
 
 // Corre dentro de la misma transacción que la escritura para evitar que dos
@@ -38,29 +135,62 @@ const findDuplicate = async (
 // también contra los `boxBarcode` de los demás.
 const assertNoDuplicate = async (
     transaction: FirebaseFirestore.Transaction,
-    data: { sku?: string; name?: string; barcode?: string; boxBarcode?: string | null },
+    data: UniqueData,
+    excludeId?: string,
+): Promise<void> => assertNoDuplicateWith((query) => transaction.get(query), data, excludeId);
+
+const assertNoDuplicateWith = async (
+    read: QueryReader,
+    data: UniqueData,
     excludeId?: string,
 ): Promise<void> => {
-    const checks: Array<[UniqueField, UniqueField, string | null | undefined]> = [
-        ['sku', 'sku', data.sku],
-        ['name', 'name', data.name],
+    if (data.sku) {
+        const duplicate = await findDuplicate(read, 'sku', data.sku, excludeId);
+        if (duplicate) {
+            throw duplicateProductError('sku', duplicate);
+        }
+    }
+    if (data.name) {
+        await assertNameKeyFree(read, data as { name: string }, excludeId);
+    }
+
+    const codeChecks: Array<[UniqueField, UniqueField, string | null | undefined]> = [
         ['barcode', 'barcode', data.barcode],
         ['barcode', 'boxBarcode', data.barcode],
         ['boxBarcode', 'boxBarcode', data.boxBarcode],
         ['boxBarcode', 'barcode', data.boxBarcode],
         ['boxBarcode', 'sku', data.boxBarcode],
     ];
-
-    for (const [field, against, value] of checks) {
+    for (const [field, against, value] of codeChecks) {
         if (!value) {
             continue;
         }
-        const duplicate = await findDuplicate(transaction, against, value);
-        if (duplicate && duplicate.id !== excludeId) {
-            throw conflict(`Ya existe un producto con ese ${UNIQUE_FIELD_LABELS[field]}`);
+        const duplicate = await findDuplicate(read, against, value, excludeId);
+        if (duplicate) {
+            throw duplicateProductError(field, duplicate);
         }
     }
 };
+
+const assertNameKeyFree = async (
+    read: QueryReader,
+    product: { name: string; concentration?: string | null },
+    excludeId?: string,
+): Promise<void> => {
+    const duplicate = await findNameKeyDuplicate(read, product, excludeId);
+    if (duplicate) {
+        throw duplicateProductError('name', duplicate);
+    }
+};
+
+/**
+ * La misma revisión de unicidad, **fuera** de transacción. No sustituye a la de
+ * `createProduct` (que es la que cierra la carrera): sirve para rechazar una
+ * entrada con varios productos en línea antes de dar de alta el primero, y no
+ * dejar huérfanos cuando choca el segundo (SPEC 55).
+ */
+export const assertUniqueOutsideTransaction = (data: UniqueData): Promise<void> =>
+    assertNoDuplicateWith((query) => query.get(), data);
 
 /** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
 const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;
@@ -229,11 +359,20 @@ export const createProduct = async (
     data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Product> => db().runTransaction(async (transaction) => {
     assertBoxConfig(data);
-    await assertNoDuplicate(transaction, data);
+    // Un alta inactiva no compite por el nombre (SPEC 60): solo los activos chocan.
+    await assertNoDuplicate(transaction, {
+        ...data,
+        name: data.isActive === false ? undefined : data.name,
+    });
 
     const timestamp = now();
     const ref = collection().doc();
-    const payload = { ...data, createdAt: timestamp, updatedAt: timestamp };
+    const payload = {
+        ...data,
+        nameKey: productNameKey(data.name, data.concentration),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    };
     transaction.create(ref, payload);
     return { id: ref.id, ...payload };
 });
@@ -242,8 +381,6 @@ export const updateProduct = async (
     id: string,
     data: ProductPatch,
 ): Promise<Product> => db().runTransaction(async (transaction) => {
-    await assertNoDuplicate(transaction, data, id);
-
     const docRef = collection().doc(id);
     const snapshot = await transaction.get(docRef);
     if (!snapshot.exists) {
@@ -264,6 +401,26 @@ export const updateProduct = async (
         }
         merged[key] = value;
         write[key] = value;
+    }
+
+    // `nameKey` (SPEC 60) se calcula del documento resultante. Se revisa contra
+    // los activos solo si cambia el nombre o la concentración, o si el producto
+    // se reactiva: un cambio de precio no choca por un duplicado anterior.
+    const nameKey = productNameKey(merged.name as string, merged.concentration as string);
+    const isActive = merged.isActive !== false;
+    const competesForName = isActive && ('name' in write || 'concentration' in write ||
+        (write.isActive === true && snapshot.data()!.isActive === false));
+    await assertNoDuplicate(transaction, {
+        sku: data.sku,
+        barcode: data.barcode,
+        boxBarcode: data.boxBarcode,
+        ...(competesForName
+            ? { name: merged.name as string, concentration: merged.concentration as string }
+            : {}),
+    }, id);
+    if (merged.nameKey !== nameKey) {
+        merged.nameKey = nameKey;
+        write.nameKey = nameKey;
     }
 
     // La caja se valida contra el documento leído aquí, y solo cuando la

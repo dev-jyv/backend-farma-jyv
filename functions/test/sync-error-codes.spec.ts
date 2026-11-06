@@ -64,6 +64,9 @@ describe('catálogo de códigos de sincronización', () => {
             'BATCH_EXPIRED',
             'PRODUCT_NOT_FOUND',
             'PRODUCT_INACTIVE',
+            'PRODUCT_DUPLICATE',
+            'PRODUCT_SKU_TAKEN',
+            'PRODUCT_NAME_TAKEN',
             'SESSION_CLOSED',
             'SESSION_FORBIDDEN',
             'IDEMPOTENCY_CONFLICT',
@@ -71,6 +74,7 @@ describe('catálogo de códigos de sincronización', () => {
             'DEFERRED',
             'ENTRY_IN_PROGRESS',
             'ENTRY_AMBIGUOUS',
+            'ENTRY_POSSIBLE_DUPLICATE',
             'ALREADY_VOIDED',
             'HAS_RETURNS',
             'VOID_FORBIDDEN',
@@ -542,10 +546,11 @@ describe('createStockEntry: código de cada rechazo', () => {
     it('ENTRY_AMBIGUOUS: reserva vieja y ese lote con otra cantidad en la factura', async () => {
         const { entrada } = await entryFixtures();
         await reserve(entrada.idempotencyKey, new Date(Date.now() - 60 * 60 * 1000));
+        // Sin llave: una captura con su propia llave es otra partida (SPEC 55).
         await stockEntriesService.createStockEntry({
             ...entrada,
             quantity: 3,
-            idempotencyKey: unique('otra'),
+            idempotencyKey: undefined,
         });
 
         const error = await expectSyncCode(

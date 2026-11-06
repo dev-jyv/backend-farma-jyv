@@ -8,11 +8,17 @@ export interface AppErrorOptions {
     syncCode?: SyncErrorCode;
     /** Por default lo decide el código (o el status ≥ 500 si no hay código). */
     retryable?: boolean;
+    /**
+     * Datos de apoyo que viajan en `error.details` junto al código, p. ej. la
+     * entrada existente de un posible duplicado (SPEC 58).
+     */
+    details?: Record<string, unknown>;
 }
 
 export class AppError extends Error {
     public readonly syncCode?: SyncErrorCode;
     public readonly retryable: boolean;
+    public readonly details?: Record<string, unknown>;
 
     constructor(
         public readonly statusCode: number,
@@ -23,10 +29,20 @@ export class AppError extends Error {
         super(message);
         this.name = 'AppError';
         this.syncCode = options.syncCode;
+        this.details = options.details;
         this.retryable = options.retryable ??
             (options.syncCode ? isRetryableSyncErrorCode(options.syncCode) : statusCode >= 500);
     }
 }
+
+/**
+ * `true` solo para un rechazo de negocio (`AppError` < 500): el único error que
+ * garantiza que una operación idempotente no escribió nada y que su llave se
+ * puede liberar. Un 5xx o un error cualquiera (timeout, commit ambiguo) pudo
+ * haberla aplicado, así que la llave se conserva (SPEC 55).
+ */
+export const isReleasableError = (error: unknown): boolean =>
+    error instanceof AppError && error.statusCode < 500;
 
 const syncOptions = (syncCode?: SyncErrorCode): AppErrorOptions =>
     (syncCode ? { syncCode } : {});
@@ -64,7 +80,10 @@ export const withDefaultSyncCode = (error: unknown, syncCode: SyncErrorCode): un
     if (!(error instanceof AppError) || error.statusCode >= 500 || error.syncCode) {
         return error;
     }
-    const tagged = new AppError(error.statusCode, error.code, error.message, { syncCode });
+    const tagged = new AppError(error.statusCode, error.code, error.message, {
+        syncCode,
+        ...(error.details ? { details: error.details } : {}),
+    });
     tagged.stack = error.stack;
     return tagged;
 };

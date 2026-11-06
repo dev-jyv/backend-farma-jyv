@@ -21,6 +21,8 @@ const extractHttpExceptionMessage = (error: HttpException): string => {
 interface SyncErrorDetails {
     code: SyncErrorCode;
     retryable: boolean;
+    /** Datos de apoyo del rechazo (`AppError.details`), p. ej. la entrada existente. */
+    [extra: string]: unknown;
 }
 
 /** Lo que no se pudo decidir (≥ 500) se reintenta: no fue un rechazo. */
@@ -30,7 +32,9 @@ const appErrorDetails = (error: AppError): SyncErrorDetails | null => {
     if (error.statusCode >= 500) {
         return INTERNAL_DETAILS;
     }
-    return error.syncCode ? { code: error.syncCode, retryable: error.retryable } : null;
+    return error.syncCode
+        ? { ...error.details, code: error.syncCode, retryable: error.retryable }
+        : null;
 };
 
 /** `authUser` lo cuelga `AuthGuard`; en una ruta pública no existe. */

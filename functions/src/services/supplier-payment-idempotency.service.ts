@@ -1,5 +1,5 @@
 import { InvoiceWithDetails, SupplierPayment } from '../types';
-import { conflict } from '../utils/errors';
+import { conflict, isReleasableError } from '../utils/errors';
 import { db } from '../utils/firestore';
 import * as invoicesRepo from '../repositories/invoices.repository';
 import * as invoicesService from './invoices.service';
@@ -29,9 +29,10 @@ export const runIdempotentSupplierPayment = async (input: {
     invoiceId: string;
     key?: string;
     /**
-     * Incluye la validación de periodo y la transacción del abono. Si lanza, no
-     * quedó nada escrito (el abono es una sola transacción), así que la llave se
-     * libera y el mismo intento corregido puede reutilizarla.
+     * Incluye la validación de periodo y la transacción del abono. Si lanza un
+     * rechazo de negocio (`AppError` < 500), no quedó nada escrito (el abono es
+     * una sola transacción), así que la llave se libera y el mismo intento
+     * corregido puede reutilizarla. Ante cualquier otro error se conserva.
      */
     run: () => Promise<SupplierPaymentResult>;
 }): Promise<SupplierPaymentResult> => {
@@ -79,7 +80,13 @@ export const runIdempotentSupplierPayment = async (input: {
         await ref.set({ paymentId: result.payment.id }, { merge: true });
         return result;
     } catch (error) {
-        await ref.delete().catch(() => undefined);
+        // Solo un rechazo de negocio (4xx) garantiza que no se registró el abono.
+        // Un 5xx o un error cualquiera (timeout tras el commit, fallo al cerrar la
+        // llave) pudo haberlo registrado: la reserva se queda y el reintento recibe
+        // el 409 de "quedó a medias" en vez de bajar el saldo otra vez (SPEC 55).
+        if (isReleasableError(error)) {
+            await ref.delete().catch(() => undefined);
+        }
         throw error;
     }
 };

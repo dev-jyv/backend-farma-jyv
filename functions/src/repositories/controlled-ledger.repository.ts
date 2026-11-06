@@ -11,8 +11,10 @@ export const mapLedgerEntry = (
 ): ControlledLedgerEntry => ({
     id,
     type: data.type as ControlledLedgerEntry['type'],
-    saleId: data.saleId as string,
-    saleFolio: data.saleFolio as string,
+    // Los movimientos de inventario (SPEC 61) no tienen venta: `null` en el
+    // documento, `''` hacia afuera para no romper a quien lee un texto.
+    saleId: (data.saleId as string | null) ?? '',
+    saleFolio: (data.saleFolio as string | null) ?? '',
     referenceFolio: (data.referenceFolio as string | null) ?? null,
     productId: data.productId as string,
     productName: data.productName as string,
@@ -24,7 +26,25 @@ export const mapLedgerEntry = (
     customerName: (data.customerName as string | null) ?? null,
     userId: data.userId as string,
     createdAt: data.createdAt as ControlledLedgerEntry['createdAt'],
+    ...pickStockFields(data),
 });
+
+const STOCK_FIELDS = [
+    'supplierId', 'supplierName', 'invoiceId', 'invoiceFolio', 'batchId', 'expiryDate', 'entryId',
+] as const;
+
+/** Campos de los movimientos de inventario (SPEC 61), solo si el renglón los trae. */
+const pickStockFields = (
+    data: FirebaseFirestore.DocumentData,
+): Partial<Pick<ControlledLedgerEntry, typeof STOCK_FIELDS[number]>> => {
+    const picked: Record<string, unknown> = {};
+    for (const field of STOCK_FIELDS) {
+        if (data[field] !== undefined) {
+            picked[field] = data[field];
+        }
+    }
+    return picked;
+};
 
 export const listLedgerEntries = async (filters: {
     saleId?: string;
