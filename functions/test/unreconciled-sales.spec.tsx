@@ -8,6 +8,7 @@ import * as cashSessionsRepo from '../src/repositories/cash-sessions.repository'
 import * as usersRepo from '../src/repositories/users.repository';
 import * as productsService from '../src/services/products.service';
 import * as unreconciledService from '../src/services/unreconciled-sales.service';
+import * as salesService from '../src/services/sales.service';
 import { buildDailyReport } from '../src/services/sales-reports.service';
 import { sendReportEmail } from '../src/services/email.service';
 import { SalesReportEmail } from '../src/emails/sales-report.email';
@@ -480,6 +481,88 @@ describe('resolver: registrar como venta (SPEC 53)', () => {
         const doc = await db().collection('unreconciledSales').doc(pendiente.id).get();
         expect(doc.get('resolvedAt')).toBeNull();
         expect(await auditorias(pendiente.id, 'sale.unreconciled_resolved')).toHaveLength(0);
+    });
+
+    /**
+     * Caja real, 06/11: el turno del 05/11 13:56 se creó **y cerró** en el
+     * servidor al sincronizar al día siguiente (el POS no manda su hora de
+     * apertura). Sus 21 ventas tenían `soldAt` anterior a ese `openedAt`, se
+     * tomaban como "antes de la apertura", la fecha de negocio pasaba a ser la de
+     * recepción —posterior al cierre— y "Registrar" las rechazaba otra vez con
+     * "El turno de caja ya está cerrado".
+     */
+    describe('turno creado en el servidor después de la venta', () => {
+        const turnoCreadoTarde = async () => {
+            const turno = await abrirTurno();
+            // Abierto y cerrado en el mismo instante, como lo deja el POS.
+            await db().collection('cashSessions').doc(turno.id)
+                .update({ closedAt: turno.openedAt });
+            return turno;
+        };
+        const ayer = () => new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+
+        it('Registrar respeta la hora de cobro y la mete al turno como lateSync', async () => {
+            const product = await crearProducto();
+            const turno = await turnoCreadoTarde();
+            const soldAt = ayer();
+            const pendiente = await alta({
+                cashSessionId: turno.id,
+                payload: payloadDeVenta(product.id, { cashSessionId: turno.id, soldAt }),
+            });
+
+            const { sale } = await unreconciledService.resolveUnreconciledSale(
+                pendiente.id, { action: 'register' }, GERENTE,
+            );
+
+            expect(sale?.cashSessionId).toBe(turno.id);
+            expect(sale?.lateSync).toBe(true);
+            expect(sale?.businessAt?.toDate().toISOString()).toBe(soldAt);
+            expect((await productsRepo.getProductById(product.id))?.totalStock).toBe(8);
+
+            const [audit] = await auditorias(pendiente.id, 'sale.unreconciled_resolved');
+            expect(audit.get('metadata')).toMatchObject({ saleBusinessAt: soldAt, lateSync: true });
+            expect(await auditorias(sale!.id, 'sale.sold_at_untrusted')).toHaveLength(0);
+        });
+
+        it('sin pasar por Registrar, la misma venta offline sigue rechazada', async () => {
+            const product = await crearProducto();
+            const turno = await turnoCreadoTarde();
+
+            await expectAppError(
+                salesService.createSale({
+                    ...payloadDeVenta(product.id),
+                    cashSessionId: turno.id,
+                    soldAt: ayer(),
+                    cashierId: CAJERO,
+                    roleSlug: 'cashier',
+                    offline: true,
+                } as Parameters<typeof salesService.createSale>[0]),
+                400,
+                'El turno de caja ya está cerrado',
+            );
+        });
+
+        it('una hora de cobro posterior al cierre sigue rechazada aunque se autorice', async () => {
+            const product = await crearProducto();
+            const turno = await turnoCreadoTarde();
+            const pendiente = await alta({
+                cashSessionId: turno.id,
+                payload: payloadDeVenta(product.id, {
+                    cashSessionId: turno.id,
+                    soldAt: new Date(Date.now() + 60 * 1000).toISOString(),
+                }),
+            });
+
+            await expectAppError(
+                unreconciledService.resolveUnreconciledSale(
+                    pendiente.id, { action: 'register' }, GERENTE,
+                ),
+                400,
+                'El turno de caja ya está cerrado',
+            );
+            const doc = await db().collection('unreconciledSales').doc(pendiente.id).get();
+            expect(doc.get('resolvedAt')).toBeNull();
+        });
     });
 
     it('un payload irrecuperable responde 400 con el motivo', async () => {
