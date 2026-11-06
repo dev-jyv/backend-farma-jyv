@@ -107,6 +107,8 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
             (data.createdAt as Sale['createdAt']),
         soldAt: (data.soldAt as Sale['soldAt']) ?? null,
         soldAtTrusted: data.soldAtTrusted === true,
+        // Desfase del reloj de la caja (SPEC 65): solo si la venta lo trae.
+        ...(typeof data.clockSkewMs === 'number' ? { clockSkewMs: data.clockSkewMs } : {}),
     };
 };
 

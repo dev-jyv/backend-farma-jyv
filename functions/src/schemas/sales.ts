@@ -185,6 +185,12 @@ export const createSaleSchema = z.object({
      * alcance venta dentro de `saleDiscountAmount`.
      */
     couponCode: nullable(couponCodeSchema),
+    /**
+     * Desfase del reloj de la caja contra el servidor al cobrar, en ms
+     * (`servidor − local`, SPEC 65). Informativo: se guarda en la venta tal cual
+     * (redondeado) y nunca la rechaza; `soldAt` ya viene corregido.
+     */
+    clockSkewMs: nullable(z.number().finite()),
 }).superRefine((data, ctx) => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&

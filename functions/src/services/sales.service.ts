@@ -848,6 +848,8 @@ const applySale = async (input: {
     soldAt?: string;
     /** Código de cupón ya normalizado (mayúsculas); uno por venta (SPEC 47). */
     couponCode?: string;
+    /** Desfase del reloj de la caja (ms, SPEC 65); informativo, no entra a la huella. */
+    clockSkewMs?: number;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -1769,6 +1771,10 @@ const applySale = async (input: {
             businessAt,
             soldAt: hasSoldAt ? Timestamp.fromMillis(soldAtMs) : null,
             soldAtTrusted: trustedSoldAt,
+            // Desfase del reloj de la caja al cobrar (SPEC 65): dato informativo.
+            ...(input.clockSkewMs !== undefined && Number.isFinite(input.clockSkewMs)
+                ? { clockSkewMs: Math.round(input.clockSkewMs) }
+                : {}),
         };
 
         if (idempotencyRef) {

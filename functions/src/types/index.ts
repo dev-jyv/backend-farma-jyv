@@ -1353,6 +1353,11 @@ export interface Sale {
     soldAt?: Timestamp | null;
     /** `true` si `soldAt` se usó como fecha de negocio. */
     soldAtTrusted?: boolean;
+    /**
+     * Desfase del reloj de la caja contra el servidor al cobrar, en ms
+     * (`servidor − local`, SPEC 65). Informativo; ausente si la caja no lo midió.
+     */
+    clockSkewMs?: number;
 }
 
 export interface SaleStockReviewItem {
