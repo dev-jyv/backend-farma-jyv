@@ -4,6 +4,18 @@ import { fromDate } from '../utils/firestore';
 import { addDaysYmd, zonedStartOfDayMs } from '../utils/timezone';
 import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 import { DailyStats } from '../repositories/daily-stats.repository';
+import {
+    BUSINESS_DATE_EARLY_MARGIN_MS,
+    BUSINESS_DATE_LATE_MARGIN_MS,
+} from '../repositories/sales.repository';
+
+/**
+ * Día de la venta en `dailyStats`: su fecha de negocio (SPEC 51), igual que la
+ * transacción que la suma. Las ventas anteriores no la traen y cuentan por
+ * `createdAt`.
+ */
+const businessDayOf = (data: FirebaseFirestore.DocumentData): string =>
+    dailyStatsRepo.statsDayOf((data.businessAt ?? data.createdAt).toDate());
 
 /**
  * Recalcula `dailyStats` desde las ventas. Es la fuente de verdad contra la que
@@ -13,7 +25,7 @@ import { DailyStats } from '../repositories/daily-stats.repository';
 export const computeDailyStatsFromSales = async (): Promise<Map<string, DailyStats>> => {
     const snapshot = await db()
         .collection('sales')
-        .select('createdAt', 'total', 'voidedAt')
+        .select('createdAt', 'businessAt', 'total', 'voidedAt')
         .get();
 
     const days = new Map<string, DailyStats>();
@@ -22,7 +34,7 @@ export const computeDailyStatsFromSales = async (): Promise<Map<string, DailySta
         if (data.voidedAt) {
             continue;
         }
-        const ymd = dailyStatsRepo.statsDayOf(data.createdAt.toDate());
+        const ymd = businessDayOf(data);
         const day = days.get(ymd) ?? { ymd, salesTotalCents: 0, salesCount: 0 };
         day.salesTotalCents += toCents(Number(data.total ?? 0));
         day.salesCount += 1;
@@ -78,19 +90,28 @@ const sumSalesByDay = async (
     fromYmd: string,
     toYmd: string,
 ): Promise<Map<string, DailyStats>> => {
+    // El rango de `createdAt` se extiende con los márgenes de la fecha de negocio:
+    // una venta offline del periodo puede llegar hasta una semana después
+    // (SPEC 51). El día exacto lo decide su fecha de negocio.
     const snapshot = await db()
         .collection('sales')
         .where(
             'createdAt',
             '>=',
-            fromDate(new Date(zonedStartOfDayMs(fromYmd, dailyStatsRepo.DAILY_STATS_TIME_ZONE))),
+            fromDate(new Date(
+                zonedStartOfDayMs(fromYmd, dailyStatsRepo.DAILY_STATS_TIME_ZONE) -
+                    BUSINESS_DATE_EARLY_MARGIN_MS,
+            )),
         )
         .where(
             'createdAt',
             '<',
-            fromDate(new Date(zonedStartOfDayMs(toYmd, dailyStatsRepo.DAILY_STATS_TIME_ZONE))),
+            fromDate(new Date(
+                zonedStartOfDayMs(toYmd, dailyStatsRepo.DAILY_STATS_TIME_ZONE) +
+                    BUSINESS_DATE_LATE_MARGIN_MS,
+            )),
         )
-        .select('createdAt', 'total', 'voidedAt')
+        .select('createdAt', 'businessAt', 'total', 'voidedAt')
         .get();
     const days = new Map<string, DailyStats>();
     for (const doc of snapshot.docs) {
@@ -98,7 +119,10 @@ const sumSalesByDay = async (
         if (data.voidedAt) {
             continue;
         }
-        const ymd = dailyStatsRepo.statsDayOf(data.createdAt.toDate());
+        const ymd = businessDayOf(data);
+        if (ymd < fromYmd || ymd >= toYmd) {
+            continue;
+        }
         const day = days.get(ymd) ?? { ymd, salesTotalCents: 0, salesCount: 0 };
         day.salesTotalCents += toCents(Number(data.total ?? 0));
         day.salesCount += 1;

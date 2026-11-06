@@ -6,6 +6,7 @@ import {
     ServiceType,
     isSaleProductItem,
     isSaleServiceItem,
+    saleBusinessAt,
 } from '../types';
 import { fromCents, toCents } from '../utils/taxes';
 import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
@@ -44,7 +45,9 @@ const loadPeriod = async (
     filters: PeriodFilters,
 ): Promise<{ sales: Sale[]; returns: SaleReturn[] }> => {
     const [{ items: sales }, returns] = await Promise.all([
-        salesRepo.listSales({ from: filters.from, to: filters.to }),
+        // Periodo por fecha de negocio (SPEC 51): la venta offline cuenta el día
+        // en que se cobró.
+        salesRepo.listSales({ from: filters.from, to: filters.to, byBusinessDate: true }),
         returnsRepo.listSaleReturns({ from: filters.from, to: filters.to }),
     ]);
     return { sales, returns };
@@ -150,7 +153,7 @@ export const getSalesSummary = async (
         method.cents += toCents(sale.total);
         byMethod.set(sale.paymentMethod, method);
 
-        const date = getZonedYmd(sale.createdAt.toMillis(), APP_TIME_ZONE);
+        const date = getZonedYmd(saleBusinessAt(sale).toMillis(), APP_TIME_ZONE);
         const day = byDay.get(date) ?? { salesCount: 0, cents: 0 };
         day.salesCount += 1;
         day.cents += toCents(sale.total);
@@ -466,7 +469,12 @@ export const getSalesByCashier = async (
 ): Promise<CashierReport> => {
     const [{ items: sales }, returns] = await Promise.all([
         // Se incluyen anuladas para poder contarlas por cajero (señal de control).
-        salesRepo.listSales({ from: filters.from, to: filters.to, includeVoided: true }),
+        salesRepo.listSales({
+            from: filters.from,
+            to: filters.to,
+            includeVoided: true,
+            byBusinessDate: true,
+        }),
         returnsRepo.listSaleReturns({ from: filters.from, to: filters.to }),
     ]);
 
@@ -609,7 +617,11 @@ const serviceNetCents = (item: SaleServiceItem): number =>
  * `listSales` descarta las ventas con `voidedAt` salvo que se pida lo contrario.
  */
 const loadPeriodSales = async (filters: PeriodFilters): Promise<Sale[]> => {
-    const { items } = await salesRepo.listSales({ from: filters.from, to: filters.to });
+    const { items } = await salesRepo.listSales({
+        from: filters.from,
+        to: filters.to,
+        byBusinessDate: true,
+    });
     return items;
 };
 
@@ -713,6 +725,7 @@ export const getCommissionsByProvider = async (
             providerId: filters.providerId,
             from: filters.from,
             to: filters.to,
+            byBusinessDate: true,
         })
         : await loadPeriodSales(filters);
 

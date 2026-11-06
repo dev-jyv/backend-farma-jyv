@@ -160,6 +160,23 @@ export type AuditAction =
     | 'sale.promotion_out_of_window'
     /** Venta offline aceptada con un cupón vencido, agotado o desconocido; pide revisión. */
     | 'sale.coupon_review'
+    /**
+     * `soldAt` de una venta offline descartado por anterior a la apertura del
+     * turno o por tener más de 7 días (SPEC 51): la venta queda con la fecha de
+     * recepción.
+     */
+    | 'sale.sold_at_untrusted'
+    /**
+     * Venta de controlados que llegó en un mes posterior al de su cobro (SPEC 51):
+     * el libro del mes del cobro cambió y quizá haya que reexportarlo.
+     */
+    | 'sale.late_ledger_entry'
+    /** Venta offline registrada con faltante de stock (SPEC 52); pide revisión. */
+    | 'sale.stock_shortfall'
+    /** Venta offline registrada con productos o servicios inactivos (SPEC 52). */
+    | 'sale.catalog_review'
+    /** Venta offline registrada en un turno ya cerrado (SPEC 52); el turno pide ajuste. */
+    | 'sale.late_sync'
     | 'sale.returned'
     /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
     | 'pointOrder.refunded'
@@ -370,7 +387,13 @@ export interface ControlledLedgerEntry {
     prescriptionRetained: boolean;
     customerName: string | null;
     userId: string;
+    /**
+     * Fecha del hecho. En una venta es su fecha de negocio (`Sale.businessAt`,
+     * SPEC 51): la del cobro offline confiable, no la de llegada al servidor.
+     */
     createdAt: Timestamp;
+    /** Hora del servidor al registrar el renglón; ausente en renglones anteriores. */
+    recordedAt?: Timestamp;
 }
 
 export interface SaleBilling {
@@ -687,7 +710,10 @@ export interface StockMovement {
     reason?: string;
     referenceId?: string;
     userId: string;
+    /** Fecha del hecho; en la salida de una venta es `Sale.businessAt` (SPEC 51). */
     createdAt: Timestamp;
+    /** Hora del servidor al registrar el movimiento; ausente en los anteriores. */
+    recordedAt?: Timestamp;
 }
 
 export interface StockMovementWithDetails extends StockMovement {
@@ -1047,6 +1073,12 @@ export interface SaleProductItem extends SaleItemCommon {
         quantity: number;
     }>;
     /**
+     * Piezas cobradas en una venta offline que el servidor no tenía en ningún
+     * lote vendible (SPEC 52). `batchAllocations` suma `quantity − stockShortfall`;
+     * ausente cuando se asignó todo.
+     */
+    stockShortfall?: number;
+    /**
      * Partida vendida por caja completa (SPEC 46). `quantity` sigue en **piezas**
      * (`boxes × piecesPerBox`) y `unitPrice` es el precio efectivo por pieza
      * (`boxPrice / piecesPerBox`, sin redondear), así `unitPrice × quantity`
@@ -1246,6 +1278,18 @@ export interface Sale {
      * hora del cobro, sin usos disponibles, o que el servidor no conoce.
      */
     couponReview?: SaleCouponReview;
+    /**
+     * Faltante de stock de una venta offline (SPEC 52): se registró con lo que
+     * había y el resto queda medido por partida. Ausente si no faltó nada.
+     */
+    stockReview?: SaleStockReview;
+    /** Venta offline con productos o servicios inactivos (SPEC 52). */
+    catalogReview?: SaleCatalogReview;
+    /**
+     * Venta offline registrada en un turno que ya estaba cerrado (SPEC 52): su
+     * efectivo no está en el corte congelado, va en `CashSession.lateSales`.
+     */
+    lateSync?: true;
     paymentMethod: PaymentMethod;
     amountReceived: number | null;
     change: number | null;
@@ -1296,8 +1340,51 @@ export interface Sale {
     invoiceStatus: 'pending' | null;
     voidedAt: Timestamp | null;
     voidedBy: string | null;
+    /** Fecha de **recepción** en el servidor. */
     createdAt: Timestamp;
+    /**
+     * Fecha de negocio (SPEC 51): el `soldAt` de una venta offline cuando es
+     * confiable; si no, `createdAt`. Es la que usan reportes de periodo,
+     * `dailyStats`, el libro de controlados y FEFO. Las ventas anteriores no la
+     * traen: léela con `saleBusinessAt(sale)`.
+     */
+    businessAt?: Timestamp;
+    /** Hora del cobro que reportó la caja (solo offline); `null` si no vino. */
+    soldAt?: Timestamp | null;
+    /** `true` si `soldAt` se usó como fecha de negocio. */
+    soldAtTrusted?: boolean;
 }
+
+export interface SaleStockReviewItem {
+    productId: string;
+    /** Piezas cobradas. */
+    requested: number;
+    /** Piezas que sí salieron de lotes. */
+    allocated: number;
+    shortfall: number;
+}
+
+export interface SaleStockReview {
+    items: SaleStockReviewItem[];
+}
+
+export interface SaleCatalogReview {
+    /** Ids de productos y servicios que estaban inactivos al registrar. */
+    inactive: string[];
+}
+
+/** Marcas de revisión de una venta offline (SPEC 52), para `GET /sales?review=`. */
+export type SaleReviewKind = 'stock' | 'catalog' | 'late';
+
+export const SALE_REVIEW_FILTERS: Record<SaleReviewKind, (sale: Sale) => boolean> = {
+    stock: (sale) => Boolean(sale.stockReview?.items.length),
+    catalog: (sale) => Boolean(sale.catalogReview?.inactive.length),
+    late: (sale) => sale.lateSync === true,
+};
+
+/** Fecha de negocio de la venta, con la de recepción para las anteriores a SPEC 51. */
+export const saleBusinessAt = (sale: Pick<Sale, 'createdAt' | 'businessAt'>): Timestamp =>
+    sale.businessAt ?? sale.createdAt;
 
 export type RefundMethod = 'cash' | 'card' | 'transfer';
 
@@ -1436,6 +1523,12 @@ export interface CashSession {
      * sin cajero presente.
      */
     autoClosedByExpiry?: boolean;
+    /**
+     * Ventas offline que llegaron con el turno ya cerrado (SPEC 52). El corte
+     * congelado no las incluye: `cashTotal` es el efectivo que entró al cajón y
+     * no está en `expectedCashAmount`.
+     */
+    lateSales?: { count: number; cashTotal: number };
 }
 
 /**

@@ -1,7 +1,7 @@
 import * as returnsRepo from '../../../repositories/sale-returns.repository';
 import * as cashSessionsRepo from '../../../repositories/cash-sessions.repository';
 import * as salesRepo from '../../../repositories/sales.repository';
-import { RefundMethod } from '../../../types';
+import { RefundMethod, saleBusinessAt } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { fromCents, toCents } from '../../../utils/taxes';
 import { getZonedYmd } from '../../../utils/timezone';
@@ -47,7 +47,11 @@ export const ventas: ReportDefinition = {
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const scope = query.scope ?? 'financial';
-        const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
+        const { items: sales } = await salesRepo.listSales({
+            from: range.from,
+            to: range.to,
+            byBusinessDate: true,
+        });
         const names = await resolveUserNames(sales.map((sale) => sale.cashierId));
         return {
             subtitle: `${SCOPE_LABELS[scope]} · ${range.label}`,
@@ -247,7 +251,9 @@ export const impuestos: ReportDefinition = {
     load: async ({ query, now }) => {
         const range = resolveReportPeriod(query, now, getMaxReportSpanDays('financial'));
         const [{ items: sales }, returns] = await Promise.all([
-            salesRepo.listSales({ from: range.from, to: range.to }),
+            // Por fecha de negocio (SPEC 51): la venta del 31 que sincroniza el 1
+            // declara su IVA en el mes del 31.
+            salesRepo.listSales({ from: range.from, to: range.to, byBusinessDate: true }),
             returnsRepo.listSaleReturns({ from: range.from, to: range.to }),
         ]);
         interface Day { sales: number; base: number; ieps: number; iva: number; total: number }
@@ -260,7 +266,7 @@ export const impuestos: ReportDefinition = {
         };
         let withoutBreakdown = 0;
         for (const sale of sales) {
-            const day = dayOf(sale.createdAt.toMillis());
+            const day = dayOf(saleBusinessAt(sale).toMillis());
             day.sales += 1;
             day.total += toCents(sale.total);
             if (!sale.taxSummary) {

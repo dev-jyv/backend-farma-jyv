@@ -173,9 +173,10 @@ export const createSaleSchema = z.object({
     prescriptionRetained: nullable(z.boolean()),
     billing: nullable(saleBillingSchema),
     /**
-     * Hora local del cobro según la caja. Solo la usa `/sales/bulk` para decidir
-     * si una promoción estaba vigente cuando se cobró sin red; no es la fecha de
-     * la venta (`createdAt` sigue siendo la del servidor).
+     * Hora local del cobro según la caja. Solo cuenta en `/sales/bulk`: si es
+     * creíble es la fecha de negocio de la venta (`businessAt`, SPEC 51) y la hora
+     * a la que se mide la vigencia de promociones y cupones. `createdAt` sigue
+     * siendo la de recepción en el servidor.
      */
     soldAt: nullable(parseableDate),
     /**
@@ -408,6 +409,11 @@ export const listSalesQuerySchema = z.object({
         .transform((value) => (value === undefined ? undefined : value === 'true')),
     /** Forma de pago (SPEC 19): se filtra en la consulta, no en memoria. */
     paymentMethod: z.enum(['cash', 'card', 'transfer', 'mixed']).optional(),
+    /**
+     * Ventas offline marcadas para revisión (SPEC 52): faltante de stock,
+     * catálogo inactivo o cobradas con el turno ya cerrado.
+     */
+    review: z.enum(['stock', 'catalog', 'late']).optional(),
     ...paginationFields,
     ...cursorField,
 });

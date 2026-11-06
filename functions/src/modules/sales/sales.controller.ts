@@ -22,6 +22,7 @@ import {
     listUnreconciledSalesQuerySchema,
 } from '../../schemas';
 import * as salesService from '../../services/sales.service';
+import { SaleResponse, toSaleResponse } from '../../utils/sale-response';
 import * as receiptsService from '../../services/receipts.service';
 import * as unreconciledSalesService from '../../services/unreconciled-sales.service';
 import { badRequest, describeSyncError } from '../../utils/errors';
@@ -63,7 +64,7 @@ const bulkLogger = new Logger('SalesBulk');
 export const SALES_BULK_BUDGET_MS = 40_000;
 
 type BulkSaleResult =
-    | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
+    | { ok: true; sale: SaleResponse }
     | { ok: false; error: string; code: SyncErrorCode; retryable: boolean };
 
 const assertIdempotencyKey = (key: string | undefined, userId: string): void => {
@@ -107,7 +108,7 @@ export class SalesController {
             cashierId: user.uid,
             roleSlug: user.role.slug,
         });
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
 
     /**
@@ -174,7 +175,7 @@ export class SalesController {
                     roleSlug: user.role.slug,
                     offline: true,
                 });
-                results.push({ ok: true, sale });
+                results.push({ ok: true, sale: toSaleResponse(sale) });
             } catch (error) {
                 // Contrato de SPEC 49: la caja decide por `code` y `retryable`, no por
                 // el texto. Lo que no es un rechazo de negocio (un `ABORTED` de
@@ -255,6 +256,7 @@ export class SalesController {
             includeVoided: query.includeVoided,
             search: query.search,
             promotionReview: query.promotionReview,
+            review: query.review,
             paymentMethod: query.paymentMethod,
             after: query.after,
             page: query.page ? Number(query.page) : undefined,
@@ -262,7 +264,7 @@ export class SalesController {
             requesterId: user.uid,
             requesterRoleSlug: user.role.slug,
         });
-        return { data: result.items, meta: result.meta };
+        return { data: result.items.map(toSaleResponse), meta: result.meta };
     }
 
     @Get(':id')
@@ -273,7 +275,7 @@ export class SalesController {
     ) {
         const sale = await salesService.getSale(params.id);
         await salesService.assertCanReadSale(sale, user.uid, user.role.slug);
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
 
     /** Ticket imprimible: JSON estructurado + HTML para rollo térmico 58/80mm. */
@@ -308,6 +310,6 @@ export class SalesController {
     ) {
         salesService.assertCanVoidSale(user);
         const sale = await salesService.voidSale(params.id, user.uid, user.role.slug, body);
-        return { data: sale };
+        return { data: toSaleResponse(sale) };
     }
 }

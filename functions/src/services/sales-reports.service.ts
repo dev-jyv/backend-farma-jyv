@@ -5,6 +5,8 @@ import {
     Sale,
     isSaleProductItem,
     isSaleServiceItem,
+    saleBusinessAt,
+    SALE_REVIEW_FILTERS,
 } from '../types';
 import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORY_ORDER } from '../constants/expenses';
 import { fromCents, toCents } from '../utils/taxes';
@@ -136,6 +138,17 @@ export interface ReportPromotionReview {
     folios: string[];
 }
 
+/**
+ * Ventas offline registradas con marca de revisión (SPEC 52): con faltante de
+ * stock, con catálogo inactivo o cobradas con el turno ya cerrado. Se aceptaron
+ * porque el cliente ya pagó; el correo da el conteo y los folios de cada una.
+ */
+export interface ReportSaleReview {
+    stock: ReportPromotionReview;
+    catalog: ReportPromotionReview;
+    late: ReportPromotionReview;
+}
+
 export interface DailySalesReport {
     kind: 'daily';
     title: string;
@@ -153,6 +166,7 @@ export interface DailySalesReport {
     sales: ReportSaleRow[];
     topProducts: ReportTopProduct[];
     promotionReview: ReportPromotionReview;
+    saleReview: ReportSaleReview;
 }
 
 export interface MonthlySalesReport {
@@ -180,6 +194,7 @@ export interface MonthlySalesReport {
     topProducts: ReportTopProduct[];
     topServices: ReportServiceRow[];
     promotionReview: ReportPromotionReview;
+    saleReview: ReportSaleReview;
 }
 
 export type SalesReport = DailySalesReport | MonthlySalesReport;
@@ -257,12 +272,26 @@ const buildTotals = (sales: Sale[]): SalesReportTotals => {
     };
 };
 
+/** Orden de cobro: fecha de negocio, con la de recepción en ventas anteriores. */
+const byBusinessTime = (a: Sale, b: Sale): number =>
+    saleBusinessAt(a).toMillis() - saleBusinessAt(b).toMillis();
+
 /** Las anuladas no: ya no hay precio que revisar. */
 const buildPromotionReview = (sales: Sale[]): ReportPromotionReview => {
     const flagged = sales
         .filter((sale) => !sale.voidedAt && sale.promotionReview === true)
-        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+        .sort(byBusinessTime);
     return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
+};
+
+/** Conteo y folios por marca de revisión; las anuladas no cuentan. */
+const buildSaleReview = (sales: Sale[]): ReportSaleReview => {
+    const active = sales.filter((sale) => !sale.voidedAt).sort(byBusinessTime);
+    const of = (kind: keyof ReportSaleReview): ReportPromotionReview => {
+        const flagged = active.filter(SALE_REVIEW_FILTERS[kind]);
+        return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
+    };
+    return { stock: of('stock'), catalog: of('catalog'), late: of('late') };
 };
 
 const buildTopProducts = (sales: Sale[], limit = 10): ReportTopProduct[] => {
@@ -435,11 +464,16 @@ const netResultOf = (totalAmount: number, refundTotal: number, expenses: number)
 const averageTicket = (totalAmount: number, salesCount: number): number =>
     salesCount === 0 ? 0 : fromCents(Math.round(toCents(totalAmount) / salesCount));
 
+/**
+ * Ventas del periodo por **fecha de negocio** (SPEC 51): la venta offline del 31
+ * a las 23:50 que sincroniza el 1 sale en el reporte del 31.
+ */
 const listSalesBetween = async (fromIso: string, toIso: string): Promise<Sale[]> => {
     const { items } = await salesRepo.listSales({
         from: fromIso,
         to: toIso,
         includeVoided: true,
+        byBusinessDate: true,
     });
     return items;
 };
@@ -455,10 +489,10 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
 
     const rows: ReportSaleRow[] = sales
         .filter((sale) => !sale.voidedAt)
-        .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis())
+        .sort(byBusinessTime)
         .map((sale) => ({
             folio: sale.folio,
-            time: timeFormatter.format(sale.createdAt.toDate()),
+            time: timeFormatter.format(saleBusinessAt(sale).toDate()),
             paymentMethodLabel: PAYMENT_METHOD_LABELS[sale.paymentMethod],
             total: sale.total,
         }));
@@ -482,6 +516,7 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
         sales: rows,
         topProducts: buildTopProducts(sales),
         promotionReview: buildPromotionReview(sales),
+        saleReview: buildSaleReview(sales),
     };
 };
 
@@ -521,7 +556,7 @@ export const buildMonthlyReport = async (
         if (sale.voidedAt) {
             continue;
         }
-        const dateLabel = dateFormatter.format(sale.createdAt.toDate());
+        const dateLabel = dateFormatter.format(saleBusinessAt(sale).toDate());
         const entry = byDayMap.get(dateLabel) ?? { dateLabel, count: 0, amount: 0 };
         entry.count += 1;
         entry.amount += sale.total;
@@ -571,5 +606,6 @@ export const buildMonthlyReport = async (
         topProducts: buildTopProducts(sales),
         topServices: buildTopServices(sales),
         promotionReview: buildPromotionReview(sales),
+        saleReview: buildSaleReview(sales),
     };
 };

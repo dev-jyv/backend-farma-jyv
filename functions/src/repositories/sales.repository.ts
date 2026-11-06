@@ -1,10 +1,32 @@
-import { PaymentMethod, Sale, isSaleProductItem } from '../types';
+import { PaymentMethod, Sale, isSaleProductItem, saleBusinessAt } from '../types';
+import { Timestamp } from 'firebase-admin/firestore';
 import { db, now, toTimestamp } from '../utils/firestore';
 import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
 
 const collection = () => db().collection('sales');
 
 const DEFAULT_LIST_DAYS = 30;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Margen de la consulta por fecha de negocio (SPEC 51). Una venta offline se
+ * registra como mucho 7 días después de cobrada (un `soldAt` más viejo no se
+ * cree), así que basta extender el fin del rango de `createdAt` una semana. El
+ * inicio se adelanta 10 min: un `soldAt` puede ir hasta 10 min por delante del
+ * servidor (`SOLD_AT_MAX_CLOCK_AHEAD_MS`) y seguir siendo confiable.
+ */
+export const BUSINESS_DATE_LATE_MARGIN_MS = 7 * MS_PER_DAY;
+export const BUSINESS_DATE_EARLY_MARGIN_MS = 10 * 60 * 1000;
+
+/**
+ * ¿La venta cae en `[from, to]` por su fecha de negocio? `to` es inclusivo,
+ * igual que el rango de `createdAt` de `buildSalesQuery`.
+ */
+const inBusinessRange = (sale: Sale, fromMs: number, toMs: number | null): boolean => {
+    const at = saleBusinessAt(sale).toMillis();
+    return at >= fromMs && (toMs === null || at <= toMs);
+};
 
 const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
     const total = data.total as number;
@@ -36,6 +58,12 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
             ? {}
             : { couponDiscountTotal: data.couponDiscountTotal as number }),
         ...(data.couponReview ? { couponReview: data.couponReview as Sale['couponReview'] } : {}),
+        // Marcas de revisión de la venta offline (SPEC 52): solo si la venta las trae.
+        ...(data.stockReview ? { stockReview: data.stockReview as Sale['stockReview'] } : {}),
+        ...(data.catalogReview
+            ? { catalogReview: data.catalogReview as Sale['catalogReview'] }
+            : {}),
+        ...(data.lateSync === true ? { lateSync: true as const } : {}),
         paymentMethod: data.paymentMethod as Sale['paymentMethod'],
         amountReceived: (data.amountReceived as number | null) ?? null,
         change: (data.change as number | null) ?? null,
@@ -73,6 +101,12 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
         voidedAt: (data.voidedAt as Sale['voidedAt']) ?? null,
         voidedBy: (data.voidedBy as string | null) ?? null,
         createdAt: data.createdAt as Sale['createdAt'],
+        // Fecha de negocio (SPEC 51). Las ventas anteriores no la traen: su
+        // fecha de negocio es la de recepción y nunca tuvieron `soldAt` creído.
+        businessAt: (data.businessAt as Sale['businessAt']) ??
+            (data.createdAt as Sale['createdAt']),
+        soldAt: (data.soldAt as Sale['soldAt']) ?? null,
+        soldAtTrusted: data.soldAtTrusted === true,
     };
 };
 
@@ -157,21 +191,60 @@ export const listSalesByProvider = async (filters: {
     from?: string;
     to?: string;
     includeVoided?: boolean;
+    /** Periodo por fecha de negocio (SPEC 51), ver `listSales`. */
+    byBusinessDate?: boolean;
 }): Promise<Sale[]> => {
     const from = filters.from ??
-        new Date(Date.now() - DEFAULT_LIST_DAYS * 24 * 60 * 60 * 1000).toISOString();
+        new Date(Date.now() - DEFAULT_LIST_DAYS * MS_PER_DAY).toISOString();
+    const range = queryRange(from, filters.to, filters.byBusinessDate);
 
     let query: FirebaseFirestore.Query = collection()
         .where('providerIds', 'array-contains', filters.providerId)
-        .where('createdAt', '>=', toTimestamp(from));
+        .where('createdAt', '>=', range.from);
 
-    if (filters.to) {
-        query = query.where('createdAt', '<=', toTimestamp(filters.to));
+    if (range.to) {
+        query = query.where('createdAt', '<=', range.to);
     }
 
     const snapshot = await query.get();
-    const sales = snapshot.docs.map((doc) => mapSale(doc.id, doc.data()));
+    let sales = snapshot.docs.map((doc) => mapSale(doc.id, doc.data()));
+    if (filters.byBusinessDate) {
+        sales = sales.filter((sale) =>
+            inBusinessRange(sale, range.businessFromMs, range.businessToMs));
+    }
     return filters.includeVoided ? sales : sales.filter((sale) => sale.voidedAt === null);
+};
+
+/**
+ * Rango de `createdAt` que se consulta. Con `byBusinessDate` se ensancha con los
+ * márgenes de arriba y el periodo exacto se decide en memoria con `businessAt`.
+ */
+const queryRange = (
+    from: string,
+    to: string | undefined,
+    byBusinessDate: boolean | undefined,
+): {
+    from: FirebaseFirestore.Timestamp;
+    to: FirebaseFirestore.Timestamp | null;
+    businessFromMs: number;
+    businessToMs: number | null;
+} => {
+    const fromTs = toTimestamp(from);
+    const toTs = to ? toTimestamp(to) : null;
+    if (!byBusinessDate) {
+        return {
+            from: fromTs,
+            to: toTs,
+            businessFromMs: fromTs.toMillis(),
+            businessToMs: toTs?.toMillis() ?? null,
+        };
+    }
+    return {
+        from: Timestamp.fromMillis(fromTs.toMillis() - BUSINESS_DATE_EARLY_MARGIN_MS),
+        to: toTs ? Timestamp.fromMillis(toTs.toMillis() + BUSINESS_DATE_LATE_MARGIN_MS) : null,
+        businessFromMs: fromTs.toMillis(),
+        businessToMs: toTs?.toMillis() ?? null,
+    };
 };
 
 /**
@@ -259,6 +332,8 @@ const buildSalesQuery = (filters: {
     from?: string;
     to?: string;
     cashSessionId?: string;
+    /** Ensancha el rango de `createdAt` para filtrar después por fecha de negocio. */
+    byBusinessDate?: boolean;
     /**
      * Filtros que se resuelven en la consulta (SPEC 19). Solo los aplica quien
      * llama sin `cashSessionId` ni `productId`, que son los que tienen índice
@@ -288,11 +363,12 @@ const buildSalesQuery = (filters: {
         query = query.where('cashSessionId', '==', filters.cashSessionId);
     } else {
         const from = filters.from ??
-            new Date(Date.now() - DEFAULT_LIST_DAYS * 24 * 60 * 60 * 1000).toISOString();
-        query = query.where('createdAt', '>=', toTimestamp(from));
+            new Date(Date.now() - DEFAULT_LIST_DAYS * MS_PER_DAY).toISOString();
+        const range = queryRange(from, filters.to, filters.byBusinessDate);
+        query = query.where('createdAt', '>=', range.from);
 
-        if (filters.to) {
-            query = query.where('createdAt', '<=', toTimestamp(filters.to));
+        if (range.to) {
+            query = query.where('createdAt', '<=', range.to);
         }
     }
 
@@ -404,8 +480,20 @@ export const listSales = async (filters: {
      * perder coincidencias fuera del recorte.
      */
     maxDocs?: number;
+    /**
+     * Periodo por **fecha de negocio** (SPEC 51): la consulta sigue sobre
+     * `createdAt` con el margen de una semana y el periodo exacto se decide en
+     * memoria con `businessAt` (o `createdAt` en ventas anteriores). Para los
+     * reportes de periodo; no aplica con `cashSessionId`, que no filtra fechas.
+     */
+    byBusinessDate?: boolean;
 }): Promise<{ items: Sale[]; total: number }> => {
-    let query = buildSalesQuery(filters);
+    const byBusinessDate = Boolean(filters.byBusinessDate) && !filters.cashSessionId;
+    // Un solo "ahora" para la ventana por defecto: la consulta y el filtro en
+    // memoria tienen que ver el mismo inicio.
+    const from = filters.from ??
+        new Date(Date.now() - DEFAULT_LIST_DAYS * MS_PER_DAY).toISOString();
+    let query = buildSalesQuery({ ...filters, from, byBusinessDate });
 
     if (filters.maxDocs !== undefined) {
         query = query.limit(filters.maxDocs);
@@ -416,6 +504,12 @@ export const listSales = async (filters: {
 
     if (!filters.includeVoided) {
         sales = sales.filter((sale) => sale.voidedAt === null);
+    }
+
+    if (byBusinessDate) {
+        const range = queryRange(from, filters.to, true);
+        sales = sales.filter((sale) =>
+            inBusinessRange(sale, range.businessFromMs, range.businessToMs));
     }
 
     if (filters.productId) {

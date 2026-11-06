@@ -21,11 +21,18 @@ const isExpired = (batch: Batch, reference: Date): boolean => {
     return expiryYmd < getZonedYmd(reference.getTime(), APP_TIME_ZONE);
 };
 
-export const allocateFefo = (
+/**
+ * Reparto FEFO **sin rechazo**: asigna lo vendible que haya y devuelve lo que no
+ * alcanzó en `shortfall`. Lo usa la venta offline ya cobrada (SPEC 52), que se
+ * registra aunque falte stock: el lote nunca baja de cero y el faltante queda
+ * medido. `expiredQuantity` es lo que había con stock pero ya caducado a
+ * `options.now`, para distinguir "no hay" de "lo que hay está vencido".
+ */
+export const allocateFefoAvailable = (
     batches: Batch[],
     requestedQuantity: number,
     options: AllocateFefoOptions = {},
-): BatchAllocation[] => {
+): { allocations: BatchAllocation[]; shortfall: number; expiredQuantity: number } => {
     const excludeExpired = options.excludeExpired ?? true;
     const reference = options.now ?? new Date();
 
@@ -51,14 +58,30 @@ export const allocateFefo = (
         remaining -= taken;
     }
 
-    if (remaining > 0) {
-        const expiredQty = withStock
+    const expiredQuantity = excludeExpired
+        ? withStock
             .filter((batch) => isExpired(batch, reference))
-            .reduce((sum, batch) => sum + batch.quantity, 0);
-        if (excludeExpired && expiredQty > 0) {
+            .reduce((sum, batch) => sum + batch.quantity, 0)
+        : 0;
+    return { allocations, shortfall: Math.max(0, remaining), expiredQuantity };
+};
+
+export const allocateFefo = (
+    batches: Batch[],
+    requestedQuantity: number,
+    options: AllocateFefoOptions = {},
+): BatchAllocation[] => {
+    const { allocations, shortfall, expiredQuantity } = allocateFefoAvailable(
+        batches,
+        requestedQuantity,
+        options,
+    );
+
+    if (shortfall > 0) {
+        if (expiredQuantity > 0) {
             throw new Error('EXPIRED_STOCK');
         }
-        throw new Error(`Stock insuficiente. Faltan ${remaining} unidades.`);
+        throw new Error(`Stock insuficiente. Faltan ${shortfall} unidades.`);
     }
 
     return allocations;

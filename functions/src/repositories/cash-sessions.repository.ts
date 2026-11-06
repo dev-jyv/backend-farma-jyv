@@ -71,9 +71,16 @@ interface CloseCashSessionData {
     autoClosedByExpiry?: boolean;
 }
 
+/**
+ * Cierra el turno. Con `data` como función (SPEC 52), el resumen se arma
+ * **dentro** de la transacción con las ventas del turno leídas por consulta
+ * transaccional: una venta que confirma entre el cálculo previo y el cierre ya
+ * no queda en el turno pero fuera del corte congelado. Si una venta se escribe
+ * mientras tanto, Firestore reintenta el cierre y el resumen se rehace.
+ */
 export const closeCashSession = async (
     id: string,
-    data: CloseCashSessionData,
+    data: CloseCashSessionData | ((sales: SessionSaleRow[]) => CloseCashSessionData),
 ): Promise<CashSession> => {
     const ref = collection().doc(id);
     const timestamp = now();
@@ -81,24 +88,32 @@ export const closeCashSession = async (
     // transacción: dos cierres simultáneos (doble toque) ya no se pisan ni borran la
     // revisión de ajuste que dejó el primero.
     await db().runTransaction(async (transaction) => {
-        const current = await transaction.get(ref);
+        const [current, salesSnapshot] = await Promise.all([
+            transaction.get(ref),
+            typeof data === 'function'
+                ? transaction.get(sessionSalesQuery(id))
+                : Promise.resolve(null),
+        ]);
         if (!current.exists) {
             throw badRequest('El turno de caja no existe');
         }
         if (current.data()?.closedAt) {
             throw badRequest('El turno de caja ya está cerrado');
         }
+        const closeData = typeof data === 'function'
+            ? data(salesSnapshot!.docs.map((doc) => toSessionSaleRow(doc.data())))
+            : data;
         transaction.update(ref, {
             closedAt: timestamp,
-            closedBy: data.closedBy,
-            countedCashAmount: data.countedCashAmount,
-            expectedCashAmount: data.expectedCashAmount,
-            expectedServicesCashAmount: data.expectedServicesCashAmount ?? 0,
-            cashDifference: data.cashDifference,
-            summary: data.summary,
-            hasPendingAdjustment: data.hasPendingAdjustment ?? false,
-            adjustmentStatus: data.adjustmentStatus ?? null,
-            autoClosedByExpiry: data.autoClosedByExpiry ?? false,
+            closedBy: closeData.closedBy,
+            countedCashAmount: closeData.countedCashAmount,
+            expectedCashAmount: closeData.expectedCashAmount,
+            expectedServicesCashAmount: closeData.expectedServicesCashAmount ?? 0,
+            cashDifference: closeData.cashDifference,
+            summary: closeData.summary,
+            hasPendingAdjustment: closeData.hasPendingAdjustment ?? false,
+            adjustmentStatus: closeData.adjustmentStatus ?? null,
+            autoClosedByExpiry: closeData.autoClosedByExpiry ?? false,
         });
     });
     const updated = await ref.get();
@@ -198,7 +213,38 @@ export interface SessionSaleRow {
     servicesCashAmount: number;
     /** Comisiones de la venta; 0 en una venta histórica. */
     commissionTotal: number;
+    /** Fecha de negocio (SPEC 51); `createdAt` en ventas anteriores. */
+    businessAt: FirebaseFirestore.Timestamp;
+    /** Llegó con el turno ya cerrado (SPEC 52). */
+    lateSync: boolean;
 }
+
+const sessionSalesQuery = (cashSessionId: string): FirebaseFirestore.Query =>
+    db().collection('sales').where('cashSessionId', '==', cashSessionId);
+
+const toSessionSaleRow = (data: FirebaseFirestore.DocumentData): SessionSaleRow => {
+    const cashAmount = (data.cashAmount as number | null | undefined) ?? null;
+    const total = data.total as number;
+    return {
+        paymentMethod: data.paymentMethod as string,
+        amountReceived: data.amountReceived as number | null,
+        change: data.change as number | null,
+        cashAmount,
+        total,
+        voidedAt: data.voidedAt ?? null,
+        hasServices: (data.hasServices as boolean | undefined) ?? false,
+        pharmacyTotal: (data.pharmacyTotal as number | undefined) ?? total,
+        servicesTotal: (data.servicesTotal as number | undefined) ?? 0,
+        pharmacyCashAmount: (data.pharmacyCashAmount as number | undefined) ??
+            (cashAmount ??
+                ((data.amountReceived as number | null ?? 0) -
+                    (data.change as number | null ?? 0))),
+        servicesCashAmount: (data.servicesCashAmount as number | undefined) ?? 0,
+        commissionTotal: (data.commissionTotal as number | undefined) ?? 0,
+        businessAt: (data.businessAt ?? data.createdAt) as FirebaseFirestore.Timestamp,
+        lateSync: data.lateSync === true,
+    };
+};
 
 /**
  * Ventas del turno para el corte.
@@ -210,30 +256,6 @@ export interface SessionSaleRow {
  * antes de existir la rama de servicios.
  */
 export const listSalesForSession = async (cashSessionId: string): Promise<SessionSaleRow[]> => {
-    const snapshot = await db()
-        .collection('sales')
-        .where('cashSessionId', '==', cashSessionId)
-        .get();
-    return snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const cashAmount = (data.cashAmount as number | null | undefined) ?? null;
-        const total = data.total as number;
-        return {
-            paymentMethod: data.paymentMethod as string,
-            amountReceived: data.amountReceived as number | null,
-            change: data.change as number | null,
-            cashAmount,
-            total,
-            voidedAt: data.voidedAt ?? null,
-            hasServices: (data.hasServices as boolean | undefined) ?? false,
-            pharmacyTotal: (data.pharmacyTotal as number | undefined) ?? total,
-            servicesTotal: (data.servicesTotal as number | undefined) ?? 0,
-            pharmacyCashAmount: (data.pharmacyCashAmount as number | undefined) ??
-                (cashAmount ??
-                    ((data.amountReceived as number | null ?? 0) -
-                        (data.change as number | null ?? 0))),
-            servicesCashAmount: (data.servicesCashAmount as number | undefined) ?? 0,
-            commissionTotal: (data.commissionTotal as number | undefined) ?? 0,
-        };
-    });
+    const snapshot = await sessionSalesQuery(cashSessionId).get();
+    return snapshot.docs.map((doc) => toSessionSaleRow(doc.data()));
 };

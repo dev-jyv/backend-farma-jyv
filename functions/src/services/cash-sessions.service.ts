@@ -388,51 +388,81 @@ export const closeSession = async (
     }
     assertCanAccessSession(session, userId, roleSlug);
 
-    const [sales, movements, returns] = await Promise.all([
-        cashSessionsRepo.listSalesForSession(id),
+    // Movimientos y devoluciones se leen antes; las ventas se releen **dentro** de
+    // la transacción de cierre (SPEC 52): una venta que confirma entre este punto
+    // y el cierre aparece en el corte congelado en vez de quedar en el turno pero
+    // fuera del resumen. Si llega mientras la transacción corre, Firestore la
+    // reintenta y el resumen se rehace con ella.
+    const [movements, returns] = await Promise.all([
         cashMovementsRepo.listMovementsForSession(id),
         returnsRepo.listReturnsForSession(id),
     ]);
-    const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
-        session.openingAmount,
-        sales,
-        movements,
-        returns,
-    );
-    /**
-     * El cajón es **uno**: el cajero cuenta el efectivo una sola vez y hay una
-     * sola diferencia. Los dos esperados son informativos, así que el arqueo va
-     * contra su **suma** —no hay segundo conteo ni segunda diferencia.
-     *
-     * Se redondea a centavos ANTES de comparar: en coma flotante
-     * `500.01 - 500` da 0.009999999999990905, que no pasa el `>= 0.01` y dejaba
-     * un centavo real de faltante cerrando el turno como si cuadrara. Además
-     * evita persistir e imprimir diferencias tipo -39.999999999.
-     */
-    const expectedDrawerAmount = expectedCashAmount + expectedServicesCashAmount;
-    const cashDifference = Math.round((countedCashAmount - expectedDrawerAmount) * 100) / 100;
     // La marca la manda el cliente, pero solo se respeta si el turno de verdad venció:
     // con `true` en cualquier cierre un faltante nunca llegaba a la cola de revisión.
     const autoClosedByExpiry = (options.autoClosedByExpiry ?? false) &&
         isSessionExpired(session);
-    // Un cierre automático a las 24:00 nunca genera ajuste pendiente: no hay
-    // cajero presente para explicar la diferencia, y forzar una aprobación de
-    // admin sobre un cierre que nadie autorizó en el momento no tiene sentido —
-    // el backend ya recalculó `expectedCashAmount` de forma autoritativa, así
-    // que cualquier pequeña discrepancia local queda absorbida silenciosamente.
-    const hasPendingAdjustment = !autoClosedByExpiry && Math.abs(cashDifference) >= 0.01;
 
-    const closed = await cashSessionsRepo.closeCashSession(id, {
-        closedBy: userId,
-        countedCashAmount,
+    let computed!: {
+        summary: CashSessionSummary;
+        expectedCashAmount: number;
+        expectedServicesCashAmount: number;
+        expectedDrawerAmount: number;
+        cashDifference: number;
+        hasPendingAdjustment: boolean;
+    };
+    const closed = await cashSessionsRepo.closeCashSession(id, (sales) => {
+        const { summary, expectedCashAmount, expectedServicesCashAmount } = buildSummary(
+            session.openingAmount,
+            sales,
+            movements,
+            returns,
+        );
+        /**
+         * El cajón es **uno**: el cajero cuenta el efectivo una sola vez y hay una
+         * sola diferencia. Los dos esperados son informativos, así que el arqueo va
+         * contra su **suma** —no hay segundo conteo ni segunda diferencia.
+         *
+         * Se redondea a centavos ANTES de comparar: en coma flotante
+         * `500.01 - 500` da 0.009999999999990905, que no pasa el `>= 0.01` y dejaba
+         * un centavo real de faltante cerrando el turno como si cuadrara. Además
+         * evita persistir e imprimir diferencias tipo -39.999999999.
+         */
+        const expectedDrawerAmount = expectedCashAmount + expectedServicesCashAmount;
+        const cashDifference =
+            Math.round((countedCashAmount - expectedDrawerAmount) * 100) / 100;
+        // Un cierre automático a las 24:00 nunca genera ajuste pendiente: no hay
+        // cajero presente para explicar la diferencia, y forzar una aprobación de
+        // admin sobre un cierre que nadie autorizó en el momento no tiene sentido —
+        // el backend ya recalculó `expectedCashAmount` de forma autoritativa, así
+        // que cualquier pequeña discrepancia local queda absorbida silenciosamente.
+        const hasPendingAdjustment = !autoClosedByExpiry && Math.abs(cashDifference) >= 0.01;
+        computed = {
+            summary,
+            expectedCashAmount,
+            expectedServicesCashAmount,
+            expectedDrawerAmount,
+            cashDifference,
+            hasPendingAdjustment,
+        };
+        return {
+            closedBy: userId,
+            countedCashAmount,
+            expectedCashAmount,
+            expectedServicesCashAmount,
+            cashDifference,
+            summary,
+            hasPendingAdjustment,
+            adjustmentStatus: hasPendingAdjustment ? 'pending' : null,
+            autoClosedByExpiry,
+        };
+    });
+    const {
+        summary,
         expectedCashAmount,
         expectedServicesCashAmount,
+        expectedDrawerAmount,
         cashDifference,
-        summary,
-        hasPendingAdjustment,
-        adjustmentStatus: hasPendingAdjustment ? 'pending' : null,
-        autoClosedByExpiry,
-    });
+    } = computed;
 
     // Un corte que no cuadra es el primer síntoma de faltante: queda en bitácora,
     // y además el turno queda marcado como pendiente de revisión de un admin

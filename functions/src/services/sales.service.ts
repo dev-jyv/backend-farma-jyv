@@ -15,7 +15,11 @@ import {
     SaleItemPromotion,
     SaleLineItem,
     SalePrescription,
+    SaleReviewKind,
+    SaleStockReviewItem,
+    SALE_REVIEW_FILTERS,
     isSaleProductItem,
+    saleBusinessAt,
     isSaleServiceItem,
     saleItemName,
 } from '../types';
@@ -27,7 +31,8 @@ import {
     withDefaultSyncCode,
 } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
-import { allocateFefo, BatchAllocation } from '../utils/fefo';
+import { allocateFefoAvailable, BatchAllocation } from '../utils/fefo';
+import { APP_TIME_ZONE, getZonedYmd } from '../utils/timezone';
 import {
     breakdownLineTaxes,
     fromCents,
@@ -104,6 +109,15 @@ const IDEMPOTENCY_COLLECTION = 'saleIdempotencyKeys';
  * dejar de creer su `soldAt`. Más allá, se usa la hora del servidor.
  */
 const SOLD_AT_MAX_CLOCK_AHEAD_MS = 10 * 60 * 1000;
+/**
+ * Antigüedad máxima de un `soldAt` creíble (SPEC 51). Más viejo que esto, la venta
+ * queda con la fecha de recepción: los reportes por fecha de negocio consultan
+ * `createdAt` con este mismo margen (`BUSINESS_DATE_LATE_MARGIN_MS`).
+ */
+const SOLD_AT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Por qué un `soldAt` offline no se usó como fecha de negocio. */
+type SoldAtUntrustedReason = 'clock_ahead' | 'before_session' | 'too_old';
 /** Ventana de reintento cubierta por la llave; después de esto el TTL de Firestore la borra. */
 const IDEMPOTENCY_TTL_HOURS = 48;
 
@@ -752,17 +766,26 @@ const resolveSaleCoupon = (input: {
  * del mismo producto ve solo lo que queda y la venta se reparte sobre el total de
  * piezas. Lo usan el plan previo y el reparto dentro de la transacción, con el
  * mismo mensaje y el mismo código en los dos.
+ *
+ * La caducidad se mide a `options.now`, la fecha de negocio de la venta (SPEC 51):
+ * un lote que caducó a medianoche no impide registrar una venta offline de ayer.
+ *
+ * Con `allowShortfall` (venta offline ya cobrada, SPEC 52) nunca rechaza: asigna
+ * lo vendible que haya y devuelve el resto en `shortfall`. Ningún lote baja de cero.
  */
 const allocateSaleBatches = (
     batches: Batch[],
     pieces: number,
     productName: string,
-): BatchAllocation[] => {
-    let allocations: BatchAllocation[];
-    try {
-        allocations = allocateFefo(batches, pieces, { excludeExpired: true });
-    } catch (error) {
-        if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
+    options: { now: Date; allowShortfall: boolean },
+): { allocations: BatchAllocation[]; shortfall: number } => {
+    const { allocations, shortfall, expiredQuantity } = allocateFefoAvailable(
+        batches,
+        pieces,
+        { excludeExpired: true, now: options.now },
+    );
+    if (shortfall > 0 && !options.allowShortfall) {
+        if (expiredQuantity > 0) {
             throw badRequest(
                 `El stock disponible de ${productName} está vencido`,
                 'BATCH_EXPIRED',
@@ -776,7 +799,7 @@ const allocateSaleBatches = (
             batch.quantity -= allocation.quantity;
         }
     }
-    return allocations;
+    return { allocations, shortfall };
 };
 
 /**
@@ -908,16 +931,13 @@ const applySale = async (input: {
             : [])),
     );
 
-    // Offline, la vigencia se mide a la hora del cobro que reporta la caja. Una
-    // hora futura (reloj adelantado) no se cree: se usa la del servidor. Sin
-    // `soldAt` (POS anterior a este campo) se concede el margen de siempre.
+    // Hora del cobro que reporta la caja: solo cuenta offline (SPEC 51).
     const soldAtMs = input.offline && input.soldAt ? Date.parse(input.soldAt) : NaN;
-    const trustedSoldAt = Number.isFinite(soldAtMs) &&
-        soldAtMs <= timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS;
-    const promotionAtMs = trustedSoldAt ? soldAtMs : timestamp.toMillis();
-    const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
+    const hasSoldAt = Number.isFinite(soldAtMs);
     let closedPromotionName: string | null = null;
     const outOfWindowPromotions: string[] = [];
+    /** Productos y servicios inactivos aceptados en una venta offline (SPEC 52). */
+    const inactiveCatalogIds: string[] = [];
 
     // El cupón se lee una vez aquí (vigencia, productos, mínimo) y otra dentro
     // de la transacción (`usedCount`), que es la que decide el último uso.
@@ -929,17 +949,51 @@ const applySale = async (input: {
     const cartProductIds = [...new Set(input.items.flatMap((item) => (item.kind !== 'service'
         ? [item.productId]
         : [])))];
-    const [preloadedCoupon, preloadedProducts, preloadedBatches] = await Promise.all([
-        couponCode ? couponsRepo.getCouponByCode(couponCode) : Promise.resolve(null),
-        productsRepo.getProductsByIds(
-            input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
-        ),
-        Promise.all(cartProductIds.map((productId) =>
-            batchesRepo.listBatchesByProduct(productId, { onlyAvailable: true }))),
-    ]);
+    const [preloadedCoupon, preloadedProducts, preloadedBatches, preloadedSession] =
+        await Promise.all([
+            couponCode ? couponsRepo.getCouponByCode(couponCode) : Promise.resolve(null),
+            productsRepo.getProductsByIds(
+                input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
+            ),
+            Promise.all(cartProductIds.map((productId) =>
+                batchesRepo.listBatchesByProduct(productId, { onlyAvailable: true }))),
+            // La apertura del turno decide si el `soldAt` es creíble; solo hace
+            // falta con `soldAt` offline. `openedAt` no cambia: basta leerla aquí.
+            hasSoldAt
+                ? cashSessionsRepo.getCashSessionById(input.cashSessionId)
+                : Promise.resolve(null),
+        ]);
     cartProductIds.forEach((productId, index) => {
         batchCache.set(productId, preloadedBatches[index]);
     });
+
+    // Fecha de negocio (SPEC 51). Offline vale la hora del cobro que reporta la
+    // caja si es creíble: no más de 10 min en el futuro (reloj adelantado), no
+    // anterior a la apertura del turno, no más vieja de 7 días. Si no, la de
+    // recepción. En línea siempre es la de recepción.
+    let soldAtUntrustedReason: SoldAtUntrustedReason | null = null;
+    if (hasSoldAt) {
+        const openedAtMs = preloadedSession?.openedAt?.toMillis();
+        if (soldAtMs > timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS) {
+            soldAtUntrustedReason = 'clock_ahead';
+        } else if (openedAtMs !== undefined && soldAtMs < openedAtMs) {
+            soldAtUntrustedReason = 'before_session';
+        } else if (soldAtMs < timestamp.toMillis() - SOLD_AT_MAX_AGE_MS) {
+            soldAtUntrustedReason = 'too_old';
+        }
+    }
+    const trustedSoldAt = hasSoldAt && soldAtUntrustedReason === null;
+    const businessAt = trustedSoldAt ? Timestamp.fromMillis(soldAtMs) : timestamp;
+    /** FEFO excluye solo los lotes caducados a la hora del cobro (SPEC 51). */
+    const fefoNow = businessAt.toDate();
+    /** Offline, la venta ya cobrada entra aunque falte stock (SPEC 52). */
+    const allowShortfall = Boolean(input.offline);
+
+    // Offline, la vigencia de promociones y cupones se mide a la hora del cobro.
+    // Sin `soldAt` creíble (POS anterior a este campo, reloj desfasado) se usa la
+    // del servidor con el margen de siempre.
+    const promotionAtMs = trustedSoldAt ? soldAtMs : timestamp.toMillis();
+    const promotionGraceMs = input.offline && !trustedSoldAt ? PROMOTION_SYNC_GRACE_MS : 0;
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
@@ -961,7 +1015,14 @@ const applySale = async (input: {
                 throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_NOT_FOUND');
             }
             if (!service.isActive) {
-                throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_INACTIVE');
+                // Offline la venta ya se cobró: se registra y queda marcada
+                // (`catalogReview`). En línea el cajero puede corregir.
+                if (!input.offline) {
+                    throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_INACTIVE');
+                }
+                if (!inactiveCatalogIds.includes(service.id)) {
+                    inactiveCatalogIds.push(service.id);
+                }
             }
             if (service.hasIeps && service.iepsRate === undefined) {
                 throw badRequest(
@@ -1036,7 +1097,13 @@ const applySale = async (input: {
             throw notFound(`Producto ${item.productId}`, 'PRODUCT_NOT_FOUND');
         }
         if (!product.isActive) {
-            throw notFound(`Producto ${item.productId}`, 'PRODUCT_INACTIVE');
+            // Mismo criterio que los servicios: offline se acepta y se marca.
+            if (!input.offline) {
+                throw notFound(`Producto ${item.productId}`, 'PRODUCT_INACTIVE');
+            }
+            if (!inactiveCatalogIds.includes(product.id)) {
+                inactiveCatalogIds.push(product.id);
+            }
         }
 
         if (isBox && !(product.boxQuantity && product.boxPrice)) {
@@ -1059,10 +1126,11 @@ const applySale = async (input: {
         // las asignaciones**: las de la venta salen del reparto transaccional
         // (SPEC 50). Descuenta sobre la copia en memoria para que dos partidas
         // del mismo producto (pieza y caja) se validen contra el total.
-        const allocations = allocateSaleBatches(
+        const { allocations } = allocateSaleBatches(
             batchCache.get(item.productId) ?? [],
             pieces,
             product.name,
+            { now: fefoNow, allowShortfall },
         );
 
         // Precio **cobrado**, no el de catálogo de hoy. Una venta sin conexión se
@@ -1392,7 +1460,16 @@ const applySale = async (input: {
     const servicesCashAmount = fromCents(servicesCashCents);
     const pharmacyCashAmount = fromCents(cashAmountCents - servicesCashCents);
 
+    /** La transacción devolvió una venta ya registrada (reintento): sin bitácora nueva. */
+    let replayed = false;
+    /** Partidas con faltante de stock en el último intento de la transacción. */
+    let stockReviewItems: SaleStockReviewItem[] = [];
+    let wroteLedger = false;
+
     const sale = await firestore.runTransaction(async (transaction) => {
+        replayed = false;
+        stockReviewItems = [];
+        wroteLedger = false;
         // Segundo chequeo dentro de la transacción: dos requests simultáneos con la
         // misma llave contienden por este documento y el perdedor reintenta, ve la
         // venta ya escrita y la devuelve en lugar de duplicarla.
@@ -1401,6 +1478,7 @@ const applySale = async (input: {
             const existingSaleDoc = await transaction.get(
                 firestore.collection('sales').doc(idemDoc.data()!.saleId as string),
             );
+            replayed = true;
             return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprints);
         }
 
@@ -1431,13 +1509,6 @@ const applySale = async (input: {
         // Solo mercancía: los reportes resuelven cada id de `productIds` contra
         // `products`, así que un id de servicio aquí los revienta.
         const productIds = [...new Set(productItems.map((item) => item.productId))];
-        const stockDeltaByProduct = new Map<string, number>();
-        for (const item of productItems) {
-            stockDeltaByProduct.set(
-                item.productId,
-                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
-            );
-        }
 
         // Todas las lecturas antes de cualquier escritura, en paralelo. Los lotes
         // se leen **por consulta** (`productId`, `quantity > 0`) dentro de la
@@ -1463,7 +1534,15 @@ const applySale = async (input: {
             input.cashierId,
             input.roleSlug,
         );
-        if (cashSessionDoc.data()?.closedAt) {
+        // Turno cerrado (SPEC 52): una venta offline cobrada **antes** del cierre
+        // se registra en ese turno marcada `lateSync`, y el turno queda con ajuste
+        // pendiente y el efectivo que llegó tarde en `lateSales`. Cobrada después
+        // del cierre (o sin fecha de cobro creíble, que entonces es la de
+        // recepción) sigue siendo un rechazo.
+        const sessionClosedAt = cashSessionDoc.data()?.closedAt as Timestamp | null | undefined;
+        const lateSync = Boolean(sessionClosedAt) && Boolean(input.offline) &&
+            businessAt.toMillis() <= sessionClosedAt!.toMillis();
+        if (sessionClosedAt && !lateSync) {
             throw badRequest('El turno de caja ya está cerrado', 'SESSION_CLOSED');
         }
 
@@ -1490,18 +1569,39 @@ const applySale = async (input: {
             workingBatches.set(productId, batches.map((batch) => ({ ...batch })));
         });
         const takenByBatchId = new Map<string, number>();
+        // Piezas que de verdad salen de lotes, por producto: es lo que baja
+        // `totalStock`. Con faltante (offline) es menos de lo cobrado.
+        const stockDeltaByProduct = new Map<string, number>();
         for (const item of productItems) {
-            item.batchAllocations = allocateSaleBatches(
+            const { allocations, shortfall } = allocateSaleBatches(
                 workingBatches.get(item.productId) ?? [],
                 item.quantity,
                 item.productName,
+                { now: fefoNow, allowShortfall },
             );
+            item.batchAllocations = allocations;
+            // Se rehace en cada intento: un reintento con más stock no deja el
+            // faltante del intento anterior.
+            delete item.stockShortfall;
+            if (shortfall > 0) {
+                item.stockShortfall = shortfall;
+                stockReviewItems.push({
+                    productId: item.productId,
+                    requested: item.quantity,
+                    allocated: item.quantity - shortfall,
+                    shortfall,
+                });
+            }
             for (const allocation of item.batchAllocations) {
                 takenByBatchId.set(
                     allocation.batchId,
                     (takenByBatchId.get(allocation.batchId) ?? 0) + allocation.quantity,
                 );
             }
+            stockDeltaByProduct.set(
+                item.productId,
+                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity - shortfall,
+            );
         }
 
         // COGS por partida desde el costo de los lotes asignados. Si a un lote le
@@ -1511,8 +1611,11 @@ const applySale = async (input: {
         // costo".
         for (const item of productItems) {
             let costCents = 0;
-            let costKnown = true;
-            for (const allocation of item.batchAllocations) {
+            // Con faltante, el costo de las piezas que no salieron de ningún lote
+            // no se conoce: la partida queda "sin costo" (`salesWithoutCost`) en
+            // vez de reportar un margen inflado (SPEC 52).
+            let costKnown = !item.stockShortfall;
+            for (const allocation of costKnown ? item.batchAllocations : []) {
                 const costPrice = batchById.get(allocation.batchId)?.costPrice;
                 if (costPrice === undefined) {
                     costKnown = false;
@@ -1543,12 +1646,34 @@ const applySale = async (input: {
                     quantity: allocation.quantity,
                     referenceId: saleRef.id,
                     userId: input.cashierId,
-                    createdAt: timestamp,
+                    // Fecha del hecho = fecha de negocio (SPEC 51); la de registro
+                    // queda en `recordedAt`.
+                    createdAt: businessAt,
+                    recordedAt: timestamp,
                 });
             }
         }
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
+
+        if (lateSync) {
+            // Mismo turno, mismo cajón: el efectivo de la venta tardía no está en
+            // el corte congelado, así que el turno vuelve a pedir revisión aunque
+            // su ajuste ya se hubiera aprobado. Se suma sobre lo leído en esta
+            // transacción, en centavos.
+            const previous = cashSessionDoc.data()?.lateSales as
+                { count?: number; cashTotal?: number } | undefined;
+            transaction.update(cashSessionRef, {
+                hasPendingAdjustment: true,
+                adjustmentStatus: 'pending',
+                lateSales: {
+                    count: (previous?.count ?? 0) + 1,
+                    cashTotal: fromCents(
+                        toCents(previous?.cashTotal ?? 0) + toCents(tender.cashAmount ?? 0),
+                    ),
+                },
+            });
+        }
 
         // El uso se consume en la misma transacción que la venta. `updatedAt`
         // sube para que el pull del POS traiga el `usedCount` nuevo. Anular o
@@ -1600,6 +1725,12 @@ const applySale = async (input: {
                 : {}),
             ...(saleCoupon ? { coupon: saleCoupon, couponDiscountTotal } : {}),
             ...(couponReview ? { couponReview } : {}),
+            // Marcas de revisión de la venta offline (SPEC 52).
+            ...(stockReviewItems.length ? { stockReview: { items: stockReviewItems } } : {}),
+            ...(inactiveCatalogIds.length
+                ? { catalogReview: { inactive: [...inactiveCatalogIds] } }
+                : {}),
+            ...(lateSync ? { lateSync: true as const } : {}),
             refundedTotal: 0,
             paymentMethod: input.paymentMethod,
             amountReceived: tender.amountReceived,
@@ -1634,6 +1765,10 @@ const applySale = async (input: {
             voidedAt: null,
             voidedBy: null,
             createdAt: timestamp,
+            // Fecha de negocio (SPEC 51): la de los reportes, el libro y `dailyStats`.
+            businessAt,
+            soldAt: hasSoldAt ? Timestamp.fromMillis(soldAtMs) : null,
+            soldAtTrusted: trustedSoldAt,
         };
 
         if (idempotencyRef) {
@@ -1675,18 +1810,38 @@ const applySale = async (input: {
                 prescriptionRetained: Boolean(input.prescriptionRetained),
                 customerName,
                 userId: input.cashierId,
-                createdAt: timestamp,
+                // El renglón lleva la fecha del cobro (SPEC 51); con faltante de
+                // stock registra igual la cantidad completa: la salida física
+                // ocurrió (SPEC 52).
+                createdAt: businessAt,
+                recordedAt: timestamp,
             });
+            wroteLedger = true;
         }
 
         transaction.set(saleRef, saleData);
         dailyStatsRepo.applySaleDelta(
             transaction,
-            { createdAt: timestamp.toDate(), totalCents: toCents(saleData.total) },
+            { createdAt: businessAt.toDate(), totalCents: toCents(saleData.total) },
             1,
         );
         return { id: saleRef.id, ...saleData };
     });
+
+    if (!replayed) {
+        await recordOfflineReviewAudits({
+            sale,
+            cashierId: input.cashierId,
+            roleSlug: input.roleSlug ?? null,
+            soldAt: input.soldAt ?? null,
+            soldAtUntrustedReason,
+            sessionOpenedAt: preloadedSession?.openedAt ?? null,
+            stockReviewItems,
+            inactiveCatalogIds,
+            wroteLedger,
+            recordedAt: timestamp,
+        });
+    }
 
     if (sale.couponReview) {
         const reasons: Record<SaleCouponReview['reason'], string> = {
@@ -1757,6 +1912,112 @@ const applySale = async (input: {
     }
 
     return sale;
+};
+
+/** Mes local (`YYYY-MM`) de un instante, en el huso de la farmacia. */
+const localMonthOf = (at: Timestamp): string =>
+    getZonedYmd(at.toMillis(), APP_TIME_ZONE).slice(0, 7);
+
+/**
+ * Bitácora de las marcas de una venta offline (SPEC 51 y 52). Solo para una venta
+ * recién escrita: el reintento que devuelve la venta ya registrada no repite
+ * renglones. `recordAudit` se traga sus errores: la venta ya está confirmada.
+ */
+const recordOfflineReviewAudits = async (input: {
+    sale: Pick<Sale, 'id' | 'folio' | 'lateSync' | 'cashSessionId' | 'cashAmount'> & {
+        businessAt?: Timestamp;
+    };
+    cashierId: string;
+    roleSlug: string | null;
+    soldAt: string | null;
+    soldAtUntrustedReason: SoldAtUntrustedReason | null;
+    sessionOpenedAt: Timestamp | null;
+    stockReviewItems: SaleStockReviewItem[];
+    inactiveCatalogIds: string[];
+    wroteLedger: boolean;
+    recordedAt: Timestamp;
+}): Promise<void> => {
+    const { sale } = input;
+    const base = {
+        entity: 'sale' as const,
+        entityId: sale.id,
+        userId: input.cashierId,
+        roleSlug: input.roleSlug,
+    };
+
+    // El reloj adelantado es la regla de siempre (SPEC 65 se ocupa del reloj);
+    // aquí solo las dos causas nuevas.
+    if (input.soldAtUntrustedReason === 'before_session' ||
+        input.soldAtUntrustedReason === 'too_old') {
+        await recordAudit({
+            ...base,
+            action: 'sale.sold_at_untrusted',
+            summary: `Venta ${sale.folio}: la hora de cobro de la caja ` +
+                (input.soldAtUntrustedReason === 'before_session'
+                    ? 'es anterior a la apertura del turno'
+                    : 'tiene más de 7 días') +
+                '; queda con la fecha de recepción',
+            metadata: {
+                folio: sale.folio,
+                soldAt: input.soldAt,
+                reason: input.soldAtUntrustedReason,
+                sessionOpenedAt: input.sessionOpenedAt?.toDate().toISOString() ?? null,
+                recordedAt: input.recordedAt.toDate().toISOString(),
+            },
+        });
+    }
+
+    if (input.stockReviewItems.length) {
+        const pieces = input.stockReviewItems.reduce((sum, item) => sum + item.shortfall, 0);
+        await recordAudit({
+            ...base,
+            action: 'sale.stock_shortfall',
+            summary: `Venta ${sale.folio} sincronizada con faltante de stock: ` +
+                `${pieces} ${pieces === 1 ? 'pieza' : 'piezas'} sin lote`,
+            metadata: { folio: sale.folio, items: input.stockReviewItems },
+        });
+    }
+
+    if (input.inactiveCatalogIds.length) {
+        await recordAudit({
+            ...base,
+            action: 'sale.catalog_review',
+            summary: `Venta ${sale.folio} sincronizada con productos o servicios inactivos`,
+            metadata: { folio: sale.folio, inactive: input.inactiveCatalogIds },
+        });
+    }
+
+    if (sale.lateSync) {
+        await recordAudit({
+            ...base,
+            action: 'sale.late_sync',
+            summary: `Venta ${sale.folio} cobrada antes del cierre y sincronizada con el ` +
+                'turno ya cerrado: el turno queda con ajuste pendiente',
+            metadata: {
+                folio: sale.folio,
+                cashSessionId: sale.cashSessionId,
+                cashAmount: sale.cashAmount ?? null,
+            },
+        });
+    }
+
+    // Libro de controlados: el renglón cae en el mes del cobro. Si ya pasó ese
+    // mes, el libro exportado de entonces cambió y hay que reexportarlo.
+    if (input.wroteLedger && sale.businessAt &&
+        localMonthOf(sale.businessAt) < localMonthOf(input.recordedAt)) {
+        await recordAudit({
+            ...base,
+            action: 'sale.late_ledger_entry',
+            summary: `Venta ${sale.folio} de controlados registrada en el libro de ` +
+                `${localMonthOf(sale.businessAt)} después de cerrado ese mes: ` +
+                'reexporta el libro de ese periodo',
+            metadata: {
+                folio: sale.folio,
+                businessAt: sale.businessAt.toDate().toISOString(),
+                recordedAt: input.recordedAt.toDate().toISOString(),
+            },
+        });
+    }
 };
 
 /**
@@ -1887,9 +2148,11 @@ const applyVoid = async (
         const reportedAt = reported?.voidedAt
             ? Timestamp.fromDate(new Date(reported.voidedAt))
             : null;
+        // El piso es la fecha de negocio (SPEC 51): una venta offline anulada en la
+        // caja antes de sincronizar tiene `createdAt` posterior a su anulación.
         const reportedIsSane = reportedAt !== null &&
             reportedAt.toMillis() <= serverNow.toMillis() &&
-            reportedAt.toMillis() >= existing.createdAt.toMillis();
+            reportedAt.toMillis() >= saleBusinessAt(existing).toMillis();
         const timestamp = reportedIsSane ? reportedAt : serverNow;
         // El cajero reportado solo se respeta cuando es quien está llamando o lo manda un
         // admin: antes cualquiera firmaba la anulación (y sus movimientos y el libro de
@@ -1924,11 +2187,15 @@ const applyVoid = async (
             });
         });
 
+        // Vuelve lo que salió de lotes, no lo cobrado: una partida con faltante
+        // (SPEC 52) solo descontó `batchAllocations`.
         const stockDeltaByProduct = new Map<string, number>();
         for (const item of voidedProductItems) {
+            const allocated = item.batchAllocations
+                .reduce((sum, allocation) => sum + allocation.quantity, 0);
             stockDeltaByProduct.set(
                 item.productId,
-                (stockDeltaByProduct.get(item.productId) ?? 0) + item.quantity,
+                (stockDeltaByProduct.get(item.productId) ?? 0) + allocated,
             );
         }
         productIds.forEach((productId, index) => {
@@ -1968,10 +2235,14 @@ const applyVoid = async (
         }
 
         transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author });
-        // Resta del día en que se hizo la venta, no del día de la anulación.
+        // Resta del día en que se hizo la venta (su fecha de negocio, SPEC 51), no
+        // del día de la anulación.
         dailyStatsRepo.applySaleDelta(
             transaction,
-            { createdAt: existing.createdAt.toDate(), totalCents: toCents(existing.total) },
+            {
+                createdAt: saleBusinessAt(existing).toDate(),
+                totalCents: toCents(existing.total),
+            },
             -1,
         );
 
@@ -2049,6 +2320,12 @@ export const listSales = async (filters: {
     search?: string;
     /** Solo las marcadas con `promotionReview` (promo aceptada fuera de vigencia). */
     promotionReview?: boolean;
+    /**
+     * Solo las ventas offline con esta marca de revisión (SPEC 52): faltante de
+     * stock, catálogo inactivo o turno ya cerrado. Filtro en memoria sobre la
+     * ventana de fechas, como `promotionReview` con turno.
+     */
+    review?: SaleReviewKind;
     /** Solo las de esta forma de pago (SPEC 19). */
     paymentMethod?: PaymentMethod;
     page?: number;
@@ -2087,7 +2364,9 @@ export const listSales = async (filters: {
         }),
     ).length > 0;
 
-    if (!filters.search && (!wantsFieldFilter || inQuery)) {
+    // La marca de revisión (SPEC 52) siempre corre en memoria: son pocas ventas y
+    // la ventana tiene fecha, no vale un índice por marca.
+    if (!filters.search && !filters.review && (!wantsFieldFilter || inQuery)) {
         const result = await salesRepo.listSalesPage({
             from: filters.from,
             to: filters.to,
@@ -2121,6 +2400,10 @@ export const listSales = async (filters: {
 
     if (filters.promotionReview) {
         filtered = filtered.filter((sale) => sale.promotionReview === true);
+    }
+
+    if (filters.review) {
+        filtered = filtered.filter(SALE_REVIEW_FILTERS[filters.review]);
     }
 
     if (filters.paymentMethod) {

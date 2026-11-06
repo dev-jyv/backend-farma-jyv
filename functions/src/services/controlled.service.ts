@@ -135,7 +135,10 @@ export interface LedgerWriteInput {
     prescriptionRetained: boolean;
     customerName: string | null;
     userId: string;
+    /** Fecha del hecho; en una venta, su fecha de negocio (SPEC 51). */
     createdAt: FirebaseFirestore.Timestamp;
+    /** Hora del servidor al registrar el renglón (SPEC 51). */
+    recordedAt?: FirebaseFirestore.Timestamp;
 }
 
 /**
