@@ -103,6 +103,14 @@ export const posDiagnosticsSchema = z.object({
             name: text(),
             pushError: nullableText(),
             catalogPushError: nullableText(),
+            // Opcionales: las cajas sin actualizar no los mandan y su reporte se
+            // sigue aceptando. Sirven para que el panel identifique el producto
+            // (dos altas pueden llamarse igual) y vea cuánto stock no ha subido.
+            sku: nullableText(64),
+            barcode: nullableText(64),
+            stock: z.number().finite().nullish().transform((value) => value ?? null),
+            createdAt: z.string().nullish().transform((value) =>
+                value == null ? null : truncate(64)(value)),
         }),
         POS_DIAGNOSTICS_LIMITS.unsyncedProducts,
     ),

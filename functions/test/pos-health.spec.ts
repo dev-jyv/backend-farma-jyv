@@ -2,6 +2,7 @@ import * as posHealthService from '../src/services/pos-health.service';
 import { evaluateBlockedSalesAlert } from '../src/services/pos-health-alerts.service';
 import * as auditRepo from '../src/repositories/audit-logs.repository';
 import * as rolesRepo from '../src/repositories/roles.repository';
+import * as usersRepo from '../src/repositories/users.repository';
 import { seedSystemRoles } from '../src/services/roles.service';
 import {
     POS_DIAGNOSTICS_LIMITS,
@@ -116,6 +117,31 @@ describe('posDiagnosticsSchema', () => {
             name: 'Aspirina',
             pushError: null,
             catalogPushError: null,
+            sku: null,
+            barcode: null,
+            stock: null,
+            createdAt: null,
+        });
+    });
+
+    it('conserva SKU, código, stock y fecha del producto sin subir', () => {
+        const parsed = posDiagnosticsSchema.parse(diagnostico({
+            unsyncedProducts: [{
+                localId: 'p1',
+                name: 'Cefalver',
+                pushError: null,
+                catalogPushError: 'Ya existe un producto con ese nombre',
+                sku: 'CEF-500',
+                barcode: '7501234567890',
+                stock: 12,
+                createdAt: '2026-11-05T17:00:00.000Z',
+            }],
+        }));
+        expect(parsed.unsyncedProducts[0]).toMatchObject({
+            sku: 'CEF-500',
+            barcode: '7501234567890',
+            stock: 12,
+            createdAt: '2026-11-05T17:00:00.000Z',
         });
     });
 
@@ -336,6 +362,31 @@ describe('listDiagnostics / getDeviceDiagnostics', () => {
         expect(detalle.snapshot.pendingCommands).toBe(1);
         expect(detalle.commands.map((command) => command.id)).toEqual([b.id, a.id]);
         expect(detalle.commands[1]).toMatchObject({ status: 'failed', result: 'sin red' });
+    });
+
+    it('resuelve el nombre de quien reportó y de quien mandó cada comando', async () => {
+        const perfil = (displayName: string, email: string) => ({
+            email, displayName, roleId: 'r', isActive: true,
+        }) as never;
+        await usersRepo.createUserProfile(CAJERO, perfil('Ana Cajera', 'ana@x.mx'));
+        await usersRepo.createUserProfile(ADMIN.userId, perfil('Victor Admin', 'v@x.mx'));
+        await posHealthService.reportDiagnostics(diagnostico(), CAJERO);
+        await posHealthService.createCommand(
+            { deviceId: 'caja-01', type: 'retrySale', targetLocalId: 'v1', note: null }, ADMIN,
+        );
+        await posHealthService.createCommand(
+            { deviceId: 'caja-01', type: 'retryProduct', targetLocalId: 'p1', note: null },
+            { userId: 'uid-borrado', roleSlug: 'admin' },
+        );
+
+        const detalle = await posHealthService.getDeviceDiagnostics('caja-01');
+        expect(detalle.snapshot.reportedByName).toBe('Ana Cajera');
+        const porTipo = new Map(detalle.commands.map((command) => [command.type, command]));
+        expect(porTipo.get('retrySale')?.createdByName).toBe('Victor Admin');
+        // Un usuario que ya no existe no rompe la pantalla: queda sin nombre.
+        expect(porTipo.get('retryProduct')?.createdByName).toBeNull();
+        const [enLista] = await posHealthService.listDiagnostics();
+        expect(enLista.reportedByName).toBe('Ana Cajera');
     });
 
     it('404 si la caja nunca reportó', async () => {
