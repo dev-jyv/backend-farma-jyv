@@ -27,6 +27,8 @@ const unique = (label: string) => `${label}-${Math.random().toString(36).slice(2
 const cortePara = (doc: { updatedAt: FirebaseFirestore.Timestamp }): string =>
     doc.updatedAt.toDate().toISOString();
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const crearCategorias = async (cuantas: number, etiqueta: string) => {
     const ids: string[] = [];
     for (let i = 0; i < cuantas; i += 1) {
@@ -53,6 +55,9 @@ describe('listCategoriesForSync', () => {
     it('con updatedSince solo trae lo modificado desde el corte', async () => {
         const etiqueta = unique('Cat');
         const [primera] = await crearCategorias(3, etiqueta);
+        // El corte es `>=`: si la última alta cae en el mismo milisegundo que la
+        // edición, entra al delta (bajo carga pasaba). Se separan a propósito.
+        await sleep(5);
 
         const renombrada = await categoriesRepo.updateCategory(primera, {
             name: `${etiqueta}-renombrada`,

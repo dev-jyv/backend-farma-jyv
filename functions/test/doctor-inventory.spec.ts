@@ -228,6 +228,10 @@ describe('GET /doctor/inventory - delta por updatedSince', () => {
 
         await sleep(20);
         await productsRepo.updateProduct(aDesactivar.id, { isActive: false });
+        // `serverTime` del delta se compara con `>=`: si cae en el mismo
+        // milisegundo que la edición, el siguiente delta la repite (a propósito:
+        // mejor repetir que perder). Bajo carga pasaba; se separan.
+        await sleep(5);
 
         const delta = await doctorInventory.getDoctorInventory(cursor);
         expect(delta.meta).toMatchObject({ full: false, total: 1 });
