@@ -2098,6 +2098,11 @@ export interface PosDiagnosticsInput {
      * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
      */
     lastLocalBackupAt?: string | null;
+    /**
+     * Desfase del reloj de la caja en ms (SPEC 65): servidor − caja, positivo si
+     * la caja va atrasada. Ausente en cajas anteriores; al leer se normaliza a `null`.
+     */
+    clockSkewMs?: number | null;
 }
 
 export type PosCommandType =

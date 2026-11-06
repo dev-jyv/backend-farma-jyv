@@ -147,6 +147,13 @@ export const posDiagnosticsSchema = z.object({
      * actualizar no la manda y su reporte se tiene que seguir aceptando.
      */
     lastLocalBackupAt: clientDate.nullable().optional(),
+    /**
+     * Desfase del reloj de la caja contra el header `Date` de la API, en ms
+     * (SPEC 65): `hora del servidor − hora de la caja`, positivo si la caja va
+     * atrasada. `null` si no ha podido medirlo (sin red desde que arrancó).
+     * Opcional: las cajas sin actualizar no lo mandan.
+     */
+    clockSkewMs: z.number().finite().nullable().optional(),
 });
 
 export const posCommandTypeSchema = z.enum([

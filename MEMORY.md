@@ -36,7 +36,7 @@ Contexto persistente del proyecto **FarmaJyV Backend** para retomar trabajo ráp
 | `appointments` | Citas (`startAt`/`endAt`, `durationMinutes`, `status`, `cancelReason`, `medicalRecordId`) |
 | `promotions` | Promociones por cantidad (`rule` inmutable: `tiered`/`nxm`/`percent`, `productIds[]`, `startsAt`/`endsAt`, `isActive`, `deactivatedAt`); baja lógica |
 | `coupons` | Cupones (SPEC 47). **Id = código normalizado** (`[A-Z0-9-]{4,20}`, no reciclable); `scope` `product`/`sale`, `productIds[]`, `discount` `{percent}`/`{amount}`, `minPurchase`, `startsAt`/`endsAt`, `maxUses`, `usedCount` (lo sube la transacción de la venta), `isActive`/`deactivatedAt`. Inmutables salvo la baja. Solo API |
-| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor), `reportedBy`, `openCashSessionId` (lo informa el POS; ausente en POS viejo) y `silenceAlertedAt` (aviso de silencio dado; cada reporte lo pone en `null`); opcional `lastLocalBackupAt` (última copia local de rutina, SPEC 37; ausente se lee `null`). Solo API |
+| `posDiagnostics` | Salud de cajas: un doc por caja (`{deviceId}`), **sobrescrito** en cada reporte (ventas bloqueadas, turnos/productos sin subir, corridas y bitácora de sync) + `receivedAt` (servidor), `reportedBy`, `openCashSessionId` (lo informa el POS; ausente en POS viejo) y `silenceAlertedAt` (aviso de silencio dado; cada reporte lo pone en `null`); opcional `lastLocalBackupAt` (última copia local de rutina, SPEC 37; ausente se lee `null`) y `clockSkewMs` (desfase del reloj de la caja, servidor − caja en ms, positivo = caja atrasada, SPEC 65; ausente se lee `null`). Solo API |
 | `unreconciledSales` | Ventas cobradas en caja que el servidor no pudo registrar (SPEC 53). **Id `<deviceId\|cashierId>:<localId>`** escrito con `create` (reenvío = devuelve el existente; docs viejos con id = `localId` se siguen leyendo y resolviendo), `deviceId`, `payload` (el `CreateSalePayload`), `resolvedAt`/`resolvedBy`, `resolution` `register`/`discard`, `resolutionReason`, `resolvedSaleId`. Solo API |
 | `posCommands` | Comandos remotos admin → caja (`retrySale`/`retryCashSession`/`retryProduct`/`sendSaleToUnreconciled`), `status` `pending`→`done`/`failed`, `completedBy`. Solo API |
 
@@ -169,7 +169,7 @@ Declarados una vez en `functions/src/config/secrets.ts` (`defineSecret`), leído
 
 ## Variables de entorno ([functions/.env](functions/.env) / `.env.<proyecto>`, no versionados, sin secretos)
 
-- `CORS_ORIGINS` — allowlist separado por comas.
+- `CORS_ORIGINS` — allowlist separado por comas. CORS expone el header `Date` (`Access-Control-Expose-Headers`, SPEC 65) para que caja y panel midan el desfase de su reloj.
 - `APP_CHECK_MODE` — `off` | `log` (SPEC 41). `AppCheckGuard` solo registra peticiones sin `X-Firebase-AppCheck` válido, nunca rechaza. Sin la variable: `log` desplegado, `off` en emulador. Consulta guardada: `docs/logging/app-check-sin-token.sql` (RUNBOOK §13).
 - `FIRESTORE_BACKUP_BUCKET` — bucket destino del respaldo nocturno, sin `gs://`. Sin él `dailyFirestoreBackup` truena en vez de adivinar. Hoy: `farma-jyv-respaldos-firestore`.
 - `MERCADOPAGO_PUBLIC_KEY` — Public Key (frontend); el backend no la consume.
