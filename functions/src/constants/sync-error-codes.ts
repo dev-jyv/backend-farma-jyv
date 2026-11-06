@@ -39,6 +39,9 @@ export const SYNC_ERROR_CODES = [
     'ALREADY_VOIDED',
     'HAS_RETURNS',
     'VOID_FORBIDDEN',
+    // Catálogo editado en la caja después de que el panel cambió precio o
+    // estado (SPEC 56): conflicto visible, no se reintenta solo.
+    'CATALOG_CONFLICT',
     // Cualquier error no previsto (Firestore `ABORTED`, caída de un servicio...).
     'INTERNAL',
 ] as const;

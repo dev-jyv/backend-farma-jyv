@@ -192,7 +192,7 @@ const buildRequestFingerprint = (input: {
     items: FingerprintLine[];
     total: number;
     paymentMethod: PaymentMethod;
-    cashSessionId: string;
+    cashSessionId: string | null;
     couponCode?: string;
 }): string => createHash('sha256')
     .update(JSON.stringify({
@@ -251,7 +251,7 @@ const buildPayloadFingerprint = (input: {
     items: SaleItemInput[];
     saleDiscountAmount?: number;
     paymentMethod: PaymentMethod;
-    cashSessionId: string;
+    cashSessionId: string | null;
     couponCode?: string;
 }): string => {
     const cents = (value: number | undefined): number | null =>
@@ -298,7 +298,7 @@ const buildLegacyRequestFingerprint = async (input: {
     items: SaleItemInput[];
     saleDiscountAmount?: number;
     paymentMethod: PaymentMethod;
-    cashSessionId: string;
+    cashSessionId: string | null;
     couponCode?: string;
 }): Promise<string | null> => {
     const productIds = input.items.flatMap((item) => (item.kind !== 'service'
@@ -869,7 +869,12 @@ const applySale = async (input: {
     cardPaymentReference?: string;
     /** Reparto con tarjeta en mixto sin terminal Point (ver `resolveTender`). */
     cardAmount?: number;
-    cashSessionId: string;
+    /**
+     * Turno al que entra la venta. Solo puede faltar al registrar una venta no
+     * conciliada que nunca tuvo turno (SPEC 53): `POST /sales` y `/sales/bulk`
+     * lo exigen en el esquema.
+     */
+    cashSessionId?: string | null;
     cashierId: string;
     customerId?: string;
     customerName?: string;
@@ -915,7 +920,10 @@ const applySale = async (input: {
 
     const firestore = db();
     const saleRef = firestore.collection('sales').doc();
-    const cashSessionRef = firestore.collection('cashSessions').doc(input.cashSessionId);
+    const cashSessionId = input.cashSessionId ?? null;
+    const cashSessionRef = cashSessionId
+        ? firestore.collection('cashSessions').doc(cashSessionId)
+        : null;
     const counterRef = firestore.collection('counters').doc(SALES_COUNTER_ID);
     const timestamp = now();
     const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
@@ -929,7 +937,7 @@ const applySale = async (input: {
         items: input.items,
         saleDiscountAmount: input.saleDiscountAmount,
         paymentMethod: input.paymentMethod,
-        cashSessionId: input.cashSessionId,
+        cashSessionId,
         couponCode,
     });
     // Autor original (SPEC 54). Quien llama es `input.cashierId`; `soldBy` solo
@@ -942,7 +950,7 @@ const applySale = async (input: {
     const idempotencyCollection = firestore.collection(IDEMPOTENCY_COLLECTION);
     const idempotencyRef = input.idempotencyKey
         ? idempotencyCollection.doc(buildIdempotencyDocId({
-            cashSessionId: input.cashSessionId,
+            cashSessionId,
             soldBy: soldByCandidate,
             callerId,
         }, input.idempotencyKey))
@@ -966,7 +974,7 @@ const applySale = async (input: {
             // resolver, sigue la ruta de siempre y la transacción decide.
             const resolved = typeof stored.payloadFingerprint === 'string'
                 ? null
-                : await buildLegacyRequestFingerprint({ ...input, couponCode });
+                : await buildLegacyRequestFingerprint({ ...input, cashSessionId, couponCode });
             if (typeof stored.payloadFingerprint === 'string' ||
                 (resolved !== null && resolved === stored.requestFingerprint)) {
                 const existingSaleDoc = await firestore
@@ -1038,8 +1046,8 @@ const applySale = async (input: {
             // abrió decide si vale el `soldBy` (SPEC 54); solo hace falta con
             // alguno de los dos offline. `openedAt` y `openedBy` no cambian:
             // basta leerlos aquí (la transacción vuelve a comprobar `openedBy`).
-            hasSoldAt || soldByCandidate
-                ? cashSessionsRepo.getCashSessionById(input.cashSessionId)
+            (hasSoldAt || soldByCandidate) && cashSessionId
+                ? cashSessionsRepo.getCashSessionById(cashSessionId)
                 : Promise.resolve(null),
         ]);
     cartProductIds.forEach((productId, index) => {
@@ -1479,7 +1487,7 @@ const applySale = async (input: {
             items: saleItems,
             total,
             paymentMethod: input.paymentMethod,
-            cashSessionId: input.cashSessionId,
+            cashSessionId,
             couponCode,
         }),
     };
@@ -1617,7 +1625,7 @@ const applySale = async (input: {
         // Firestore reintenta este callback y el reparto se rehace sobre el
         // estado fresco, en vez de rechazar con stock en otro lote.
         const [cashSessionDoc, counterDoc, productDocs, batchSnapshots] = await Promise.all([
-            transaction.get(cashSessionRef),
+            cashSessionRef ? transaction.get(cashSessionRef) : Promise.resolve(null),
             transaction.get(counterRef),
             Promise.all(productIds.map((productId) =>
                 transaction.get(firestore.collection('products').doc(productId)))),
@@ -1625,25 +1633,30 @@ const applySale = async (input: {
                 transaction.get(batchesRepo.availableBatchesQuery(productId)))),
         ]);
 
-        if (!cashSessionDoc.exists) {
+        // Sin turno solo llega una venta no conciliada que nunca lo tuvo (SPEC 53).
+        if (cashSessionDoc && !cashSessionDoc.exists) {
             throw notFound('Turno de caja');
         }
         // El turno es de quien lo abrió: sin esto un cajero puede cargar ventas en
         // efectivo al turno de otro y dejarle el faltante en su corte. Con un
         // `soldBy` válido (SPEC 54) cualquiera con `pos:write` sube la cola de
         // ese turno: la venta es de quien lo abrió, no de quien sincroniza.
-        const sessionOpenedBy = cashSessionDoc.data()!.openedBy as string;
-        if (soldByValid) {
-            assertCanAccessSession({ openedBy: sessionOpenedBy }, cashierId, null);
-        } else {
-            assertCanAccessSession({ openedBy: sessionOpenedBy }, callerId, input.roleSlug);
+        // Sin turno (venta no conciliada que nunca lo tuvo, SPEC 53) no hay a quién
+        // proteger: no entra a ningún corte.
+        if (cashSessionDoc) {
+            const sessionOpenedBy = cashSessionDoc.data()!.openedBy as string;
+            if (soldByValid) {
+                assertCanAccessSession({ openedBy: sessionOpenedBy }, cashierId, null);
+            } else {
+                assertCanAccessSession({ openedBy: sessionOpenedBy }, callerId, input.roleSlug);
+            }
         }
         // Turno cerrado (SPEC 52): una venta offline cobrada **antes** del cierre
         // se registra en ese turno marcada `lateSync`, y el turno queda con ajuste
         // pendiente y el efectivo que llegó tarde en `lateSales`. Cobrada después
         // del cierre (o sin fecha de cobro creíble, que entonces es la de
         // recepción) sigue siendo un rechazo.
-        const sessionClosedAt = cashSessionDoc.data()?.closedAt as Timestamp | null | undefined;
+        const sessionClosedAt = cashSessionDoc?.data()?.closedAt as Timestamp | null | undefined;
         const lateSync = Boolean(sessionClosedAt) && Boolean(input.offline) &&
             businessAt.toMillis() <= sessionClosedAt!.toMillis();
         if (sessionClosedAt && !lateSync) {
@@ -1765,9 +1778,9 @@ const applySale = async (input: {
             // el corte congelado, así que el turno vuelve a pedir revisión aunque
             // su ajuste ya se hubiera aprobado. Se suma sobre lo leído en esta
             // transacción, en centavos.
-            const previous = cashSessionDoc.data()?.lateSales as
+            const previous = cashSessionDoc?.data()?.lateSales as
                 { count?: number; cashTotal?: number } | undefined;
-            transaction.update(cashSessionRef, {
+            transaction.update(cashSessionRef!, {
                 hasPendingAdjustment: true,
                 adjustmentStatus: 'pending',
                 lateSales: {
@@ -1843,7 +1856,7 @@ const applySale = async (input: {
             cardAmount: tender.cardAmount,
             cardPaymentReference: pointPayment?.orderId ?? tender.cardPaymentReference,
             pointPayment,
-            cashSessionId: input.cashSessionId,
+            cashSessionId,
             cashierId,
             // Quien subió la venta, cuando no es quien la cobró (SPEC 54).
             ...(syncedBy ? { syncedBy } : {}),
@@ -1957,7 +1970,7 @@ const applySale = async (input: {
                     folio: sale.folio,
                     cashierId,
                     syncedBy,
-                    cashSessionId: input.cashSessionId,
+                    cashSessionId,
                 },
             }
             : {
@@ -1973,7 +1986,7 @@ const applySale = async (input: {
                     soldBy: soldByCandidate,
                     sessionOpenedBy: preloadedSession?.openedBy ?? null,
                     cashierId,
-                    cashSessionId: input.cashSessionId,
+                    cashSessionId,
                 },
             });
     }

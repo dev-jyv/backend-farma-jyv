@@ -55,7 +55,8 @@ export class ProductsController {
         const result = await productsService.listProductsForSync({
             updatedSince: query.updatedSince,
         });
-        return { data: result.items };
+        // `serverTime` se tomó antes de leer: es el cursor seguro de la caja (SPEC 56).
+        return { data: result.items, meta: { serverTime: result.serverTime } };
     }
 
     /**
@@ -75,6 +76,18 @@ export class ProductsController {
             granularity: query.granularity,
             periods: query.periods,
         });
+        return { data };
+    }
+
+    /**
+     * Existencia y lotes vendibles de un producto, para que la caja confirme el
+     * stock antes de negar una venta (SPEC 57). `products:read`, que el cajero
+     * tiene: no expone costos ni proveedores.
+     */
+    @Get(':id/stock')
+    @RequirePermission('products', 'read')
+    async stock(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
+        const data = await productsService.getProductStock(params.id);
         return { data };
     }
 
@@ -171,10 +184,13 @@ export class ProductsController {
         @Body(new ZodValidationPipe(updateProductSchema)) body: UpdateProductInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const product = await productsService.updateProduct(params.id, body, {
-            userId: user.uid,
-            roleSlug: user.role.slug,
-        });
+        const { baseUpdatedAt, ...changes } = body;
+        const product = await productsService.updateProduct(
+            params.id,
+            changes,
+            { userId: user.uid, roleSlug: user.role.slug },
+            { baseUpdatedAt },
+        );
         return { data: product };
     }
 

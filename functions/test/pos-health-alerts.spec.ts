@@ -354,13 +354,13 @@ describe('formato de hora y duración', () => {
 });
 
 describe('evaluateBlockedSalesAlert con el snapshot guardado', () => {
-    it('getPreviousBlockedSales devuelve null si la caja nunca reportó', async () => {
-        expect(await diagnosticsRepo.getPreviousBlockedSales('nunca')).toBeNull();
+    it('getPreviousReportState devuelve null si la caja nunca reportó', async () => {
+        expect(await diagnosticsRepo.getPreviousReportState('nunca')).toBeNull();
     });
 
     it('compara contra lo que quedó guardado (solo blockedSales)', async () => {
         await reportar({ blockedSales: [venta('v1')] });
-        const previo = await diagnosticsRepo.getPreviousBlockedSales('caja-01');
+        const previo = await diagnosticsRepo.getPreviousReportState('caja-01');
         expect(previo?.blockedSales.map((sale) => sale.localId)).toEqual(['v1']);
         expect(evaluateBlockedSalesAlert(previo, { blockedSales: [venta('v1')] }).shouldAlert)
             .toBe(false);

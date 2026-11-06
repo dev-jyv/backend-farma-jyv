@@ -1,4 +1,4 @@
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { Product } from '../types';
 import { AppError, badRequest } from '../utils/errors';
 import { PaginatedResult, paginateQuery } from '../utils/firestore-pagination';
@@ -192,19 +192,51 @@ const assertNameKeyFree = async (
 export const assertUniqueOutsideTransaction = (data: UniqueData): Promise<void> =>
     assertNoDuplicateWith((query) => query.get(), data);
 
-/** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
-const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;
+/**
+ * Campos que aceptan `null` en una edición para quitarse del documento: los de
+ * caja y el grupo COFEPRIS (desclasificar, SPEC 64). Se borran en vez de guardar
+ * `null` porque el resto del sistema lee la ausencia como "sin caja" / "sin grupo".
+ */
+const NULLABLE_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode', 'controlledGroup'] as const;
 
-type BoxPatch = {
+type NullablePatch = {
     boxQuantity?: number | null;
     boxPrice?: number | null;
     boxBarcode?: string | null;
+    controlledGroup?: Product['controlledGroup'] | null;
 };
 
 export type ProductPatch = Partial<Omit<
     Product,
-    'id' | 'createdAt' | 'updatedAt' | typeof BOX_FIELDS[number]
->> & BoxPatch;
+    | 'id'
+    | 'createdAt'
+    | 'updatedAt'
+    | 'salePriceChangedAt'
+    | 'isActiveChangedAt'
+    | typeof NULLABLE_FIELDS[number]
+>> & NullablePatch;
+
+/**
+ * Campos que el panel decide y que una caja con copia vieja no debe revertir
+ * (SPEC 56): un precio subido en el panel, o un producto dado de baja.
+ */
+const GUARDED_CATALOG_FIELDS = ['salePrice', 'isActive'] as const;
+
+const CHANGED_AT_FIELD: Record<typeof GUARDED_CATALOG_FIELDS[number], string> = {
+    salePrice: 'salePriceChangedAt',
+    isActive: 'isActiveChangedAt',
+};
+
+/** Valor vigente de los campos protegidos, para que la caja ofrezca "usar el del panel". */
+export interface CatalogConflict {
+    current: { salePrice: number; isActive: boolean };
+}
+
+export interface ProductUpdateResult {
+    product: Product;
+    /** `null` si no hubo conflicto; si lo hubo, los campos protegidos no se escribieron. */
+    conflict: CatalogConflict | null;
+}
 
 const assertBoxConfig = (
     product: Parameters<typeof boxConfigProblem>[0],
@@ -355,6 +387,37 @@ export const getProductsByIds = async (ids: string[]): Promise<Map<string, Produ
     return result;
 };
 
+/** Tope de referencias por `getAll`: bloques chicos para no armar una llamada enorme. */
+const STOCK_READ_CHUNK = 100;
+
+/**
+ * Nombre y `totalStock` de varios productos (SPEC 67), con `getAll` por bloques
+ * y máscara de campos: una lectura por producto, sin bajar el documento entero.
+ * Los ids que no existen no aparecen en el mapa.
+ */
+export const getStockByIds = async (
+    ids: readonly string[],
+): Promise<Map<string, { name: string; totalStock: number }>> => {
+    const unique = [...new Set(ids)];
+    const result = new Map<string, { name: string; totalStock: number }>();
+    for (let index = 0; index < unique.length; index += STOCK_READ_CHUNK) {
+        const chunk = unique.slice(index, index + STOCK_READ_CHUNK);
+        const docs = await db().getAll(
+            ...chunk.map((id) => collection().doc(id)),
+            { fieldMask: ['name', 'totalStock'] },
+        );
+        for (const doc of docs) {
+            if (doc.exists) {
+                result.set(doc.id, {
+                    name: String(doc.get('name') ?? doc.id),
+                    totalStock: Number(doc.get('totalStock') ?? 0),
+                });
+            }
+        }
+    }
+    return result;
+};
+
 export const createProduct = async (
     data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Product> => db().runTransaction(async (transaction) => {
@@ -380,21 +443,46 @@ export const createProduct = async (
 export const updateProduct = async (
     id: string,
     data: ProductPatch,
-): Promise<Product> => db().runTransaction(async (transaction) => {
+): Promise<Product> => (await updateProductChecked(id, data)).product;
+
+/**
+ * Edición de un producto con la precondición opcional de SPEC 56.
+ *
+ * Con `baseUpdatedAt` (el `updatedAt` de la copia de la caja): si `salePrice` o
+ * `isActive` cambiaron en el servidor **después** de esa fecha y el PATCH trae
+ * alguno de los dos con un valor distinto del vigente, esos dos campos no se
+ * escriben y se devuelve `conflict` con el valor actual. Los demás campos se
+ * aplican igual, en la misma transacción: el cajero que corrigió la
+ * concentración no la pierde porque el admin subió el precio.
+ *
+ * La decisión se toma contra el documento leído dentro de la transacción, no
+ * contra una lectura previa.
+ */
+export const updateProductChecked = async (
+    id: string,
+    data: ProductPatch,
+    options: { baseUpdatedAt?: string } = {},
+): Promise<ProductUpdateResult> => db().runTransaction(async (transaction) => {
     const docRef = collection().doc(id);
     const snapshot = await transaction.get(docRef);
     if (!snapshot.exists) {
         throw new Error('Producto no encontrado tras actualizar');
     }
+    const stored = snapshot.data() as Record<string, unknown>;
 
-    // `null` en un campo de caja lo quita del documento; `undefined` no lo toca.
-    const merged: Record<string, unknown> = { ...snapshot.data() };
+    const catalogConflict = detectCatalogConflict(stored, data, options.baseUpdatedAt);
+
+    // `null` en un campo de `NULLABLE_FIELDS` lo quita del documento; `undefined` no lo toca.
+    const merged: Record<string, unknown> = { ...stored };
     const write: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
         if (value === undefined) {
             continue;
         }
-        if (value === null && (BOX_FIELDS as readonly string[]).includes(key)) {
+        if (catalogConflict && (GUARDED_CATALOG_FIELDS as readonly string[]).includes(key)) {
+            continue;
+        }
+        if (value === null && (NULLABLE_FIELDS as readonly string[]).includes(key)) {
             delete merged[key];
             write[key] = FieldValue.delete();
             continue;
@@ -433,7 +521,59 @@ export const updateProduct = async (
         assertBoxConfig(merged as unknown as Product, { checkPrice: writesBoxPrice });
     }
 
+    // Un conflicto que no deja nada más que escribir no toca el documento: subir
+    // `updatedAt` sin cambio haría que todas las cajas lo volvieran a bajar.
+    if (catalogConflict && Object.keys(write).length === 0) {
+        return { product: { ...stored, id } as Product, conflict: catalogConflict };
+    }
+
     const timestamp = now();
+    // Cuándo cambió de verdad el precio o el estado: solo si el valor se movió.
+    for (const field of GUARDED_CATALOG_FIELDS) {
+        if (field in write && write[field] !== stored[field]) {
+            write[CHANGED_AT_FIELD[field]] = timestamp;
+            merged[CHANGED_AT_FIELD[field]] = timestamp;
+        }
+    }
     transaction.update(docRef, { ...write, updatedAt: timestamp });
-    return { ...merged, id, updatedAt: timestamp } as Product;
+    return {
+        product: { ...merged, id, updatedAt: timestamp } as Product,
+        conflict: catalogConflict,
+    };
 });
+
+/** Milisegundos enteros: `baseUpdatedAt` viaja como ISO (ms) y el Timestamp trae µs. */
+const changedAtMillis = (value: unknown): number | null =>
+    value instanceof Timestamp ? Math.floor(value.toMillis()) : null;
+
+const detectCatalogConflict = (
+    stored: Record<string, unknown>,
+    data: ProductPatch,
+    baseUpdatedAt: string | undefined,
+): CatalogConflict | null => {
+    if (!baseUpdatedAt) {
+        return null;
+    }
+    const baseMs = Date.parse(baseUpdatedAt);
+    if (!Number.isFinite(baseMs)) {
+        return null;
+    }
+    const touchesGuarded = GUARDED_CATALOG_FIELDS.some((field) =>
+        data[field] !== undefined && data[field] !== stored[field]);
+    if (!touchesGuarded) {
+        return null;
+    }
+    const changedAfterBase = GUARDED_CATALOG_FIELDS.some((field) => {
+        const changedAt = changedAtMillis(stored[CHANGED_AT_FIELD[field]]);
+        return changedAt !== null && changedAt > baseMs;
+    });
+    if (!changedAfterBase) {
+        return null;
+    }
+    return {
+        current: {
+            salePrice: stored.salePrice as number,
+            isActive: stored.isActive as boolean,
+        },
+    };
+};

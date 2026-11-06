@@ -157,6 +157,9 @@ describe('reporte de ventas: promociones por revisar', () => {
             catalog: { count: 0, folios: [] },
             late: { count: 0, folios: [] },
         },
+        unreconciledPending: { count: 0, total: 0 },
+        priceDeviation: { count: 0, amount: 0, threshold: 200, alert: false },
+        controlledGroupChanges: [],
     });
 
     it('lista folios e invita a revisarlas en el historial del admin', () => {

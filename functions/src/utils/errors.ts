@@ -9,8 +9,9 @@ export interface AppErrorOptions {
     /** Por default lo decide el código (o el status ≥ 500 si no hay código). */
     retryable?: boolean;
     /**
-     * Datos de apoyo que viajan en `error.details` junto al código, p. ej. la
-     * entrada existente de un posible duplicado (SPEC 58).
+     * Datos de apoyo que viajan en `error.details` junto a `code` y `retryable`
+     * (nunca los pisan), p. ej. la entrada existente de un posible duplicado
+     * (SPEC 58) o `current` en `CATALOG_CONFLICT` (SPEC 56).
      */
     details?: Record<string, unknown>;
 }

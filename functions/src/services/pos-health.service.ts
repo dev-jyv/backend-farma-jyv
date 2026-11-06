@@ -1,16 +1,29 @@
 import { recordAudit, AuditActor } from './audit.service';
-import { BlockedSalesAlertDecision, evaluateBlockedSalesAlert } from './pos-health-alerts.service';
+import {
+    BlockedSalesAlertDecision,
+    compareStockSample,
+    comparableSample,
+    evaluateBlockedSalesAlert,
+    isStockDriftFromToday,
+    repeatedStockDivergences,
+} from './pos-health-alerts.service';
+import { getPosMinVersion } from '../config/env';
 import * as diagnosticsRepo from '../repositories/pos-diagnostics.repository';
 import * as commandsRepo from '../repositories/pos-commands.repository';
+import * as productsRepo from '../repositories/products.repository';
 import * as usersRepo from '../repositories/users.repository';
 import {
     PosCommand,
     PosCommandType,
     PosDiagnosticsInput,
     PosDiagnosticsSnapshot,
+    PosStockDivergence,
+    PosStockDrift,
+    PosStockSampleItem,
 } from '../types';
 import { conflict, notFound } from '../utils/errors';
 import { db, now } from '../utils/firestore';
+import { isVersionBelow } from '../utils/version';
 
 /**
  * Salud de cajas: la caja sube su diagnóstico y recoge en la misma respuesta
@@ -77,23 +90,20 @@ export const fitDiagnosticsToDocument = (
 export const BLOCKED_SALES_ALERT_TIMEOUT_MS = 5_000;
 
 /**
- * Manda el correo de ventas bloqueadas **sin poder fallar**: cualquier error
- * (Resend caído, variable sin configurar, la propia carga del módulo) se queda
- * en el log, igual que `recordAudit`. La cadena de correo se importa aquí
- * dentro para no cargarla en el arranque en frío de `api`.
+ * Manda una alerta de cajas **sin poder fallar**: cualquier error (Resend
+ * caído, variable sin configurar, la propia carga del módulo) se queda en el
+ * log, igual que `recordAudit`. La cadena de correo se importa dentro de `send`
+ * para no cargarla en el arranque en frío de `api`. La espera se acota a
+ * `BLOCKED_SALES_ALERT_TIMEOUT_MS`: pasado el tope se responde a la caja.
  */
-const notifyBlockedSales = async (
-    input: PosDiagnosticsInput,
-    decision: BlockedSalesAlertDecision,
-    reportedAt: Date,
+const notifyBounded = async (
+    label: string,
+    deviceId: string,
+    send: () => Promise<void>,
 ): Promise<void> => {
-    const send = (async () => {
-        const { sendBlockedSalesAlert } = await import('./pos-health-alerts-sender.service');
-        await sendBlockedSalesAlert(input, decision, reportedAt);
-    })().catch((error: unknown) => {
-        console.error('No se pudo mandar la alerta de ventas bloqueadas', {
-            deviceId: input.deviceId,
-            reason: decision.reason,
+    const sending = send().catch((error: unknown) => {
+        console.error(`No se pudo mandar la alerta de ${label}`, {
+            deviceId,
             error: error instanceof Error ? error.message : String(error),
         });
     });
@@ -101,17 +111,56 @@ const notifyBlockedSales = async (
     let timer: NodeJS.Timeout | undefined;
     const timeout = new Promise<void>((resolve) => {
         timer = setTimeout(() => {
-            console.warn('La alerta de ventas bloqueadas tardó más del tope; se responde igual', {
-                deviceId: input.deviceId,
+            console.warn(`La alerta de ${label} tardó más del tope; se responde igual`, {
+                deviceId,
             });
             resolve();
         }, BLOCKED_SALES_ALERT_TIMEOUT_MS);
     });
     try {
-        await Promise.race([send, timeout]);
+        await Promise.race([sending, timeout]);
     } finally {
         clearTimeout(timer);
     }
+};
+
+const notifyBlockedSales = (
+    input: PosDiagnosticsInput,
+    decision: BlockedSalesAlertDecision,
+    reportedAt: Date,
+): Promise<void> => notifyBounded('ventas bloqueadas', input.deviceId, async () => {
+    const { sendBlockedSalesAlert } = await import('./pos-health-alerts-sender.service');
+    await sendBlockedSalesAlert(input, decision, reportedAt);
+});
+
+/** SPEC 67: misma divergencia de stock dos días seguidos, al correo de alertas de cajas. */
+const notifyStockDrift = (
+    input: PosDiagnosticsInput,
+    repeated: PosStockDivergence[],
+    drift: PosStockDrift,
+): Promise<void> => notifyBounded('stock divergente', input.deviceId, async () => {
+    const { sendStockDriftAlert } = await import('./pos-health-alerts-sender.service');
+    await sendStockDriftAlert(input, repeated, drift);
+});
+
+/**
+ * Compara la muestra de stock contra el servidor (SPEC 67), **a lo más una vez
+ * por caja al día**: si el snapshot previo ya trae una comparación de hoy, se
+ * conserva esa y no se lee nada. Sin muestra (POS viejo, o cualquier reporte
+ * que no sea el de la mañana) se arrastra la comparación anterior, porque el
+ * snapshot se sobrescribe completo en cada reporte.
+ */
+const resolveStockDrift = async (
+    sample: PosStockSampleItem[] | undefined,
+    previous: PosStockDrift | null,
+    nowDate: Date,
+): Promise<{ drift: PosStockDrift | null; compared: boolean }> => {
+    if (!sample || isStockDriftFromToday(previous, nowDate)) {
+        return { drift: previous, compared: false };
+    }
+    const items = comparableSample(sample);
+    const server = await productsRepo.getStockByIds(items.map((item) => item.productId));
+    return { drift: compareStockSample(items, server, nowDate), compared: true };
 };
 
 /**
@@ -128,19 +177,37 @@ export const reportDiagnostics = async (
     input: PosDiagnosticsInput,
     reportedBy: string,
 ): Promise<{ commands: PosCommand[] }> => {
-    const fitted = fitDiagnosticsToDocument(input);
+    // La muestra de stock no se guarda: solo su comparación (`stockDrift`).
+    const { stockSample, ...report } = input;
+    const fitted = fitDiagnosticsToDocument(report);
     const [previous, commands] = await Promise.all([
-        diagnosticsRepo.getPreviousBlockedSales(input.deviceId),
+        diagnosticsRepo.getPreviousReportState(input.deviceId),
         commandsRepo.listPendingForDevice(input.deviceId),
     ]);
-    await diagnosticsRepo.saveDiagnostics(fitted, reportedBy);
+    const nowDate = new Date();
+    const stock = await resolveStockDrift(stockSample, previous?.stockDrift ?? null, nowDate);
+    await diagnosticsRepo.saveDiagnostics({ ...fitted, stockDrift: stock.drift }, reportedBy);
 
     const decision = evaluateBlockedSalesAlert(previous, fitted);
     if (decision.shouldAlert) {
-        await notifyBlockedSales(fitted, decision, new Date());
+        await notifyBlockedSales(fitted, decision, nowDate);
+    }
+    if (stock.compared && stock.drift) {
+        const repeated = repeatedStockDivergences(previous?.stockDrift, stock.drift);
+        if (repeated.length > 0) {
+            await notifyStockDrift(fitted, repeated, stock.drift);
+        }
     }
     return { commands };
 };
+
+/** Calculado al leer: cambiar `POS_MIN_VERSION` no obliga a que las cajas reporten. */
+function withMinVersion<T extends { appVersion: string }>(
+    snapshot: T,
+    minVersion: string | null,
+): T & { belowMinVersion: boolean } {
+    return { ...snapshot, belowMinVersion: isVersionBelow(snapshot.appVersion, minVersion) };
+}
 
 /**
  * uid → nombre visible, para que el panel no muestre uids. Usa el perfil
@@ -165,11 +232,12 @@ export const listDiagnostics = async (): Promise<PosDiagnosticsSnapshot[]> => {
         commandsRepo.countPendingByDevice(),
     ]);
     const names = await resolveUserNames(snapshots.map((snapshot) => snapshot.reportedBy));
-    return snapshots.map((snapshot) => ({
+    const minVersion = getPosMinVersion();
+    return snapshots.map((snapshot) => withMinVersion({
         ...snapshot,
         reportedByName: names.get(snapshot.reportedBy) ?? null,
         pendingCommands: pendingByDevice.get(snapshot.deviceId) ?? 0,
-    }));
+    }, minVersion));
 };
 
 export const getDeviceDiagnostics = async (
@@ -188,11 +256,11 @@ export const getDeviceDiagnostics = async (
         ...commands.map((command) => command.createdBy),
     ]);
     return {
-        snapshot: {
+        snapshot: withMinVersion({
             ...snapshot,
             reportedByName: names.get(snapshot.reportedBy) ?? null,
             pendingCommands,
-        },
+        }, getPosMinVersion()),
         commands: commands.map((command) => ({
             ...command,
             createdByName: names.get(command.createdBy) ?? null,

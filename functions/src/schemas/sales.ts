@@ -13,6 +13,7 @@ import {
 } from './common';
 import { withMaxSpan } from '../utils/report-range';
 import { couponCodeSchema } from './coupons';
+import { posDeviceIdSchema } from './pos-health';
 
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
     schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
@@ -94,8 +95,20 @@ export const voidSaleSchema = z.preprocess(
  * `unreconciledSales`, no en `sales`.
  */
 export const createUnreconciledSaleSchema = z.object({
-    /** Id de la venta en el SQLite de la caja: liga las dos bases y evita duplicados. */
-    localId: z.string().min(1).max(128),
+    /**
+     * Id de la venta en el SQLite de la caja: liga las dos bases y evita
+     * duplicados. Forma parte del id del documento (`<caja>:<localId>`), así que
+     * solo admite caracteres seguros: un `/` lo volvería una subcolección (500).
+     */
+    localId: z.string().regex(
+        /^[A-Za-z0-9_-]{1,128}$/,
+        'localId solo admite letras, números, "_" y "-" (máximo 128)',
+    ),
+    /**
+     * Caja que la cobró (`posDiagnostics/{deviceId}`). Opcional para POS viejos:
+     * sin ella el id del documento se arma con el cajero (SPEC 53).
+     */
+    deviceId: posDeviceIdSchema.optional(),
     localFolio: z.string().max(80).optional(),
     reason: z.string().trim().min(1).max(500),
     total: money,
@@ -103,6 +116,24 @@ export const createUnreconciledSaleSchema = z.object({
     cashSessionId: z.string().min(1).optional(),
     /** `CreateSalePayload` tal como se intentó registrar; se guarda íntegro. */
     payload: z.record(z.string(), z.unknown()),
+});
+
+/**
+ * Resolver una venta no conciliada (SPEC 53): registrarla como venta con el
+ * payload guardado, o descartarla. Descartar exige un motivo de al menos 5
+ * caracteres: es dinero cobrado que no va a aparecer en ningún reporte.
+ */
+export const resolveUnreconciledSaleSchema = z.object({
+    action: z.enum(['register', 'discard']),
+    reason: z.string().trim().max(500).optional(),
+}).superRefine((data, ctx) => {
+    if (data.action === 'discard' && (data.reason ?? '').length < 5) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Para descartar la venta escribe un motivo de al menos 5 caracteres',
+            path: ['reason'],
+        });
+    }
 });
 
 export const listUnreconciledSalesQuerySchema = z.object({
@@ -177,7 +208,7 @@ export const saleLineItemSchema = z.preprocess(
     z.discriminatedUnion('kind', [saleProductItemSchema, saleServiceItemSchema]),
 );
 
-export const createSaleSchema = z.object({
+const createSaleFields = z.object({
     idempotencyKey: nullable(idempotencyKeySchema),
     items: z.array(saleLineItemSchema).min(1).max(100),
     saleDiscountAmount: money.optional(),
@@ -223,7 +254,16 @@ export const createSaleSchema = z.object({
     soldBy: nullable(z.string().trim().min(1).max(128)),
     /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
     discountAuthorizedBy: nullable(z.string().trim().min(1).max(128)),
-}).superRefine((data, ctx) => {
+});
+
+/** Reglas de cobro que dependen de varios campos; las comparten la venta y su reintento. */
+const refineSaleTender = (
+    data: Pick<
+        z.infer<typeof createSaleFields>,
+        'paymentMethod' | 'amountReceived' | 'cardPaymentReference' | 'cardAmount'
+    >,
+    ctx: z.RefinementCtx,
+): void => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&
         data.amountReceived === undefined
@@ -270,7 +310,18 @@ export const createSaleSchema = z.object({
             path: ['cardAmount'],
         });
     }
-});
+};
+
+export const createSaleSchema = createSaleFields.superRefine(refineSaleTender);
+
+/**
+ * Payload guardado de una venta no conciliada, al registrarla (SPEC 53). Es el
+ * mismo `CreateSalePayload` que la caja intentó subir, con una diferencia: el
+ * turno puede faltar (la venta se registra sin turno).
+ */
+export const unreconciledSalePayloadSchema = createSaleFields
+    .extend({ cashSessionId: z.string().min(1).nullish() })
+    .superRefine(refineSaleTender);
 
 /** Ventas por lote: el POS trocea su cola en bloques de este tamaño (SPEC 48). */
 export const BULK_SALES_MAX_ITEMS = 50;

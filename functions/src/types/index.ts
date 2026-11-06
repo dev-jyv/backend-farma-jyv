@@ -156,6 +156,11 @@ export type AuditAction =
      * (SPEC 46). Se acepta —el POS sube precios sin red— y queda para revisión.
      */
     | 'product.box_price_review'
+    /**
+     * Cambió el grupo COFEPRIS del producto, incluida la desclasificación a
+     * `null` (SPEC 64). La caja puede hacerlo; queda aparte para el correo diario.
+     */
+    | 'product.controlled_group_changed'
     | 'product.deactivated'
     /**
      * Una entrada de la caja traía un producto nuevo que ya existía y se usó el
@@ -165,6 +170,8 @@ export type AuditAction =
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */
     | 'sale.unreconciled'
+    /** Venta no conciliada registrada como venta o descartada con motivo (SPEC 53). */
+    | 'sale.unreconciled_resolved'
     | 'sale.discount_override'
     /** Venta offline aceptada con una promoción fuera de vigencia; pide revisión. */
     | 'sale.promotion_out_of_window'
@@ -374,6 +381,15 @@ export interface Product {
     isActive: boolean;
     suppliers?: string[];
     lastCostPriceBySupplier?: Record<string, number>;
+    /**
+     * Última vez que cambió `salePrice` / `isActive` (SPEC 56). `updatedAt` no
+     * sirve para eso: sube con cada venta y cada entrada. Con ellos un PATCH de la
+     * caja que trae `baseUpdatedAt` sabe si el panel cambió el precio o el estado
+     * después de su copia. Ausentes en productos que no los han cambiado desde
+     * que existe el campo: entonces no hay conflicto que declarar.
+     */
+    salePriceChangedAt?: Timestamp;
+    isActiveChangedAt?: Timestamp;
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }
@@ -1308,10 +1324,18 @@ export interface PointPaymentSnapshot {
  * en `sales` descuadraría el inventario, así que vive aquí hasta que alguien la
  * concilie a mano.
  */
+export type UnreconciledSaleResolution = 'register' | 'discard';
+
 export interface UnreconciledSale {
+    /**
+     * `<deviceId|cashierId>:<localId>` (SPEC 53). Los documentos anteriores usan
+     * el `localId` solo y se listan y resuelven igual.
+     */
     id: string;
     /** Id de la venta en el SQLite de la caja: la liga entre las dos bases. */
     localId: string;
+    /** Caja que la cobró; `null` en POS viejos y documentos anteriores. */
+    deviceId: string | null;
     /** Folio provisional con el que se imprimió el ticket (`PENDIENTE-…`). */
     localFolio: string | null;
     /** Motivo con el que el backend rechazó la venta. */
@@ -1325,7 +1349,18 @@ export interface UnreconciledSale {
     occurredAt: Timestamp | null;
     resolvedAt: Timestamp | null;
     resolvedBy: string | null;
+    /** Cómo se resolvió; `null` pendiente o resuelta antes de SPEC 53. */
+    resolution: UnreconciledSaleResolution | null;
+    resolutionReason: string | null;
+    /** Venta creada al registrarla (`register`). */
+    resolvedSaleId: string | null;
     createdAt: Timestamp;
+}
+
+/** Fila del listado: con nombres para que el panel no muestre uids. */
+export interface UnreconciledSaleListItem extends UnreconciledSale {
+    cashierName: string | null;
+    deviceName: string | null;
 }
 
 export interface Sale {
@@ -2295,6 +2330,46 @@ export interface PosDiagnosticsInput {
      * ninguna. Ausente en cajas anteriores a SPEC 37; al leer se normaliza a `null`.
      */
     lastLocalBackupAt?: string | null;
+    /**
+     * Desfase del reloj de la caja en ms (SPEC 65): servidor − caja, positivo si
+     * la caja va atrasada. Ausente en cajas anteriores; al leer se normaliza a `null`.
+     */
+    clockSkewMs?: number | null;
+    /**
+     * Muestra diaria del stock local (SPEC 67). Solo viaja en la entrada: el
+     * snapshot guarda `stockDrift`, no la muestra.
+     */
+    stockSample?: PosStockSampleItem[];
+    /** Último error del actualizador automático (SPEC 67); `null` si no hubo. */
+    updateError?: string | null;
+    /** Última revisión de actualizaciones (reloj de la caja). */
+    updateCheckedAt?: string | null;
+}
+
+export interface PosStockSampleItem {
+    /** Id remoto del producto (Firestore). */
+    productId: string;
+    localStock: number;
+}
+
+/** Un producto con stock distinto en la caja y en el servidor (SPEC 67). */
+export interface PosStockDivergence {
+    productId: string;
+    /** `null` si el producto ya no existe en el servidor. */
+    name: string | null;
+    local: number;
+    /** `products.totalStock`; `null` si el producto ya no existe. */
+    server: number | null;
+}
+
+/** Resultado de comparar la muestra de stock de la caja con el servidor (SPEC 67). */
+export interface PosStockDrift {
+    /** Cuándo comparó el servidor (ISO, hora del servidor). */
+    checkedAt: string;
+    /** Productos comparados. */
+    compared: number;
+    /** Hasta 50 productos divergentes, en el orden de la muestra. */
+    diverging: PosStockDivergence[];
 }
 
 export type PosCommandType =
@@ -2323,7 +2398,14 @@ export interface PosCommand {
     result: string | null;
 }
 
-export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
+export interface PosDiagnosticsSnapshot extends Omit<PosDiagnosticsInput, 'stockSample'> {
+    /**
+     * Última comparación de stock (SPEC 67), arrastrada entre reportes hasta la
+     * siguiente muestra. `null` si la caja nunca mandó una (POS viejo).
+     */
+    stockDrift?: PosStockDrift | null;
+    /** Versión menor a `POS_MIN_VERSION` (SPEC 67); calculado al leer, no se guarda. */
+    belowMinVersion?: boolean;
     receivedAt: string;
     reportedBy: string;
     /** Nombre del cajero que reportó, resuelto al leer. `null` si ya no existe. */

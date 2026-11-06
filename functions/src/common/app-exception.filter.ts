@@ -21,7 +21,10 @@ const extractHttpExceptionMessage = (error: HttpException): string => {
 interface SyncErrorDetails {
     code: SyncErrorCode;
     retryable: boolean;
-    /** Datos de apoyo del rechazo (`AppError.details`), p. ej. la entrada existente. */
+    /**
+     * Datos de apoyo del rechazo (`AppError.details`): la entrada existente
+     * (SPEC 58) o `current` en `CATALOG_CONFLICT` (SPEC 56).
+     */
     [extra: string]: unknown;
 }
 
