@@ -361,7 +361,7 @@ const normalizeAndValidateItems = async (
 // Corre antes de crear cualquier producto inline en recordDirectEntry: si un
 // ítem posterior tiene datos inválidos, falla aquí y no deja productos huérfanos
 // sin lote/entrada asociada (ver normalizeAndValidateItems para el resto).
-const assertValidExpiryAndQuantity = (
+export const assertValidExpiryAndQuantity = (
     items: Array<{ expiryDate: string; quantity: number }>,
 ): void => {
     for (const item of items) {
@@ -381,6 +381,8 @@ const persistEntryItems = async (input: {
     source: InventoryEntrySource;
     invoiceId?: string;
     notes?: string;
+    /** Llave con la que la caja registró la partida (SPEC 55). */
+    idempotencyKey?: string;
 }): Promise<InventoryEntry> => {
     const firestore = db();
     const entryRef = firestore.collection('inventoryEntries').doc();
@@ -508,6 +510,7 @@ const persistEntryItems = async (input: {
             updatedBy: input.userId,
             ...(input.invoiceId ? { invoiceId: input.invoiceId } : {}),
             ...(input.notes?.trim() ? { notes: input.notes.trim() } : {}),
+            ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
         };
         transaction.set(entryRef, entryData);
 
@@ -534,7 +537,7 @@ const persistEntryItems = async (input: {
     });
 };
 
-const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
+export const assertActiveSupplier = async (supplierId: string): Promise<Supplier> => {
     const supplier = await suppliersRepo.getSupplierById(supplierId);
     if (!supplier) {
         throw notFound('Proveedor');
@@ -549,6 +552,8 @@ export const recordEntry = async (input: {
     invoiceId: string;
     items: EntryItemInput[];
     userId: string;
+    /** Se guarda en la entrada para emparejar reintentos (SPEC 55). */
+    idempotencyKey?: string;
 }): Promise<InventoryEntryWithDetails> => {
     const invoice = await invoicesRepo.getInvoiceById(input.invoiceId);
     if (!invoice) {
@@ -563,6 +568,7 @@ export const recordEntry = async (input: {
         userId: input.userId,
         source: 'invoice',
         invoiceId: input.invoiceId,
+        idempotencyKey: input.idempotencyKey,
     });
 
     return enrichEntry(entry);
@@ -589,6 +595,13 @@ export const recordDirectEntry = async (input: {
 
     assertValidExpiryAndQuantity(input.items);
     await assertActiveSupplier(input.supplierId);
+
+    // Todas las altas se revisan antes de crear la primera: si la segunda choca
+    // por SKU, la primera ya no queda huérfana en el catálogo (SPEC 55).
+    const inlineProducts = input.items.flatMap((item) => (item.product ? [item.product] : []));
+    if (inlineProducts.length > 0) {
+        await productsService.assertProductsCreatable(inlineProducts);
+    }
 
     const resolvedItems: EntryItemInput[] = [];
     for (const item of input.items) {

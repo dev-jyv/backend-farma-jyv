@@ -189,13 +189,15 @@ describe('createStockEntry: llave reservada sin entrada', () => {
         expect((await productsService.getProduct(product.id)).stock).toBe(5);
     });
 
+    // Sin llave: una captura de una caja anterior a las llaves (o sin ella). Una
+    // recaptura con su propia llave es otra partida (SPEC 55, ver abajo).
     it('reserva vieja y la partida ya recapturada en esa factura: la devuelve sin duplicar',
         async () => {
             const { entrada, product } = await entradaCon('LOTE-APLICADO');
             await reservar(entrada.idempotencyKey, HACE_UNA_HORA);
             const aMano = await stockEntriesService.createStockEntry({
                 ...entrada,
-                idempotencyKey: unique('otra'),
+                idempotencyKey: undefined,
             });
 
             const reintento = await stockEntriesService.createStockEntry(entrada);
@@ -228,7 +230,7 @@ describe('createStockEntry: llave reservada sin entrada', () => {
         await stockEntriesService.createStockEntry({
             ...entrada,
             quantity: 3,
-            idempotencyKey: unique('otra'),
+            idempotencyKey: undefined,
         });
 
         await expect(stockEntriesService.createStockEntry(entrada))

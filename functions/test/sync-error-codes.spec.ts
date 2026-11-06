@@ -542,10 +542,11 @@ describe('createStockEntry: código de cada rechazo', () => {
     it('ENTRY_AMBIGUOUS: reserva vieja y ese lote con otra cantidad en la factura', async () => {
         const { entrada } = await entryFixtures();
         await reserve(entrada.idempotencyKey, new Date(Date.now() - 60 * 60 * 1000));
+        // Sin llave: una captura con su propia llave es otra partida (SPEC 55).
         await stockEntriesService.createStockEntry({
             ...entrada,
             quantity: 3,
-            idempotencyKey: unique('otra'),
+            idempotencyKey: undefined,
         });
 
         const error = await expectSyncCode(

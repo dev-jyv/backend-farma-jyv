@@ -10,6 +10,14 @@ const expiryDateSchema = isoDate.refine(
 
 const lotNumberSchema = z.string().trim().min(1, 'El número de lote es requerido').max(40);
 
+/**
+ * Tope de partidas por entrada (SPEC 55). Una entrada es una sola transacción:
+ * sin tope, una lista grande topaba el límite de escrituras, el documento de
+ * 1 MiB o los 60 s de la función, y el reintento volvía a fallar igual.
+ */
+export const MAX_ENTRY_ITEMS = 200;
+const maxItemsMessage = `Una entrada admite como máximo ${MAX_ENTRY_ITEMS} partidas`;
+
 export const inventoryEntryProductSchema = z.object({
     productId: z.string().min(1),
     expiryDate: expiryDateSchema,
@@ -22,7 +30,7 @@ export const bulkEntryGroupSchema = z.object({
     invoiceId: z.string().min(1).optional(),
     supplierId: z.string().min(1).optional(),
     notes: z.string().optional(),
-    items: z.array(inventoryEntryProductSchema).min(1),
+    items: z.array(inventoryEntryProductSchema).min(1).max(MAX_ENTRY_ITEMS, maxItemsMessage),
 }).refine(
     (data) => Boolean(data.invoiceId) !== Boolean(data.supplierId),
     { message: 'Cada entrada debe incluir invoiceId o supplierId, no ambos' },
@@ -36,8 +44,10 @@ export const bulkCreateEntriesSchema = z.object({
 
 export const inventoryEntrySchema = z.object({
     invoiceId: z.string().min(1),
-    products: z.array(inventoryEntryProductSchema).min(1).optional(),
-    items: z.array(inventoryEntryProductSchema).min(1).optional(),
+    products: z.array(inventoryEntryProductSchema).min(1)
+        .max(MAX_ENTRY_ITEMS, maxItemsMessage).optional(),
+    items: z.array(inventoryEntryProductSchema).min(1)
+        .max(MAX_ENTRY_ITEMS, maxItemsMessage).optional(),
     /** Una llave por captura, reenviada sin cambios en cada reintento. */
     idempotencyKey: idempotencyKeySchema.optional(),
 }).refine(
@@ -66,7 +76,7 @@ export const directInventoryEntryItemSchema = z
 export const directInventoryEntrySchema = z.object({
     supplierId: z.string().min(1),
     notes: z.string().optional(),
-    items: z.array(directInventoryEntryItemSchema).min(1),
+    items: z.array(directInventoryEntryItemSchema).min(1).max(MAX_ENTRY_ITEMS, maxItemsMessage),
     idempotencyKey: idempotencyKeySchema.optional(),
 });
 

@@ -16,18 +16,22 @@ const UNIQUE_FIELD_LABELS: Record<UniqueField, string> = {
     boxBarcode: 'código de barras de caja',
 };
 
+type QueryReader = (query: FirebaseFirestore.Query) => Promise<FirebaseFirestore.QuerySnapshot>;
+
 const findDuplicate = async (
-    transaction: FirebaseFirestore.Transaction,
+    read: QueryReader,
     field: UniqueField,
     value: string,
 ): Promise<Product | null> => {
-    const snapshot = await transaction.get(collection().where(field, '==', value).limit(1));
+    const snapshot = await read(collection().where(field, '==', value).limit(1));
     if (snapshot.empty) {
         return null;
     }
     const doc = snapshot.docs[0];
     return { id: doc.id, ...doc.data() } as Product;
 };
+
+type UniqueData = { sku?: string; name?: string; barcode?: string; boxBarcode?: string | null };
 
 // Corre dentro de la misma transacción que la escritura para evitar que dos
 // altas/ediciones concurrentes con el mismo sku/nombre/barcode pasen ambas.
@@ -38,7 +42,13 @@ const findDuplicate = async (
 // también contra los `boxBarcode` de los demás.
 const assertNoDuplicate = async (
     transaction: FirebaseFirestore.Transaction,
-    data: { sku?: string; name?: string; barcode?: string; boxBarcode?: string | null },
+    data: UniqueData,
+    excludeId?: string,
+): Promise<void> => assertNoDuplicateWith((query) => transaction.get(query), data, excludeId);
+
+const assertNoDuplicateWith = async (
+    read: QueryReader,
+    data: UniqueData,
     excludeId?: string,
 ): Promise<void> => {
     const checks: Array<[UniqueField, UniqueField, string | null | undefined]> = [
@@ -55,12 +65,21 @@ const assertNoDuplicate = async (
         if (!value) {
             continue;
         }
-        const duplicate = await findDuplicate(transaction, against, value);
+        const duplicate = await findDuplicate(read, against, value);
         if (duplicate && duplicate.id !== excludeId) {
             throw conflict(`Ya existe un producto con ese ${UNIQUE_FIELD_LABELS[field]}`);
         }
     }
 };
+
+/**
+ * La misma revisión de unicidad, **fuera** de transacción. No sustituye a la de
+ * `createProduct` (que es la que cierra la carrera): sirve para rechazar una
+ * entrada con varios productos en línea antes de dar de alta el primero, y no
+ * dejar huérfanos cuando choca el segundo (SPEC 55).
+ */
+export const assertUniqueOutsideTransaction = (data: UniqueData): Promise<void> =>
+    assertNoDuplicateWith((query) => query.get(), data);
 
 /** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
 const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;

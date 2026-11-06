@@ -28,6 +28,15 @@ export class AppError extends Error {
     }
 }
 
+/**
+ * `true` solo para un rechazo de negocio (`AppError` < 500): el único error que
+ * garantiza que una operación idempotente no escribió nada y que su llave se
+ * puede liberar. Un 5xx o un error cualquiera (timeout, commit ambiguo) pudo
+ * haberla aplicado, así que la llave se conserva (SPEC 55).
+ */
+export const isReleasableError = (error: unknown): boolean =>
+    error instanceof AppError && error.statusCode < 500;
+
 const syncOptions = (syncCode?: SyncErrorCode): AppErrorOptions =>
     (syncCode ? { syncCode } : {});
 

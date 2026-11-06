@@ -954,6 +954,11 @@ export interface InventoryEntry {
     notes?: string;
     productIds?: string[];
     items: InventoryEntryItem[];
+    /**
+     * Llave con la que la caja registró la partida (SPEC 55). Un reintento solo
+     * reconoce como suya una entrada con su misma llave o sin llave.
+     */
+    idempotencyKey?: string;
     createdAt: Timestamp;
     createdBy: string;
     updatedAt: Timestamp;

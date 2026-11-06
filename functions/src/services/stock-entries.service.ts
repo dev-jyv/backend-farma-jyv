@@ -1,4 +1,4 @@
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import {
     ControlledGroup,
     InventoryEntry,
@@ -7,7 +7,13 @@ import {
     Product,
 } from '../types';
 import { db } from '../utils/firestore';
-import { AppError, conflict, notFound, withDefaultSyncCode } from '../utils/errors';
+import {
+    AppError,
+    conflict,
+    isReleasableError,
+    notFound,
+    withDefaultSyncCode,
+} from '../utils/errors';
 import { AuditActor } from './audit.service';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
@@ -57,6 +63,17 @@ export const listRecentInvoices = async (limit?: number): Promise<InvoiceWithDet
  * perdió en la red, y el siguiente flush volvía a mandarla. El resultado era un
  * segundo lote con el mismo número y la misma factura, es decir, existencias que
  * no existen.
+ *
+ * Campos del documento (SPEC 55):
+ * - `reservedAt`: cuándo se reservó. **No se reescribe** al retomar: es la marca
+ *   contra la que se adopta un producto sobrante y se buscan partidas aplicadas.
+ * - `attemptAt`: último intento que la retomó; una reserva retomada hace poco
+ *   sigue en curso para los reintentos simultáneos.
+ * - `productId`: producto que dio de alta un intento, guardado justo después de
+ *   crearlo; el reintento lo reutiliza en vez de crear otro.
+ * - `released`: un rechazo de negocio después de dar de alta el producto; el
+ *   reintento la retoma sin esperar y conserva el producto.
+ * - `expiresAt`: 30 días, para la política TTL de la colección.
  */
 const IDEMPOTENCY_COLLECTION = 'stockEntryIdempotencyKeys';
 
@@ -66,6 +83,9 @@ const IDEMPOTENCY_COLLECTION = 'stockEntryIdempotencyKeys';
  * reenvía la entrada. Sin `deviceId` (caja anterior), por usuario, como antes.
  */
 const buildIdempotencyDocId = (owner: string, key: string): string => `${owner}:${key}`;
+
+/** Vida de una llave antes de que la política TTL la borre. */
+const IDEMPOTENCY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * Antigüedad desde la que una reserva sin `entryId` ya no puede seguir en curso:
@@ -151,76 +171,89 @@ const applyStockEntry = async (input: {
     const idempotency = await loadIdempotencyKey(input);
     const idempotencyRef = idempotency?.ref ?? null;
 
-    // Producto que dejó un intento que murió entre el alta y la entrada.
+    // Producto que dio de alta un intento anterior de esta misma llave.
     let leftoverProduct: Product | null = null;
 
-    if (idempotencyRef) {
-        const previo = idempotency!.snapshot;
-        if (previo.exists) {
-            const entryId = previo.data()?.entryId as string | undefined;
-            if (!entryId) {
-                // Se reservó la llave y el intento no terminó. Una reserva reciente
-                // puede seguir en curso: no se toca.
-                const reservedAt = previo.data()?.createdAt as Timestamp | undefined;
-                if (!reservedAt || Date.now() - reservedAt.toMillis() <= STALE_RESERVATION_MS) {
-                    throw entryInProgress();
-                }
-
-                // Solo cuenta como sobrante de este intento un producto dado de alta
-                // **después** de reservar la llave. Uno anterior con ese SKU es
-                // otro producto, y `createProduct` debe decir que el SKU choca.
-                const bySku = input.productId
-                    ? null
-                    : await productsRepo.findProductBySku(input.product!.sku);
-                leftoverProduct = bySku &&
-                    bySku.createdAt.toMillis() >= reservedAt.toMillis()
-                    ? bySku
-                    : null;
-                const productId = input.productId ?? leftoverProduct?.id;
-
-                // Lo que importa es si **esta** partida ya está en el servidor, no
-                // si el lote existe: el mismo lote llega en otras facturas, y la
-                // caja pide recapturar a mano lo que se atora. Se busca en esta
-                // factura, desde la reserva.
-                const applied = productId === undefined
-                    ? { match: null, ambiguous: false }
-                    : await findAppliedEntry({
-                        invoiceId: input.invoiceId,
-                        productId,
-                        lotNumber: input.lotNumber,
-                        quantity: input.quantity,
-                        since: reservedAt,
-                    });
-                if (applied.ambiguous) {
-                    throw entryAmbiguous();
-                }
-                if (applied.match) {
-                    // Ya se aplicó (por este intento o recapturada a mano): se cierra
-                    // la llave con esa entrada y se devuelve, sin sumar existencias.
-                    await idempotencyRef.update(
-                        { entryId: applied.match.id },
-                        { lastUpdateTime: previo.updateTime! },
-                    );
-                    return replayEntry(applied.match.id);
-                }
-                // La precondición deja pasar a uno solo de dos reintentos simultáneos;
-                // el otro ve una reserva que acaba de renovarse, es decir, en curso.
-                await idempotencyRef.update(
-                    { createdAt: new Date() },
-                    { lastUpdateTime: previo.updateTime! },
-                ).catch((error: unknown) => {
-                    throw isFirestoreCode(error, FAILED_PRECONDITION) ? entryInProgress() : error;
-                });
-            } else {
+    if (idempotency) {
+        const previo = idempotency.snapshot;
+        const data = previo.data();
+        if (data) {
+            const entryId = data.entryId as string | undefined;
+            if (entryId) {
                 return replayEntry(entryId);
             }
+
+            // Se reservó la llave y el intento no terminó. Las reservas anteriores a
+            // SPEC 55 solo tienen `createdAt`.
+            const reservedAt = (data.reservedAt ?? data.createdAt) as Timestamp | undefined;
+            const attemptAt = (data.attemptAt ?? reservedAt) as Timestamp | undefined;
+            // Una reserva (o un intento que la retomó) reciente puede seguir en
+            // curso: no se toca. Una liberada tras un rechazo se retoma ya.
+            if (!reservedAt || !attemptAt ||
+                (data.released !== true &&
+                    Date.now() - attemptAt.toMillis() <= STALE_RESERVATION_MS)) {
+                throw entryInProgress();
+            }
+
+            if (!input.productId) {
+                leftoverProduct = await findLeftoverProduct({
+                    productId: data.productId as string | undefined,
+                    sku: input.product!.sku,
+                    reservedAt,
+                });
+            }
+            const productId = input.productId ?? leftoverProduct?.id;
+
+            // Lo que importa es si **esta** partida ya está en el servidor, no si
+            // el lote existe: el mismo lote llega en otras facturas. Se busca en
+            // esta factura, desde la reserva, entre las entradas de esta llave o
+            // sin llave (nunca otra partida igual con su propia llave).
+            const applied = productId === undefined
+                ? { match: null, ambiguous: false }
+                : await findAppliedEntry({
+                    invoiceId: input.invoiceId,
+                    productId,
+                    lotNumber: input.lotNumber,
+                    quantity: input.quantity,
+                    since: reservedAt,
+                    idempotencyKey: input.idempotencyKey!,
+                });
+            if (applied.ambiguous) {
+                throw entryAmbiguous();
+            }
+            if (applied.match) {
+                // Ya se aplicó (por este intento o recapturada a mano): se cierra
+                // la llave con esa entrada y se devuelve, sin sumar existencias.
+                await idempotencyRef!.update(
+                    { entryId: applied.match.id },
+                    { lastUpdateTime: previo.updateTime! },
+                );
+                return replayEntry(applied.match.id);
+            }
+            // La precondición deja pasar a uno solo de dos reintentos simultáneos;
+            // el otro ve un intento que acaba de retomarla, es decir, en curso.
+            // `reservedAt` y `createdAt` no se tocan.
+            await idempotencyRef!.update(
+                {
+                    attemptAt: new Date(),
+                    released: FieldValue.delete(),
+                    ...(leftoverProduct ? { productId: leftoverProduct.id } : {}),
+                    ...(data.expiresAt ? {} : { expiresAt: idempotencyExpiry() }),
+                },
+                { lastUpdateTime: previo.updateTime! },
+            ).catch((error: unknown) => {
+                throw isFirestoreCode(error, FAILED_PRECONDITION) ? entryInProgress() : error;
+            });
         } else {
             // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
             // paralelo no pueden aplicar la misma entrada dos veces.
-            await idempotencyRef.create({
+            const reservedAt = new Date();
+            await idempotencyRef!.create({
                 userId: input.userId,
                 ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-                createdAt: new Date(),
+                createdAt: reservedAt,
+                reservedAt,
+                expiresAt: idempotencyExpiry(),
             }).catch((error: unknown) => {
                 throw isFirestoreCode(error, ALREADY_EXISTS) ? entryInProgress() : error;
             });
@@ -228,13 +261,33 @@ const applyStockEntry = async (input: {
     }
 
     const actor: AuditActor = { userId: input.userId, roleSlug: input.roleSlug ?? null };
+    // Producto dado de alta por esta llave (en este intento o en uno anterior).
+    let keyProductId = leftoverProduct?.id;
     let product: Product;
     let entry: InventoryEntryWithDetails;
     try {
-        product = input.productId
-            ? await resolveExistingProduct(input.productId, input.productUpdate, actor)
+        if (input.productId) {
+            product = await resolveExistingProduct(input.productId, input.productUpdate, actor);
+        } else if (leftoverProduct) {
+            product = leftoverProduct;
+        } else {
+            // Todo lo que `recordEntry` podría rechazar **después** del alta se
+            // revisa antes: un rechazo tras `createProduct` dejaba el producto
+            // huérfano y cada reintento chocaba por SKU (SPEC 55).
+            await inventoryService.assertActiveSupplier(invoice.supplierId);
+            inventoryService.assertValidExpiryAndQuantity([input]);
+            await productsService.assertProductsCreatable([input.product!]);
+
             // `createProduct` recibe el actor dentro del mismo objeto de entrada.
-            : leftoverProduct ?? await productsService.createProduct({ ...input.product!, actor });
+            product = await productsService.createProduct({ ...input.product!, actor });
+            keyProductId = product.id;
+            if (idempotencyRef) {
+                // Justo después del alta: el reintento reutiliza este producto en
+                // vez de crear otro. Si la función muere antes de esta escritura,
+                // el reintento lo adopta por SKU (creado después de `reservedAt`).
+                await idempotencyRef.set({ productId: product.id }, { merge: true });
+            }
+        }
 
         entry = await inventoryService.recordEntry({
             invoiceId: input.invoiceId,
@@ -248,13 +301,14 @@ const applyStockEntry = async (input: {
                 },
             ],
             userId: input.userId,
+            idempotencyKey: input.idempotencyKey,
         });
     } catch (error) {
         // Un rechazo de negocio no registró ninguna entrada: se libera la llave para
         // que el reintento diga el motivo real. Cualquier otro error (p. ej. un
         // timeout tras el commit) pudo haberla aplicado, así que la reserva se queda.
-        if (idempotencyRef && error instanceof AppError && error.statusCode < 500) {
-            await idempotencyRef.delete().catch(() => undefined);
+        if (idempotencyRef && isReleasableError(error)) {
+            await releaseIdempotencyKey(idempotencyRef, keyProductId);
         }
         throw error;
     }
@@ -270,6 +324,44 @@ const applyStockEntry = async (input: {
     const stock = await productsService.getProduct(product.id);
 
     return { entry, product, stock: stock.stock };
+};
+
+const idempotencyExpiry = (): Date => new Date(Date.now() + IDEMPOTENCY_TTL_MS);
+
+/**
+ * Libera la llave tras un rechazo de negocio. Si esta llave ya dio de alta su
+ * producto, el documento se conserva marcado `released`: borrarlo haría que el
+ * reintento intentara crear el producto otra vez y chocara por SKU para siempre.
+ */
+const releaseIdempotencyKey = async (
+    ref: FirebaseFirestore.DocumentReference,
+    productId: string | undefined,
+): Promise<void> => {
+    const release = productId
+        ? ref.set({ productId, released: true }, { merge: true })
+        : ref.delete();
+    await release.catch(() => undefined);
+};
+
+/**
+ * Producto que dejó un intento anterior de la llave: el que quedó anotado en ella
+ * o, si la función murió antes de anotarlo, el de ese SKU creado **después** de
+ * la reserva. Uno anterior con ese SKU es otro producto, y `createProduct` debe
+ * decir que el SKU choca.
+ */
+const findLeftoverProduct = async (params: {
+    productId?: string;
+    sku: string;
+    reservedAt: Timestamp;
+}): Promise<Product | null> => {
+    if (params.productId) {
+        const anotado = await productsRepo.getProductById(params.productId);
+        if (anotado) {
+            return anotado;
+        }
+    }
+    const bySku = await productsRepo.findProductBySku(params.sku);
+    return bySku && bySku.createdAt.toMillis() >= params.reservedAt.toMillis() ? bySku : null;
 };
 
 const HALF_RECORDED_MESSAGE =
@@ -299,7 +391,8 @@ const replayEntry = async (entryId: string): Promise<StockEntryResult> => {
 };
 
 /**
- * Busca, en la factura y desde la reserva, una entrada con la misma partida
+ * Busca, en la factura y desde la reserva, una entrada de esta llave (o sin llave,
+ * anterior a SPEC 55 o capturada sin ella) con la misma partida
  * (producto, lote y cantidad). Si hay partidas de ese producto y lote pero con
  * otra cantidad, no se sabe si es esta corregida o una distinta: `ambiguous`.
  */
@@ -309,10 +402,15 @@ const findAppliedEntry = async (params: {
     lotNumber: string;
     quantity: number;
     since: Timestamp;
+    idempotencyKey: string;
 }): Promise<{ match: InventoryEntry | null; ambiguous: boolean }> => {
     const lot = params.lotNumber.trim();
     const entries = (await entriesRepo.listInventoryEntries({ invoiceId: params.invoiceId }))
-        .filter((entry) => entry.createdAt.toMillis() >= params.since.toMillis());
+        .filter((entry) => entry.createdAt.toMillis() >= params.since.toMillis())
+        // Una entrada con otra llave es otra partida, aunque sea idéntica: dos
+        // partidas iguales en una factura entran las dos (SPEC 55).
+        .filter((entry) => !entry.idempotencyKey ||
+            entry.idempotencyKey === params.idempotencyKey);
     const sameLot = entries.filter((entry) => entry.items.some(
         (item) => item.productId === params.productId && item.lotNumber === lot,
     ));

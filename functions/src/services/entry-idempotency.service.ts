@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { BulkCreateEntriesResult, InventoryEntryWithDetails } from '../types';
-import { conflict } from '../utils/errors';
+import { conflict, isReleasableError } from '../utils/errors';
 import { db } from '../utils/firestore';
 import * as inventoryService from './inventory.service';
 
@@ -16,7 +16,8 @@ import * as inventoryService from './inventory.service';
  * que aún no la mandan.
  */
 const COLLECTION = 'stockEntryIdempotencyKeys';
-const TTL_HOURS = 72;
+/** Mismo plazo que las llaves de `createStockEntry`, que comparten colección (SPEC 55). */
+const TTL_DAYS = 30;
 /** Código gRPC de `create()` sobre un documento que ya existe. */
 const ALREADY_EXISTS = 6;
 
@@ -30,8 +31,9 @@ export const runIdempotentEntry = async (input: {
     scope: EntryScope;
     key?: string;
     /**
-     * `true` cuando un fallo garantiza que no quedó nada escrito (la entrada se
-     * guarda en una sola transacción), de modo que se puede liberar la llave y
+     * `true` cuando un rechazo de negocio garantiza que no quedó nada escrito (la
+     * entrada se guarda en una sola transacción), de modo que se puede liberar la
+     * llave —solo ante un `AppError` < 500— y
      * dejar que el mismo intento corregido use la misma. Con efectos previos no
      * atómicos (alta de productos) se conserva y el reintento pide revisión.
      */
@@ -56,7 +58,7 @@ export const runIdempotentEntry = async (input: {
             scope: input.scope,
             createdAt: new Date(),
             // Campo para la política TTL de Firestore sobre esta colección.
-            expiresAt: new Date(Date.now() + TTL_HOURS * 60 * 60 * 1000),
+            expiresAt: new Date(Date.now() + TTL_DAYS * 24 * 60 * 60 * 1000),
         });
     } catch (error) {
         if (!isAlreadyExists(error)) {
@@ -78,7 +80,11 @@ export const runIdempotentEntry = async (input: {
         await ref.set({ entryId: entry.id }, { merge: true });
         return entry;
     } catch (error) {
-        if (input.releaseOnFailure) {
+        // Solo un rechazo de negocio (4xx) garantiza que no se aplicó nada. Un 5xx
+        // o un error cualquiera (timeout tras el commit, fallo al cerrar la llave)
+        // pudo haberla aplicado: la reserva se queda y el reintento pide revisar
+        // en vez de duplicar la entrada (SPEC 55).
+        if (input.releaseOnFailure && isReleasableError(error)) {
             await ref.delete().catch(() => undefined);
         }
         throw error;

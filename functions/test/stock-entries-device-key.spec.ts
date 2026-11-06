@@ -4,6 +4,7 @@ import * as categoriesRepo from '../src/repositories/categories.repository';
 import * as invoicesRepo from '../src/repositories/invoices.repository';
 import * as productsRepo from '../src/repositories/products.repository';
 import * as suppliersRepo from '../src/repositories/suppliers.repository';
+import * as entriesRepo from '../src/repositories/inventory-entries.repository';
 import * as stockEntriesService from '../src/services/stock-entries.service';
 import { db } from '../src/utils/firestore';
 
@@ -177,6 +178,18 @@ describe('createStockEntry: llave por caja (SPEC 54)', () => {
             })).rejects.toMatchObject({ syncCode: 'ENTRY_IN_PROGRESS' });
             expect(await stockOf(product.id)).toBe(0);
         });
+
+    it('la entrada guarda la llave de la caja', async () => {
+        const { entrada } = await fixtures();
+        const { entry } = await stockEntriesService.createStockEntry({
+            ...entrada,
+            deviceId: unique('caja'),
+            userId: 'uid-cajero-a',
+        });
+
+        expect((await entriesRepo.getInventoryEntryById(entry.id))?.idempotencyKey)
+            .toBe(entrada.idempotencyKey);
+    });
 });
 
 describe('createStockEntrySchema: deviceId', () => {
