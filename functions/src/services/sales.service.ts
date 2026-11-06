@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import { Timestamp } from 'firebase-admin/firestore';
 import {
+    Batch,
     ControlledGroup,
     Coupon,
     PaymentMethod,
@@ -26,7 +27,7 @@ import {
     withDefaultSyncCode,
 } from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
-import { allocateFefo } from '../utils/fefo';
+import { allocateFefo, BatchAllocation } from '../utils/fefo';
 import {
     breakdownLineTaxes,
     fromCents,
@@ -746,6 +747,39 @@ const resolveSaleCoupon = (input: {
 };
 
 /**
+ * FEFO de una partida sobre `batches` (vigentes primero, los caducados no se
+ * venden). Descuenta lo asignado **en la misma lista**, así la siguiente partida
+ * del mismo producto ve solo lo que queda y la venta se reparte sobre el total de
+ * piezas. Lo usan el plan previo y el reparto dentro de la transacción, con el
+ * mismo mensaje y el mismo código en los dos.
+ */
+const allocateSaleBatches = (
+    batches: Batch[],
+    pieces: number,
+    productName: string,
+): BatchAllocation[] => {
+    let allocations: BatchAllocation[];
+    try {
+        allocations = allocateFefo(batches, pieces, { excludeExpired: true });
+    } catch (error) {
+        if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
+            throw badRequest(
+                `El stock disponible de ${productName} está vencido`,
+                'BATCH_EXPIRED',
+            );
+        }
+        throw badRequest(`Stock insuficiente para ${productName}`, 'STOCK_INSUFFICIENT');
+    }
+    for (const allocation of allocations) {
+        const batch = batches.find((entry) => entry.id === allocation.batchId);
+        if (batch) {
+            batch.quantity -= allocation.quantity;
+        }
+    }
+    return allocations;
+};
+
+/**
  * Registra una venta. Todo rechazo de negocio sale con un código de
  * sincronización (SPEC 49): los que la caja resuelve por un camino propio
  * (stock, catálogo, turno, llave) lo llevan desde donde se lanzan, y el resto es
@@ -865,10 +899,6 @@ const applySale = async (input: {
     // resuelven después de prorratear el descuento, así que hace falta volver a
     // consultarlo por partida sin pagar otra lectura.
     const serviceCache = new Map<string, CachedService>();
-    // Suma de lotes ANTES de asignar FEFO. Si `products.totalStock` no existe
-    // (productos previos a la denormalización), FieldValue.increment(-n) parte
-    // de 0 y deja stock negativo aunque los lotes sí tenían piezas.
-    const batchStockBefore = new Map<string, number>();
 
     // Todas las promociones de la venta en una sola lectura, fuera de la
     // transacción: la regla es inmutable, así que no hay carrera que cerrar.
@@ -892,10 +922,10 @@ const applySale = async (input: {
     // El cupón se lee una vez aquí (vigencia, productos, mínimo) y otra dentro
     // de la transacción (`usedCount`), que es la que decide el último uso.
     //
-    // Lecturas previas en bloque y en paralelo: solo sirven para validar y armar el
-    // plan. La transacción vuelve a leer lotes y productos y es la que decide. Los
-    // lotes de cada producto se piden a la vez, no uno por partida en serie: con 50
-    // ventas por lote la serie rozaba los 60 s (SPEC 48).
+    // Lecturas previas en bloque y en paralelo: solo sirven para validar y para el
+    // mensaje en línea. La transacción vuelve a leer lotes y productos y es la que
+    // reparte (SPEC 50). Los lotes de cada producto se piden a la vez, no uno por
+    // partida en serie: con 50 ventas por lote la serie rozaba los 60 s (SPEC 48).
     const cartProductIds = [...new Set(input.items.flatMap((item) => (item.kind !== 'service'
         ? [item.productId]
         : [])))];
@@ -909,10 +939,6 @@ const applySale = async (input: {
     ]);
     cartProductIds.forEach((productId, index) => {
         batchCache.set(productId, preloadedBatches[index]);
-        batchStockBefore.set(
-            productId,
-            preloadedBatches[index].reduce((sum, batch) => sum + batch.quantity, 0),
-        );
     });
 
     for (const item of input.items) {
@@ -1029,27 +1055,15 @@ const applySale = async (input: {
             );
         }
 
-        const batches = batchCache.get(item.productId) ?? [];
-
-        let allocations;
-        try {
-            allocations = allocateFefo(batches, pieces, { excludeExpired: true });
-        } catch (error) {
-            if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
-                throw badRequest(
-                    `El stock disponible de ${product.name} está vencido`,
-                    'BATCH_EXPIRED',
-                );
-            }
-            throw badRequest(`Stock insuficiente para ${product.name}`, 'STOCK_INSUFFICIENT');
-        }
-
-        for (const allocation of allocations) {
-            const batch = batches.find((entry) => entry.id === allocation.batchId);
-            if (batch) {
-                batch.quantity -= allocation.quantity;
-            }
-        }
+        // Plan previo: validación temprana con el mensaje de siempre. **No decide
+        // las asignaciones**: las de la venta salen del reparto transaccional
+        // (SPEC 50). Descuenta sobre la copia en memoria para que dos partidas
+        // del mismo producto (pieza y caja) se validen contra el total.
+        const allocations = allocateSaleBatches(
+            batchCache.get(item.productId) ?? [],
+            pieces,
+            product.name,
+        );
 
         // Precio **cobrado**, no el de catálogo de hoy. Una venta sin conexión se
         // sincroniza horas o días después; si el precio subió entre medias, tarifar
@@ -1249,33 +1263,6 @@ const applySale = async (input: {
     const productItems = saleItems.filter(isSaleProductItem);
     const serviceItems = saleItems.filter(isSaleServiceItem);
 
-    // COGS por partida desde el costo de los lotes asignados. Si a un lote le falta
-    // `costPrice`, la partida queda en `null` y el reporte de margen lo reporta como
-    // "sin costo" en lugar de inflar la utilidad con un cero. Un servicio no tiene
-    // costo de mercancía: queda fuera del cálculo, no cuenta como "sin costo".
-    const costByBatchId = new Map<string, number | undefined>();
-    for (const batches of batchCache.values()) {
-        for (const batch of batches) {
-            costByBatchId.set(batch.id, batch.costPrice);
-        }
-    }
-    for (const item of productItems) {
-        let costCents = 0;
-        let costKnown = true;
-        for (const allocation of item.batchAllocations) {
-            const costPrice = costByBatchId.get(allocation.batchId);
-            if (costPrice === undefined) {
-                costKnown = false;
-                break;
-            }
-            costCents += toCents(costPrice) * allocation.quantity;
-        }
-        item.costAmount = costKnown ? costCents / 100 : null;
-    }
-    const costTotal = productItems.every((item) => item.costAmount !== null)
-        ? productItems.reduce((total, item) => total + (item.costAmount ?? 0), 0)
-        : null;
-
     // El tope es para el descuento **manual**: el de una promoción lo decidió la
     // gerencia al darla de alta, y un 2x1 (50%) no debe pedir un administrador.
     const promotionDiscountTotal = saleItems.reduce(
@@ -1405,45 +1392,6 @@ const applySale = async (input: {
     const servicesCashAmount = fromCents(servicesCashCents);
     const pharmacyCashAmount = fromCents(cashAmountCents - servicesCashCents);
 
-    // Firestore exige que todas las lecturas de una transacción ocurran antes
-    // que cualquier escritura: cuando una venta reparte stock entre 2+ lotes
-    // (lo normal en FEFO) hay que leer todos los lotes primero y recién luego
-    // escribir todos los updates/movimientos. Solo la mercancía mueve lotes.
-    const allocationRefs = productItems.flatMap((item) =>
-        item.batchAllocations.map((allocation) => ({
-            item,
-            allocation,
-            batchRef: firestore.collection('batches').doc(allocation.batchId),
-        })),
-    );
-
-    const qtyByBatchId = new Map<string, {
-        batchRef: FirebaseFirestore.DocumentReference;
-        productId: string;
-        quantity: number;
-    }>();
-    for (const { item, allocation, batchRef } of allocationRefs) {
-        const existing = qtyByBatchId.get(allocation.batchId);
-        if (existing) {
-            existing.quantity += allocation.quantity;
-        } else {
-            qtyByBatchId.set(allocation.batchId, {
-                batchRef,
-                productId: item.productId,
-                quantity: allocation.quantity,
-            });
-        }
-    }
-    const uniqueBatchEntries = [...qtyByBatchId.entries()];
-
-    // Lote por asignación: el libro de control necesita el número de lote, no el id.
-    const lotNumberByBatchId = new Map<string, string>();
-    for (const batches of batchCache.values()) {
-        for (const batch of batches) {
-            lotNumberByBatchId.set(batch.id, batch.lotNumber);
-        }
-    }
-
     const sale = await firestore.runTransaction(async (transaction) => {
         // Segundo chequeo dentro de la transacción: dos requests simultáneos con la
         // misma llave contienden por este documento y el perdedor reintenta, ve la
@@ -1491,15 +1439,19 @@ const applySale = async (input: {
             );
         }
 
-        const [cashSessionDoc, counterDoc, ...batchAndProductDocs] = await Promise.all([
+        // Todas las lecturas antes de cualquier escritura, en paralelo. Los lotes
+        // se leen **por consulta** (`productId`, `quantity > 0`) dentro de la
+        // transacción (SPEC 50): si otra caja vació un lote entre el plan y aquí,
+        // Firestore reintenta este callback y el reparto se rehace sobre el
+        // estado fresco, en vez de rechazar con stock en otro lote.
+        const [cashSessionDoc, counterDoc, productDocs, batchSnapshots] = await Promise.all([
             transaction.get(cashSessionRef),
             transaction.get(counterRef),
-            ...uniqueBatchEntries.map(([, entry]) => transaction.get(entry.batchRef)),
-            ...productIds.map((productId) =>
-                transaction.get(firestore.collection('products').doc(productId))),
+            Promise.all(productIds.map((productId) =>
+                transaction.get(firestore.collection('products').doc(productId)))),
+            Promise.all(productIds.map((productId) =>
+                transaction.get(batchesRepo.availableBatchesQuery(productId)))),
         ]);
-        const batchDocs = batchAndProductDocs.slice(0, uniqueBatchEntries.length);
-        const productDocs = batchAndProductDocs.slice(uniqueBatchEntries.length);
 
         if (!cashSessionDoc.exists) {
             throw notFound('Turno de caja');
@@ -1518,37 +1470,83 @@ const applySale = async (input: {
         const nextSequence = (counterDoc.data()?.value as number | undefined ?? 0) + 1;
         const folio = buildFolio(nextSequence);
 
-        uniqueBatchEntries.forEach(([batchId, entry], index) => {
-            const batchDoc = batchDocs[index];
-            // El lote se borró o se vació entre el plan y la transacción: para la
-            // caja es lo mismo, no hay de dónde surtir.
-            if (!batchDoc.exists) {
-                throw notFound('Lote', 'STOCK_INSUFFICIENT');
+        // Reparto FEFO transaccional: es el que decide `batchAllocations`, el
+        // costo y los lotes del libro. Se rehace completo en cada intento de la
+        // transacción (las partidas se sobrescriben, no se acumulan).
+        const batchById = new Map<string, Batch>();
+        // Suma de lotes ANTES de asignar. Si `products.totalStock` no existe
+        // (productos previos a la denormalización), es la base del descuento.
+        const batchStockBefore = new Map<string, number>();
+        const workingBatches = new Map<string, Batch[]>();
+        productIds.forEach((productId, index) => {
+            const batches = batchesRepo.toBatchesByExpiry(batchSnapshots[index].docs);
+            batches.forEach((batch) => batchById.set(batch.id, batch));
+            batchStockBefore.set(
+                productId,
+                batches.reduce((sum, batch) => sum + batch.quantity, 0),
+            );
+            // Copias: `allocateSaleBatches` descuenta sobre ellas, los originales
+            // conservan la existencia leída para escribir `quantity − tomado`.
+            workingBatches.set(productId, batches.map((batch) => ({ ...batch })));
+        });
+        const takenByBatchId = new Map<string, number>();
+        for (const item of productItems) {
+            item.batchAllocations = allocateSaleBatches(
+                workingBatches.get(item.productId) ?? [],
+                item.quantity,
+                item.productName,
+            );
+            for (const allocation of item.batchAllocations) {
+                takenByBatchId.set(
+                    allocation.batchId,
+                    (takenByBatchId.get(allocation.batchId) ?? 0) + allocation.quantity,
+                );
             }
+        }
 
-            const currentQty = batchDoc.data()?.quantity as number;
-            if (currentQty < entry.quantity) {
-                throw badRequest(`Stock insuficiente en lote ${batchId}`, 'STOCK_INSUFFICIENT');
+        // COGS por partida desde el costo de los lotes asignados. Si a un lote le
+        // falta `costPrice`, la partida queda en `null` y el reporte de margen la
+        // reporta como "sin costo" en lugar de inflar la utilidad con un cero. Un
+        // servicio no tiene costo de mercancía: queda fuera, no cuenta como "sin
+        // costo".
+        for (const item of productItems) {
+            let costCents = 0;
+            let costKnown = true;
+            for (const allocation of item.batchAllocations) {
+                const costPrice = batchById.get(allocation.batchId)?.costPrice;
+                if (costPrice === undefined) {
+                    costKnown = false;
+                    break;
+                }
+                costCents += toCents(costPrice) * allocation.quantity;
             }
+            item.costAmount = costKnown ? costCents / 100 : null;
+        }
+        const costTotal = productItems.every((item) => item.costAmount !== null)
+            ? productItems.reduce((sum, item) => sum + (item.costAmount ?? 0), 0)
+            : null;
 
-            transaction.update(entry.batchRef, {
-                quantity: currentQty - entry.quantity,
+        takenByBatchId.forEach((taken, batchId) => {
+            transaction.update(firestore.collection('batches').doc(batchId), {
+                quantity: batchById.get(batchId)!.quantity - taken,
                 updatedAt: timestamp,
             });
         });
 
-        allocationRefs.forEach(({ item, allocation }) => {
-            const movementRef = firestore.collection('stockMovements').doc();
-            transaction.set(movementRef, {
-                type: 'sale_adjustment',
-                productId: item.productId,
-                batchId: allocation.batchId,
-                quantity: allocation.quantity,
-                referenceId: saleRef.id,
-                userId: input.cashierId,
-                createdAt: timestamp,
-            });
-        });
+        for (const item of productItems) {
+            for (const allocation of item.batchAllocations) {
+                const movementRef = firestore.collection('stockMovements').doc();
+                transaction.set(movementRef, {
+                    type: 'sale_adjustment',
+                    productId: item.productId,
+                    batchId: allocation.batchId,
+                    quantity: allocation.quantity,
+                    referenceId: saleRef.id,
+                    userId: input.cashierId,
+                    createdAt: timestamp,
+                });
+            }
+        }
 
         transaction.set(counterRef, { value: nextSequence }, { merge: true });
 
@@ -1671,7 +1669,7 @@ const applySale = async (input: {
                 controlledGroup: rule.group,
                 quantity: item.quantity,
                 lotNumbers: item.batchAllocations
-                    .map((allocation) => lotNumberByBatchId.get(allocation.batchId))
+                    .map((allocation) => batchById.get(allocation.batchId)?.lotNumber)
                     .filter((lot): lot is string => Boolean(lot)),
                 prescription,
                 prescriptionRetained: Boolean(input.prescriptionRetained),
