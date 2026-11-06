@@ -380,6 +380,7 @@ describe('sales.service - createSale (receta, cliente, sesión)', () => {
                 },
                 grandTotal: 0,
                 cashInDrawer: 0,
+                unreconciledCash: 0,
             },
         });
 
