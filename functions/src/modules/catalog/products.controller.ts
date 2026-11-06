@@ -78,6 +78,18 @@ export class ProductsController {
         return { data };
     }
 
+    /**
+     * Existencia y lotes vendibles de un producto, para que la caja confirme el
+     * stock antes de negar una venta (SPEC 57). `products:read`, que el cajero
+     * tiene: no expone costos ni proveedores.
+     */
+    @Get(':id/stock')
+    @RequirePermission('products', 'read')
+    async stock(@Param(new ZodValidationPipe(idParamSchema)) params: IdParam) {
+        const data = await productsService.getProductStock(params.id);
+        return { data };
+    }
+
     @Get(':id/purchase-history')
     @RequirePermission('products', 'read')
     async purchaseHistory(

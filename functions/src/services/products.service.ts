@@ -422,6 +422,43 @@ export const listProductsForSync = async (filters: {
     return syncInflight;
 };
 
+/** Existencia fresca de un producto para la caja (SPEC 57). */
+export interface ProductStockSnapshot {
+    id: string;
+    totalStock: number;
+    updatedAt: Timestamp;
+    /** Solo lotes con piezas, por caducidad ascendente (orden FEFO). */
+    batches: SyncBatch[];
+}
+
+/**
+ * `GET /products/:id/stock`: la caja la llama antes de negar una venta por stock
+ * local insuficiente, para no rechazar mercancía que otra caja ya recibió y que
+ * su copia aún no tiene. Cuesta 1 lectura del producto + 1 consulta de lotes
+ * vendibles (`quantity > 0`, índice `productId + quantity`); nunca el catálogo.
+ *
+ * Los lotes y el total salen con la misma forma que en `/products/sync`, así la
+ * caja los guarda con el mismo código que el pull.
+ */
+export const getProductStock = async (id: string): Promise<ProductStockSnapshot> => {
+    const [product, batches] = await Promise.all([
+        productsRepo.getProductById(id),
+        batchesRepo.listBatchesByProduct(id, { onlyAvailable: true }),
+    ]);
+    if (!product) {
+        throw notFound('Producto');
+    }
+    const sumFromBatches = batches.reduce((total, batch) => total + batch.quantity, 0);
+    return {
+        id: product.id,
+        // Mismo criterio que el pull: el denormalizado manda; si el producto es
+        // anterior a él, la suma de los lotes ya leídos.
+        totalStock: Math.max(0, product.totalStock ?? sumFromBatches),
+        updatedAt: product.updatedAt,
+        batches: batches.map(toSyncBatch),
+    };
+};
+
 export const listProducts = async (filters: {
     categoryId?: string;
     search?: string;
