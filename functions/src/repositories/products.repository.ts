@@ -62,13 +62,18 @@ const assertNoDuplicate = async (
     }
 };
 
-/** Campos de caja que aceptan `null` en una edición para quitarse del documento. */
-const BOX_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode'] as const;
+/**
+ * Campos que aceptan `null` en una edición para quitarse del documento: los de
+ * caja y el grupo COFEPRIS (desclasificar, SPEC 64). Se borran en vez de guardar
+ * `null` porque el resto del sistema lee la ausencia como "sin caja" / "sin grupo".
+ */
+const NULLABLE_FIELDS = ['boxQuantity', 'boxPrice', 'boxBarcode', 'controlledGroup'] as const;
 
-type BoxPatch = {
+type NullablePatch = {
     boxQuantity?: number | null;
     boxPrice?: number | null;
     boxBarcode?: string | null;
+    controlledGroup?: Product['controlledGroup'] | null;
 };
 
 export type ProductPatch = Partial<Omit<
@@ -78,8 +83,8 @@ export type ProductPatch = Partial<Omit<
     | 'updatedAt'
     | 'salePriceChangedAt'
     | 'isActiveChangedAt'
-    | typeof BOX_FIELDS[number]
->> & BoxPatch;
+    | typeof NULLABLE_FIELDS[number]
+>> & NullablePatch;
 
 /**
  * Campos que el panel decide y que una caja con copia vieja no debe revertir
@@ -299,7 +304,7 @@ export const updateProductChecked = async (
 
     const catalogConflict = detectCatalogConflict(stored, data, options.baseUpdatedAt);
 
-    // `null` en un campo de caja lo quita del documento; `undefined` no lo toca.
+    // `null` en un campo de `NULLABLE_FIELDS` lo quita del documento; `undefined` no lo toca.
     const merged: Record<string, unknown> = { ...stored };
     const write: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(data)) {
@@ -309,7 +314,7 @@ export const updateProductChecked = async (
         if (catalogConflict && (GUARDED_CATALOG_FIELDS as readonly string[]).includes(key)) {
             continue;
         }
-        if (value === null && (BOX_FIELDS as readonly string[]).includes(key)) {
+        if (value === null && (NULLABLE_FIELDS as readonly string[]).includes(key)) {
             delete merged[key];
             write[key] = FieldValue.delete();
             continue;

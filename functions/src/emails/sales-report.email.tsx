@@ -47,6 +47,14 @@ const reviewFoliosLabel = (review: SalesReport['promotionReview']): string => {
     return rest > 0 ? `${shown} y ${rest} más` : shown;
 };
 
+/** "Cobrado bajo catálogo: 3 partidas, −$45.00" (SPEC 64). */
+export const priceDeviationLabel = (
+    deviation: { count: number; amount: number },
+): string => `Cobrado bajo catálogo: ${deviation.count} ` +
+    `${deviation.count === 1 ? 'partida' : 'partidas'}, −${formatCurrency(deviation.amount)}`;
+
+const groupLabel = (group: string | null): string => (group ? `Grupo ${group}` : 'Sin grupo');
+
 const percentLabel = (value: number | null): string =>
     value === null ? 'sin comparativo' : `${value > 0 ? '+' : ''}${value.toFixed(1)} %`;
 
@@ -243,6 +251,62 @@ export const SalesReportEmail = ({ report }: SalesReportEmailProps) => {
                                 {`${formatCurrency(report.unreconciledPending.total)} cobrados ` +
                                     `en ${report.unreconciledPending.count} ` +
                                     (report.unreconciledPending.count === 1 ? 'venta' : 'ventas')}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {/*
+                      * SPEC 64: la caja puede editar precios. Una línea, no una
+                      * tabla: el detalle por partida está en el reporte
+                      * «Precio cobrado distinto al catálogo» del panel. Se
+                      * destaca solo pasando `PRICE_DEVIATION_ALERT_MXN`, para que
+                      * un redondeo de centavos no se lea igual que un precio
+                      * rebajado a la mitad.
+                      */}
+                    {report.kind === 'daily' && report.priceDeviation.count > 0 ? (
+                        <ReportSection title="Precio cobrado distinto al catálogo">
+                            <Text
+                                data-alert={report.priceDeviation.alert ? 'true' : 'false'}
+                                style={{
+                                    ...text.value,
+                                    textAlign: 'left',
+                                    margin: 0,
+                                    color: report.priceDeviation.alert
+                                        ? palette.negative
+                                        : palette.ink,
+                                    fontWeight: report.priceDeviation.alert ? 700 : 400,
+                                }}
+                            >
+                                {priceDeviationLabel(report.priceDeviation)}
+                            </Text>
+                            <Text style={text.note}>
+                                {(report.priceDeviation.alert
+                                    ? `Supera el umbral de ${
+                                        formatCurrency(report.priceDeviation.threshold)}. `
+                                    : '') +
+                                    'El detalle por partida, cajero y producto está en el ' +
+                                    'reporte «Precio cobrado distinto al catálogo» del panel.'}
+                            </Text>
+                        </ReportSection>
+                    ) : null}
+
+                    {report.kind === 'daily' && report.controlledGroupChanges.length > 0 ? (
+                        <ReportSection
+                            title={`Cambios de grupo controlado (${
+                                report.controlledGroupChanges.length})`}
+                        >
+                            <DataTable
+                                rows={report.controlledGroupChanges.map((change, index) => ({
+                                    key: `${change.time}-${index}`,
+                                    label: `${change.time} · ${change.productName}`,
+                                    sublabel: change.userLabel,
+                                    value: `${groupLabel(change.before)} → ` +
+                                        groupLabel(change.after),
+                                }))}
+                            />
+                            <Text style={text.note}>
+                                {'Quitar el grupo deja de exigir receta y libro de control ' +
+                                    'para ese producto.'}
                             </Text>
                         </ReportSection>
                     ) : null}

@@ -678,7 +678,7 @@ const AUDITED_PRODUCT_FIELDS: Array<keyof Product> = [
     'hasIvaZero',
     'hasIeps',
     'iepsRate',
-    'controlledGroup',
+    // `controlledGroup` va en su propia entrada (`product.controlled_group_changed`).
     'requiresPrescription',
     'isActive',
     'boxQuantity',
@@ -714,6 +714,39 @@ const auditBoxPriceReview = async (
             boxQuantity: after.boxQuantity,
             boxPrice: after.boxPrice,
         },
+    });
+};
+
+const controlledGroupLabel = (group: ControlledGroup | null): string =>
+    (group ? `grupo ${group}` : 'sin grupo');
+
+/**
+ * Cambio de grupo COFEPRIS (SPEC 64), en su propia entrada y siempre que el
+ * valor cambie, **incluida la desclasificación** (`null`): quitarle el grupo a
+ * un producto es dejar de exigir receta y libro de control, y la caja puede
+ * hacerlo. `diffFields` no sirve aquí porque ignora los campos ausentes, y un
+ * grupo quitado queda ausente en el documento.
+ */
+const auditControlledGroupChange = async (
+    before: Product,
+    after: Product,
+    actor?: AuditActor,
+): Promise<void> => {
+    const previous = before.controlledGroup ?? null;
+    const next = after.controlledGroup ?? null;
+    if (previous === next) {
+        return;
+    }
+    await recordAudit({
+        action: 'product.controlled_group_changed',
+        entity: 'product',
+        entityId: after.id,
+        summary: `Grupo controlado de ${after.name}: de ${controlledGroupLabel(previous)} a ` +
+            controlledGroupLabel(next),
+        userId: actor?.userId ?? 'system',
+        roleSlug: actor?.roleSlug ?? null,
+        changes: { controlledGroup: { before: previous, after: next } },
+        metadata: { productName: after.name },
     });
 };
 
@@ -927,7 +960,8 @@ export const updateProduct = async (
         hasIvaZero: boolean;
         hasIeps: boolean;
         concentration: string;
-        controlledGroup: ControlledGroup;
+        /** `null` desclasifica el producto (SPEC 64). */
+        controlledGroup: ControlledGroup | null;
         iepsRate: number;
         requiresPrescription: boolean;
         isActive: boolean;
@@ -992,6 +1026,7 @@ export const updateProduct = async (
     const { product: updated, conflict: catalogConflict } = result;
 
     await auditProductUpdate(existing, updated, actor);
+    await auditControlledGroupChange(existing, updated, actor);
     await auditBoxPriceReview(existing, updated, actor);
     if (updated.salePrice !== existing.salePrice) {
         await retirePromotionsBrokenByPrice(updated, actor);

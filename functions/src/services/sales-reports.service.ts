@@ -7,6 +7,8 @@ import {
     isSaleServiceItem,
 } from '../types';
 import { EXPENSE_CATEGORY_LABELS, EXPENSE_CATEGORY_ORDER } from '../constants/expenses';
+import { getPriceDeviationAlertMxn } from '../config/env';
+import { priceDeviationLines } from '../utils/price-deviation';
 import { fromCents, toCents } from '../utils/taxes';
 import { APP_TIME_ZONE } from '../utils/timezone';
 import * as salesRepo from '../repositories/sales.repository';
@@ -14,6 +16,8 @@ import * as returnsRepo from '../repositories/sale-returns.repository';
 import * as cashMovementsRepo from '../repositories/cash-movements.repository';
 import * as dailyStatsRepo from '../repositories/daily-stats.repository';
 import * as unreconciledRepo from '../repositories/unreconciled-sales.repository';
+import * as auditRepo from '../repositories/audit-logs.repository';
+import * as usersRepo from '../repositories/users.repository';
 
 export const REPORTS_TIME_ZONE = APP_TIME_ZONE;
 const MX_UTC_OFFSET = '-06:00';
@@ -147,6 +151,30 @@ export interface ReportUnreconciledPending {
     total: number;
 }
 
+/**
+ * Partidas del día cobradas **por debajo** del precio de catálogo (SPEC 64). El
+ * detalle, con las cobradas por encima, está en el reporte `precio-distinto`.
+ */
+export interface ReportPriceDeviation {
+    count: number;
+    /** Pesos dejados de cobrar contra el catálogo; positivo. */
+    amount: number;
+    /** `PRICE_DEVIATION_ALERT_MXN` al armar el reporte. */
+    threshold: number;
+    /** `amount > threshold`: el correo destaca la línea. */
+    alert: boolean;
+}
+
+/** Cambio de grupo COFEPRIS del día (`product.controlled_group_changed`, SPEC 64). */
+export interface ReportControlledGroupChange {
+    time: string;
+    productName: string;
+    /** `null`: sin grupo. */
+    before: string | null;
+    after: string | null;
+    userLabel: string;
+}
+
 export interface DailySalesReport {
     kind: 'daily';
     title: string;
@@ -165,6 +193,8 @@ export interface DailySalesReport {
     topProducts: ReportTopProduct[];
     promotionReview: ReportPromotionReview;
     unreconciledPending: ReportUnreconciledPending;
+    priceDeviation: ReportPriceDeviation;
+    controlledGroupChanges: ReportControlledGroupChange[];
 }
 
 export interface MonthlySalesReport {
@@ -275,6 +305,64 @@ const buildPromotionReview = (sales: Sale[]): ReportPromotionReview => {
         .filter((sale) => !sale.voidedAt && sale.promotionReview === true)
         .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
     return { count: flagged.length, folios: flagged.map((sale) => sale.folio) };
+};
+
+/** Las anuladas no cuentan: ese precio ya no se cobró. */
+const buildPriceDeviation = (sales: Sale[], threshold: number): ReportPriceDeviation => {
+    let count = 0;
+    let cents = 0;
+    for (const sale of sales) {
+        if (sale.voidedAt) {
+            continue;
+        }
+        for (const line of priceDeviationLines(sale)) {
+            if (line.difference < 0) {
+                count += 1;
+                cents += toCents(-line.difference);
+            }
+        }
+    }
+    const amount = fromCents(cents);
+    return { count, amount, threshold, alert: amount > threshold };
+};
+
+const groupOf = (value: unknown): string | null =>
+    (typeof value === 'string' && value ? value : null);
+
+/**
+ * Cambios de grupo controlado del día, en orden. La bitácora se lee por el rango
+ * del día (índice de un campo) y se filtra la acción en memoria: un día de
+ * bitácora es poco y así no hace falta un índice compuesto.
+ */
+const listControlledGroupChanges = async (
+    fromIso: string,
+    toIso: string,
+): Promise<ReportControlledGroupChange[]> => {
+    const logs = (await auditRepo.listAuditLogs({
+        action: 'product.controlled_group_changed',
+        from: fromIso,
+        to: toIso,
+    })).sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+    const uids = [...new Set(logs.map((log) => log.userId))];
+    const profiles = await Promise.all(
+        uids.map((uid) => usersRepo.getUserProfile(uid).catch(() => null)),
+    );
+    const names = new Map(uids.map((uid, index) => [
+        uid,
+        profiles[index]?.displayName?.trim() || profiles[index]?.email?.trim() || uid,
+    ]));
+    return logs.map((log) => {
+        const change = log.changes?.controlledGroup;
+        return {
+            time: timeFormatter.format(log.createdAt.toDate()),
+            productName: typeof log.metadata?.productName === 'string'
+                ? log.metadata.productName
+                : log.entityId,
+            before: groupOf(change?.before),
+            after: groupOf(change?.after),
+            userLabel: log.userId === 'system' ? 'Sistema' : names.get(log.userId) ?? log.userId,
+        };
+    });
 };
 
 const buildTopProducts = (sales: Sale[], limit = 10): ReportTopProduct[] => {
@@ -459,11 +547,18 @@ const listSalesBetween = async (fromIso: string, toIso: string): Promise<Sale[]>
 export const buildDailyReport = async (isoDate: string): Promise<DailySalesReport> => {
     const from = `${isoDate}T00:00:00.000${MX_UTC_OFFSET}`;
     const to = `${isoDate}T23:59:59.999${MX_UTC_OFFSET}`;
-    const [sales, expenseMovements, refundTotal, unreconciledPending] = await Promise.all([
+    const [
+        sales,
+        expenseMovements,
+        refundTotal,
+        unreconciledPending,
+        controlledGroupChanges,
+    ] = await Promise.all([
         listSalesBetween(from, to),
         listExpensesBetween(from, to),
         sumRefunds(from, to),
         unreconciledRepo.summarizePendingUnreconciledSales(),
+        listControlledGroupChanges(from, to),
     ]);
 
     const rows: ReportSaleRow[] = sales
@@ -496,6 +591,8 @@ export const buildDailyReport = async (isoDate: string): Promise<DailySalesRepor
         topProducts: buildTopProducts(sales),
         promotionReview: buildPromotionReview(sales),
         unreconciledPending,
+        priceDeviation: buildPriceDeviation(sales, getPriceDeviationAlertMxn()),
+        controlledGroupChanges,
     };
 };
 

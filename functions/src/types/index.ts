@@ -151,6 +151,11 @@ export type AuditAction =
      * (SPEC 46). Se acepta —el POS sube precios sin red— y queda para revisión.
      */
     | 'product.box_price_review'
+    /**
+     * Cambió el grupo COFEPRIS del producto, incluida la desclasificación a
+     * `null` (SPEC 64). La caja puede hacerlo; queda aparte para el correo diario.
+     */
+    | 'product.controlled_group_changed'
     | 'product.deactivated'
     | 'sale.voided'
     /** Venta cobrada en caja que el servidor no pudo registrar (stock, producto). */

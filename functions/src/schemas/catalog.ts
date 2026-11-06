@@ -132,7 +132,11 @@ export const updateProductSchema = z
         hasIvaZero: z.boolean().optional(),
         hasIeps: z.boolean().optional(),
         iepsRate: iepsRateSchema.optional(),
-        controlledGroup: controlledGroupSchema.optional(),
+        /**
+         * `null` desclasifica el producto (SPEC 64): la caja lo manda explícito
+         * para que quitar el grupo no se quede solo en local.
+         */
+        controlledGroup: controlledGroupSchema.nullable().optional(),
         concentration: z.string().trim().max(80).optional(),
         requiresPrescription: z.boolean().optional(),
         isActive: z.boolean().optional(),

@@ -1,5 +1,6 @@
 import * as promotionsRepo from '../../../repositories/promotions.repository';
 import * as salesRepo from '../../../repositories/sales.repository';
+import { priceDeviationLines } from '../../../utils/price-deviation';
 import { fromCents, toCents } from '../../../utils/taxes';
 import { Promotion } from '../../../types';
 import { getSalesByCashier, getTopProducts } from '../../analytics.service';
@@ -8,7 +9,7 @@ import { NO_CASHIER, resolveUserNames } from '../../module-reports.service';
 import { computePromotionPerformance } from '../../promotion-performance.service';
 import { ReportDefinition, ReportRow } from '../report-definition';
 import { resolveReportPeriod } from '../period';
-import { MAX_ROWS } from './shared';
+import { MAX_ROWS, stampDate } from './shared';
 
 export const topProductos: ReportDefinition = {
     key: 'top-productos',
@@ -285,9 +286,67 @@ export const cupones: ReportDefinition = {
     },
 };
 
+/**
+ * Partidas cobradas a un precio distinto del catálogo (SPEC 64): un renglón por
+ * partida de venta no anulada con `catalogUnitPrice` distinto de lo cobrado. La
+ * caja puede editar precios y vender sin red; esto es lo que deja ver si alguien
+ * bajó el precio, vendió y lo regresó antes de sincronizar.
+ */
+export const precioDistinto: ReportDefinition = {
+    key: 'precio-distinto',
+    title: 'Precio cobrado distinto al catálogo',
+    columns: [
+        { key: 'date', header: 'Fecha', type: 'text' },
+        { key: 'folio', header: 'Folio', type: 'text' },
+        { key: 'cashier', header: 'Cajero', type: 'text' },
+        { key: 'product', header: 'Producto', type: 'text' },
+        { key: 'catalogUnitPrice', header: 'Precio de catálogo', type: 'money' },
+        { key: 'unitPrice', header: 'Precio cobrado', type: 'money' },
+        { key: 'quantity', header: 'Cantidad', type: 'int', total: true },
+        { key: 'difference', header: 'Diferencia', type: 'money', total: true },
+    ],
+    load: async ({ query, now }) => {
+        const range = resolveReportPeriod(query, now);
+        const { items: sales } = await salesRepo.listSales({ from: range.from, to: range.to });
+        const ordered = sales
+            .slice()
+            .sort((a, b) => a.createdAt.toMillis() - b.createdAt.toMillis());
+        const names = await resolveUserNames(ordered.map((sale) => sale.cashierId));
+        const rows: ReportRow[] = [];
+        for (const sale of ordered) {
+            for (const line of priceDeviationLines(sale)) {
+                rows.push({
+                    date: stampDate(sale.createdAt),
+                    folio: sale.folio,
+                    cashier: names.get(sale.cashierId) ?? NO_CASHIER,
+                    product: line.name,
+                    catalogUnitPrice: line.catalogUnitPrice,
+                    unitPrice: line.unitPrice,
+                    quantity: line.quantity,
+                    difference: line.difference,
+                });
+            }
+        }
+        return {
+            subtitle: range.label,
+            slug: range.slug,
+            rows,
+            emptyMessage: 'Sin partidas cobradas a un precio distinto del catálogo en el periodo.',
+            notes: [
+                'Diferencia negativa: se cobró menos que el catálogo. Las ventas anuladas no '
+                + 'cuentan.',
+                'Se compara el precio unitario, no el neto: promociones y cupones no son precio '
+                + 'distinto. En la venta por caja se compara el precio de caja y la cantidad va '
+                + 'en cajas.',
+            ],
+        };
+    },
+};
+
 export const salesDefinitions: ReportDefinition[] = [
     topProductos,
     porCajero,
+    precioDistinto,
     ventasPorHora,
     ventasPorDiaSemana,
     promociones,

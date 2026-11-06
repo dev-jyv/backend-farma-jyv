@@ -118,6 +118,20 @@ export const getReportsEmailTo = (): string[] => {
     return recipients;
 };
 
+/** Umbral por defecto de `PRICE_DEVIATION_ALERT_MXN` (SPEC 64). */
+export const DEFAULT_PRICE_DEVIATION_ALERT_MXN = 200;
+
+/**
+ * Pesos cobrados bajo el precio de catálogo en un día a partir de los cuales el
+ * correo diario destaca la línea (SPEC 64). Un valor vacío, no numérico o
+ * negativo cae al default: una errata no debe apagar ni disparar el aviso.
+ */
+export const getPriceDeviationAlertMxn = (): number => {
+    const raw = process.env.PRICE_DEVIATION_ALERT_MXN?.trim();
+    const value = raw ? Number(raw) : NaN;
+    return Number.isFinite(value) && value >= 0 ? value : DEFAULT_PRICE_DEVIATION_ALERT_MXN;
+};
+
 /**
  * Datos de la farmacia impresos en el ticket. Todos opcionales salvo el nombre,
  * que cae a un valor genérico para no romper la impresión si falta la variable.
