@@ -27,7 +27,9 @@ export class ZodValidationPipe implements PipeTransform {
                 : error instanceof Error
                     ? error.message
                     : 'Datos de entrada inválidos';
-            throw badRequest(message);
+            // Un payload que no pasa el esquema es la validación por excelencia: la
+            // caja la muestra y no la reintenta igual (SPEC 49).
+            throw badRequest(message, 'VALIDATION');
         }
     }
 }

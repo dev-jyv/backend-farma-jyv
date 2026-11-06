@@ -207,6 +207,7 @@ export const assertCanAccessSession = (
     if (session.openedBy !== userId && roleSlug !== 'admin') {
         throw forbidden(
             'Solo el cajero que abrió el turno o un administrador puede usarlo',
+            'SESSION_FORBIDDEN',
         );
     }
 };

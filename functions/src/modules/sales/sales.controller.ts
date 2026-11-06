@@ -24,7 +24,8 @@ import {
 import * as salesService from '../../services/sales.service';
 import * as receiptsService from '../../services/receipts.service';
 import * as unreconciledSalesService from '../../services/unreconciled-sales.service';
-import { AppError, badRequest } from '../../utils/errors';
+import { badRequest, describeSyncError } from '../../utils/errors';
+import { SyncErrorCode } from '../../constants/sync-error-codes';
 import { requiresIdempotencyKey } from '../../config/env';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
@@ -47,6 +48,7 @@ type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
  * la farmacia sin cobrar—; con la bandera puesta, rechaza.
  */
 const logger = new Logger('SalesIdempotency');
+const bulkLogger = new Logger('SalesBulk');
 
 const assertIdempotencyKey = (key: string | undefined, userId: string): void => {
     if (key) {
@@ -108,7 +110,7 @@ export class SalesController {
     ) {
         const results: Array<
             | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
-            | { ok: false; error: string; code?: string }
+            | { ok: false; error: string; code: SyncErrorCode; retryable: boolean }
         > = [];
 
         for (const item of body.items) {
@@ -125,14 +127,19 @@ export class SalesController {
                 });
                 results.push({ ok: true, sale });
             } catch (error) {
-                const message = error instanceof AppError || error instanceof Error
-                    ? error.message
-                    : 'Error desconocido';
-                results.push({
-                    ok: false,
-                    error: message,
-                    ...(error instanceof AppError ? { code: error.code } : {}),
-                });
+                // Contrato de SPEC 49: la caja decide por `code` y `retryable`, no por
+                // el texto. Lo que no es un rechazo de negocio (un `ABORTED` de
+                // Firestore tras sus reintentos, un 5xx) sale `INTERNAL` reintentable.
+                const { code, retryable, message } = describeSyncError(error);
+                if (code === 'INTERNAL') {
+                    // El lote se traga el error para seguir con las demás ventas: sin
+                    // este registro un 500 dentro del bulk no dejaba rastro.
+                    bulkLogger.error(
+                        `Venta del lote no procesada (cajero ${user.uid}): ` +
+                        (error instanceof Error ? error.stack ?? error.message : String(error)),
+                    );
+                }
+                results.push({ ok: false, error: message, code, retryable });
             }
         }
 

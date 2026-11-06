@@ -18,7 +18,13 @@ import {
     isSaleServiceItem,
     saleItemName,
 } from '../types';
-import { badRequest, conflict, forbidden, notFound } from '../utils/errors';
+import {
+    badRequest,
+    conflict,
+    forbidden,
+    notFound,
+    withDefaultSyncCode,
+} from '../utils/errors';
 import { buildListMeta, ListMeta, paginate, parsePagination } from '../utils/pagination';
 import { allocateFefo } from '../utils/fefo';
 import {
@@ -185,11 +191,13 @@ const resolveReplayedSale = (
     if (stored.requestFingerprint !== fingerprint) {
         throw conflict(
             'Esta llave de idempotencia ya se usó para una venta distinta',
+            'IDEMPOTENCY_CONFLICT',
         );
     }
     if (!saleDoc.exists) {
         throw conflict(
             'La llave de idempotencia apunta a una venta que ya no existe',
+            'IDEMPOTENCY_CONFLICT',
         );
     }
     return mapSaleDoc(saleDoc);
@@ -549,7 +557,23 @@ const resolveSaleCoupon = (input: {
     return { ...resolved, error, review: null };
 };
 
-export const createSale = async (input: {
+/**
+ * Registra una venta. Todo rechazo de negocio sale con un código de
+ * sincronización (SPEC 49): los que la caja resuelve por un camino propio
+ * (stock, catálogo, turno, llave) lo llevan desde donde se lanzan, y el resto es
+ * una validación que la caja muestra (`VALIDATION`).
+ */
+export const createSale = async (input: CreateSaleInput): Promise<Sale> => {
+    try {
+        return await applySale(input);
+    } catch (error) {
+        throw withDefaultSyncCode(error, 'VALIDATION');
+    }
+};
+
+type CreateSaleInput = Parameters<typeof applySale>[0];
+
+const applySale = async (input: {
     idempotencyKey?: string;
     items: SaleItemInput[];
     saleDiscountAmount?: number;
@@ -660,8 +684,13 @@ export const createSale = async (input: {
                 service = await pharmacyServicesRepo.getPharmacyServiceById(item.serviceId);
                 serviceCache.set(item.serviceId, service);
             }
-            if (!service || !service.isActive) {
-                throw notFound(`Servicio ${item.serviceId}`);
+            // Mismo mensaje en ambos casos; el código le dice a la caja si el
+            // servicio no existe o solo se desactivó (SPEC 52 los trata distinto).
+            if (!service) {
+                throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_NOT_FOUND');
+            }
+            if (!service.isActive) {
+                throw notFound(`Servicio ${item.serviceId}`, 'PRODUCT_INACTIVE');
             }
             if (service.hasIeps && service.iepsRate === undefined) {
                 throw badRequest(
@@ -732,8 +761,11 @@ export const createSale = async (input: {
             productCache.set(item.productId, product);
         }
 
-        if (!product || !product.isActive) {
-            throw notFound(`Producto ${item.productId}`);
+        if (!product) {
+            throw notFound(`Producto ${item.productId}`, 'PRODUCT_NOT_FOUND');
+        }
+        if (!product.isActive) {
+            throw notFound(`Producto ${item.productId}`, 'PRODUCT_INACTIVE');
         }
 
         if (isBox && !(product.boxQuantity && product.boxPrice)) {
@@ -769,9 +801,12 @@ export const createSale = async (input: {
             allocations = allocateFefo(batches, pieces, { excludeExpired: true });
         } catch (error) {
             if (error instanceof Error && error.message === 'EXPIRED_STOCK') {
-                throw badRequest(`El stock disponible de ${product.name} está vencido`);
+                throw badRequest(
+                    `El stock disponible de ${product.name} está vencido`,
+                    'BATCH_EXPIRED',
+                );
             }
-            throw badRequest(`Stock insuficiente para ${product.name}`);
+            throw badRequest(`Stock insuficiente para ${product.name}`, 'STOCK_INSUFFICIENT');
         }
 
         for (const allocation of allocations) {
@@ -1255,7 +1290,7 @@ export const createSale = async (input: {
             input.roleSlug,
         );
         if (cashSessionDoc.data()?.closedAt) {
-            throw badRequest('El turno de caja ya está cerrado');
+            throw badRequest('El turno de caja ya está cerrado', 'SESSION_CLOSED');
         }
 
         const nextSequence = (counterDoc.data()?.value as number | undefined ?? 0) + 1;
@@ -1263,13 +1298,15 @@ export const createSale = async (input: {
 
         uniqueBatchEntries.forEach(([batchId, entry], index) => {
             const batchDoc = batchDocs[index];
+            // El lote se borró o se vació entre el plan y la transacción: para la
+            // caja es lo mismo, no hay de dónde surtir.
             if (!batchDoc.exists) {
-                throw notFound('Lote');
+                throw notFound('Lote', 'STOCK_INSUFFICIENT');
             }
 
             const currentQty = batchDoc.data()?.quantity as number;
             if (currentQty < entry.quantity) {
-                throw badRequest(`Stock insuficiente en lote ${batchId}`);
+                throw badRequest(`Stock insuficiente en lote ${batchId}`, 'STOCK_INSUFFICIENT');
             }
 
             transaction.update(entry.batchRef, {
@@ -1501,7 +1538,20 @@ export const createSale = async (input: {
     return sale;
 };
 
-export const voidSale = async (
+/**
+ * Anula una venta. Mismo contrato de códigos que `createSale` (SPEC 49): ya
+ * anulada, con devoluciones, sin permiso o turno ajeno llevan el suyo; lo demás es
+ * `VALIDATION`.
+ */
+export const voidSale = async (...args: Parameters<typeof applyVoid>): Promise<Sale> => {
+    try {
+        return await applyVoid(...args);
+    } catch (error) {
+        throw withDefaultSyncCode(error, 'VALIDATION');
+    }
+};
+
+const applyVoid = async (
     id: string,
     voidedBy: string,
     roleSlug?: string,
@@ -1538,7 +1588,7 @@ export const voidSale = async (
         }
         const existing = mapSaleDoc(saleDoc);
         if (existing.voidedAt) {
-            throw badRequest('La venta ya está anulada');
+            throw badRequest('La venta ya está anulada', 'ALREADY_VOIDED');
         }
         // Anular después de devolver parcialmente restauraría stock dos veces y
         // devolvería dinero de más: primero se cancela la devolución.
@@ -1548,11 +1598,13 @@ export const voidSale = async (
         if (sesionCerrada && roleSlug !== 'admin') {
             throw forbidden(
                 'La venta pertenece a un turno ya cerrado: solo un administrador puede anularla',
+                'VOID_FORBIDDEN',
             );
         }
         if ((existing.refundedTotal ?? 0) > 0) {
             throw conflict(
                 'La venta tiene devoluciones registradas; no se puede anular completa',
+                'HAS_RETURNS',
             );
         }
 
@@ -1948,6 +2000,6 @@ export const assertCanVoidSale = (user: {
         hasPermission(user.permissions, 'pos', 'write', user.role.slug) ||
         hasPermission(user.permissions, 'sales', 'write', user.role.slug);
     if (!puede) {
-        throw forbidden('Tu rol no tiene permiso para anular ventas');
+        throw forbidden('Tu rol no tiene permiso para anular ventas', 'VOID_FORBIDDEN');
     }
 };

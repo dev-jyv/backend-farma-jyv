@@ -1,28 +1,96 @@
+import { isRetryableSyncErrorCode, SyncErrorCode } from '../constants/sync-error-codes';
+
+export interface AppErrorOptions {
+    /**
+     * Código de negocio estable que lee el POS (SPEC 49). Es distinto del `code`
+     * HTTP: dos 400 pueden pedir caminos opuestos en la caja.
+     */
+    syncCode?: SyncErrorCode;
+    /** Por default lo decide el código (o el status ≥ 500 si no hay código). */
+    retryable?: boolean;
+}
+
 export class AppError extends Error {
+    public readonly syncCode?: SyncErrorCode;
+    public readonly retryable: boolean;
+
     constructor(
         public readonly statusCode: number,
         public readonly code: string,
         message: string,
+        options: AppErrorOptions = {},
     ) {
         super(message);
         this.name = 'AppError';
+        this.syncCode = options.syncCode;
+        this.retryable = options.retryable ??
+            (options.syncCode ? isRetryableSyncErrorCode(options.syncCode) : statusCode >= 500);
     }
 }
 
-export const notFound = (resource: string): AppError =>
-    new AppError(404, 'NOT_FOUND', `${resource} no encontrado`);
+const syncOptions = (syncCode?: SyncErrorCode): AppErrorOptions =>
+    (syncCode ? { syncCode } : {});
 
-export const forbidden = (message = 'No tienes permisos para esta acción'): AppError =>
-    new AppError(403, 'FORBIDDEN', message);
+export const notFound = (resource: string, syncCode?: SyncErrorCode): AppError =>
+    new AppError(404, 'NOT_FOUND', `${resource} no encontrado`, syncOptions(syncCode));
+
+export const forbidden = (
+    message = 'No tienes permisos para esta acción',
+    syncCode?: SyncErrorCode,
+): AppError =>
+    new AppError(403, 'FORBIDDEN', message, syncOptions(syncCode));
 
 export const unauthorized = (message = 'Token inválido o ausente'): AppError =>
     new AppError(401, 'UNAUTHORIZED', message);
 
-export const badRequest = (message: string): AppError =>
-    new AppError(400, 'BAD_REQUEST', message);
+export const badRequest = (message: string, syncCode?: SyncErrorCode): AppError =>
+    new AppError(400, 'BAD_REQUEST', message, syncOptions(syncCode));
 
-export const conflict = (message: string): AppError =>
-    new AppError(409, 'CONFLICT', message);
+export const conflict = (message: string, syncCode?: SyncErrorCode): AppError =>
+    new AppError(409, 'CONFLICT', message, syncOptions(syncCode));
 
 export const unprocessable = (message: string): AppError =>
     new AppError(422, 'UNPROCESSABLE', message);
+
+/**
+ * Le pone `syncCode` a un rechazo de negocio (4xx) que no lo traía, conservando
+ * status, código HTTP, mensaje y stack. Lo demás pasa intacto: un error que no es
+ * `AppError`, o uno ≥ 500, sale como `INTERNAL` por `describeSyncError`.
+ *
+ * Es lo que deja a `createSale`, `voidSale` y `createStockEntry` sin un 4xx mudo:
+ * lo que no tiene un código propio es una validación que la caja muestra.
+ */
+export const withDefaultSyncCode = (error: unknown, syncCode: SyncErrorCode): unknown => {
+    if (!(error instanceof AppError) || error.statusCode >= 500 || error.syncCode) {
+        return error;
+    }
+    const tagged = new AppError(error.statusCode, error.code, error.message, { syncCode });
+    tagged.stack = error.stack;
+    return tagged;
+};
+
+export interface SyncErrorDescription {
+    code: SyncErrorCode;
+    retryable: boolean;
+    message: string;
+}
+
+/**
+ * Traduce cualquier error al contrato de sincronización (SPEC 49):
+ *
+ *  - `AppError` 4xx → su `syncCode` (o `VALIDATION` si no tiene) y su `retryable`;
+ *  - `AppError` ≥ 500 o cualquier otro error (un `ABORTED` de Firestore tras sus
+ *    reintentos, una caída de red hacia Mercado Pago) → `INTERNAL`, reintentable:
+ *    no se rechazó la operación, no se pudo decidir.
+ */
+export const describeSyncError = (error: unknown): SyncErrorDescription => {
+    const message = error instanceof Error ? error.message : 'Error desconocido';
+    if (error instanceof AppError && error.statusCode < 500) {
+        return {
+            code: error.syncCode ?? 'VALIDATION',
+            retryable: error.retryable,
+            message,
+        };
+    }
+    return { code: 'INTERNAL', retryable: true, message };
+};

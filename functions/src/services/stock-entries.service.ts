@@ -7,7 +7,7 @@ import {
     Product,
 } from '../types';
 import { db } from '../utils/firestore';
-import { AppError, conflict, notFound } from '../utils/errors';
+import { AppError, conflict, notFound, withDefaultSyncCode } from '../utils/errors';
 import { AuditActor } from './audit.service';
 import * as entriesRepo from '../repositories/inventory-entries.repository';
 import * as invoicesRepo from '../repositories/invoices.repository';
@@ -68,7 +68,30 @@ const buildIdempotencyDocId = (userId: string, key: string): string => `${userId
  */
 const STALE_RESERVATION_MS = 10 * 60 * 1000;
 
-export const createStockEntry = async (input: {
+/** Códigos gRPC con los que Firestore rechaza la reserva de otro intento. */
+const ALREADY_EXISTS = 6;
+const FAILED_PRECONDITION = 9;
+
+const isFirestoreCode = (error: unknown, code: number): boolean =>
+    (error as { code?: unknown } | null)?.code === code;
+
+/**
+ * Registra una partida desde la caja. Todo rechazo sale con código de
+ * sincronización (SPEC 49): reserva en curso (`ENTRY_IN_PROGRESS`, reintentable),
+ * partida dudosa (`ENTRY_AMBIGUOUS`), producto inexistente (`PRODUCT_NOT_FOUND`) y,
+ * lo demás, `VALIDATION`.
+ */
+export const createStockEntry = async (input: StockEntryInput): Promise<StockEntryResult> => {
+    try {
+        return await applyStockEntry(input);
+    } catch (error) {
+        throw withDefaultSyncCode(error, 'VALIDATION');
+    }
+};
+
+type StockEntryInput = Parameters<typeof applyStockEntry>[0];
+
+const applyStockEntry = async (input: {
     invoiceId: string;
     lotNumber: string;
     expiryDate: string;
@@ -106,7 +129,7 @@ export const createStockEntry = async (input: {
                 // puede seguir en curso: no se toca.
                 const reservedAt = previo.data()?.createdAt as Timestamp | undefined;
                 if (!reservedAt || Date.now() - reservedAt.toMillis() <= STALE_RESERVATION_MS) {
-                    throw halfRecorded();
+                    throw entryInProgress();
                 }
 
                 // Solo cuenta como sobrante de este intento un producto dado de alta
@@ -135,7 +158,7 @@ export const createStockEntry = async (input: {
                         since: reservedAt,
                     });
                 if (applied.ambiguous) {
-                    throw halfRecorded();
+                    throw entryAmbiguous();
                 }
                 if (applied.match) {
                     // Ya se aplicó (por este intento o recapturada a mano): se cierra
@@ -146,18 +169,24 @@ export const createStockEntry = async (input: {
                     );
                     return replayEntry(applied.match.id);
                 }
-                // La precondición deja pasar a uno solo de dos reintentos simultáneos.
+                // La precondición deja pasar a uno solo de dos reintentos simultáneos;
+                // el otro ve una reserva que acaba de renovarse, es decir, en curso.
                 await idempotencyRef.update(
                     { createdAt: new Date() },
                     { lastUpdateTime: previo.updateTime! },
-                );
+                ).catch((error: unknown) => {
+                    throw isFirestoreCode(error, FAILED_PRECONDITION) ? entryInProgress() : error;
+                });
             } else {
                 return replayEntry(entryId);
             }
         } else {
             // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
             // paralelo no pueden aplicar la misma entrada dos veces.
-            await idempotencyRef.create({ userId: input.userId, createdAt: new Date() });
+            await idempotencyRef.create({ userId: input.userId, createdAt: new Date() })
+                .catch((error: unknown) => {
+                    throw isFirestoreCode(error, ALREADY_EXISTS) ? entryInProgress() : error;
+                });
         }
     }
 
@@ -206,10 +235,25 @@ export const createStockEntry = async (input: {
     return { entry, product, stock: stock.stock };
 };
 
-const halfRecorded = () => conflict(
+const HALF_RECORDED_MESSAGE =
     'Esta entrada quedó a medio registrar en un intento anterior. ' +
-        'Revisa el lote en inventario antes de volver a capturarla.',
-);
+    'Revisa el lote en inventario antes de volver a capturarla.';
+
+/**
+ * Ya hay partidas de ese producto y lote en la factura, con otra cantidad: no se
+ * sabe si es esta corregida o una distinta. Lo decide una persona.
+ */
+const entryAmbiguous = () => conflict(HALF_RECORDED_MESSAGE, 'ENTRY_AMBIGUOUS');
+
+/**
+ * Otro intento con la misma llave reservó hace poco y puede seguir en curso. No es
+ * un rechazo: la caja la deja pendiente y reintenta (SPEC 49). El mensaje no cambia
+ * para que una caja anterior a los códigos lo siga reconociendo.
+ */
+const entryInProgress = () => new AppError(409, 'CONFLICT', HALF_RECORDED_MESSAGE, {
+    syncCode: 'ENTRY_IN_PROGRESS',
+    retryable: true,
+});
 
 const replayEntry = async (entryId: string): Promise<StockEntryResult> => {
     const entry = await inventoryService.getEntry(entryId);
@@ -253,6 +297,12 @@ const resolveExistingProduct = async (
     update: Parameters<typeof productsService.updateProduct>[1] | undefined,
     actor: AuditActor,
 ): Promise<Product> => {
+    // Los 404 de `updateProduct` y `getProduct` también pueden ser de la categoría
+    // o del proveedor: el producto se comprueba antes para darle a la caja su código.
+    // Una lectura más por partida, a ritmo de captura humana.
+    if (!await productsRepo.getProductById(productId)) {
+        throw notFound('Producto', 'PRODUCT_NOT_FOUND');
+    }
     if (update && Object.keys(update).length > 0) {
         return productsService.updateProduct(productId, update, actor);
     }
