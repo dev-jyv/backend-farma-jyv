@@ -49,8 +49,8 @@ export const listRecentInvoices = async (limit?: number): Promise<InvoiceWithDet
 
 /**
  * Llaves de idempotencia de las entradas, con el mismo patrón que las ventas
- * (`saleIdempotencyKeys`): documento por `usuario:llave`, creado **antes** de
- * tocar catálogo e inventario.
+ * (`saleIdempotencyKeys`): un documento por llave, creado **antes** de tocar
+ * catálogo e inventario.
  *
  * El fallo real que esto cubre no es el doble clic —el formulario ya se
  * deshabilita— sino el reintento de la cola: el alta se aplicó, la respuesta se
@@ -60,7 +60,12 @@ export const listRecentInvoices = async (limit?: number): Promise<InvoiceWithDet
  */
 const IDEMPOTENCY_COLLECTION = 'stockEntryIdempotencyKeys';
 
-const buildIdempotencyDocId = (userId: string, key: string): string => `${userId}:${key}`;
+/**
+ * Id del documento de la llave (SPEC 54): por caja cuando la caja manda su
+ * `deviceId`, para que la llave no cambie si otro usuario inicia sesión y la cola
+ * reenvía la entrada. Sin `deviceId` (caja anterior), por usuario, como antes.
+ */
+const buildIdempotencyDocId = (owner: string, key: string): string => `${owner}:${key}`;
 
 /**
  * Antigüedad desde la que una reserva sin `entryId` ya no puede seguir en curso:
@@ -74,6 +79,36 @@ const FAILED_PRECONDITION = 9;
 
 const isFirestoreCode = (error: unknown, code: number): boolean =>
     (error as { code?: unknown } | null)?.code === code;
+
+type IdempotencyKeyDoc = {
+    ref: FirebaseFirestore.DocumentReference;
+    snapshot: FirebaseFirestore.DocumentSnapshot;
+};
+
+/**
+ * Documento de la llave. Con `deviceId` se busca también la llave vieja
+ * `<usuario>:<llave>` (una sola lectura de los dos): una entrada que una caja
+ * anterior reservó o aplicó con ella se sigue reconociendo tras actualizarse.
+ */
+const loadIdempotencyKey = async (input: {
+    userId: string;
+    deviceId?: string;
+    idempotencyKey?: string;
+}): Promise<IdempotencyKeyDoc | null> => {
+    if (!input.idempotencyKey) {
+        return null;
+    }
+    const keys = db().collection(IDEMPOTENCY_COLLECTION);
+    const legacyRef = keys.doc(buildIdempotencyDocId(input.userId, input.idempotencyKey));
+    if (!input.deviceId) {
+        return { ref: legacyRef, snapshot: await legacyRef.get() };
+    }
+    const ref = keys.doc(buildIdempotencyDocId(input.deviceId, input.idempotencyKey));
+    const [current, legacy] = await db().getAll(ref, legacyRef);
+    return !current.exists && legacy.exists
+        ? { ref: legacyRef, snapshot: legacy }
+        : { ref, snapshot: current };
+};
 
 /**
  * Registra una partida desde la caja. Todo rechazo sale con código de
@@ -103,6 +138,8 @@ const applyStockEntry = async (input: {
     userId: string;
     roleSlug?: string | null;
     idempotencyKey?: string;
+    /** Caja que capturó la entrada (SPEC 54). */
+    deviceId?: string;
 }): Promise<StockEntryResult> => {
     // Se comprueba antes de tocar el catálogo: dar de alta un producto para una
     // factura que no existe deja basura en `products` sin nada que la respalde.
@@ -111,17 +148,14 @@ const applyStockEntry = async (input: {
         throw notFound('Factura');
     }
 
-    const idempotencyRef = input.idempotencyKey
-        ? db()
-            .collection(IDEMPOTENCY_COLLECTION)
-            .doc(buildIdempotencyDocId(input.userId, input.idempotencyKey))
-        : null;
+    const idempotency = await loadIdempotencyKey(input);
+    const idempotencyRef = idempotency?.ref ?? null;
 
     // Producto que dejó un intento que murió entre el alta y la entrada.
     let leftoverProduct: Product | null = null;
 
     if (idempotencyRef) {
-        const previo = await idempotencyRef.get();
+        const previo = idempotency!.snapshot;
         if (previo.exists) {
             const entryId = previo.data()?.entryId as string | undefined;
             if (!entryId) {
@@ -183,10 +217,13 @@ const applyStockEntry = async (input: {
         } else {
             // `create` falla si otro intento simultáneo ya la reservó: dos flushes en
             // paralelo no pueden aplicar la misma entrada dos veces.
-            await idempotencyRef.create({ userId: input.userId, createdAt: new Date() })
-                .catch((error: unknown) => {
-                    throw isFirestoreCode(error, ALREADY_EXISTS) ? entryInProgress() : error;
-                });
+            await idempotencyRef.create({
+                userId: input.userId,
+                ...(input.deviceId ? { deviceId: input.deviceId } : {}),
+                createdAt: new Date(),
+            }).catch((error: unknown) => {
+                throw isFirestoreCode(error, ALREADY_EXISTS) ? entryInProgress() : error;
+            });
         }
     }
 
