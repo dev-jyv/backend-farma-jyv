@@ -46,13 +46,33 @@ export const idempotencyKeySchema = z.string()
     .regex(/^[A-Za-z0-9_:-]+$/, 'La llave de idempotencia solo admite [A-Za-z0-9_:-]');
 
 /**
- * Cuerpo **opcional** de la anulación. Solo lo manda el POS cuando cierra una
- * anulación que ocurrió sin red: el instante y el cajero reales son los de
- * entonces, no los del momento en que se logró sincronizar.
+ * Motivo con el que se registra la anulación de un POS anterior a SPEC 62, que no
+ * manda `reason`. El POS nuevo usa el mismo texto para sus anulaciones locales
+ * hechas antes del motivo obligatorio, así el reporte no distingue los caminos.
+ */
+export const LEGACY_VOID_REASON = 'Sin motivo (POS anterior)';
+
+const VOID_REASON_MESSAGE = 'El motivo de la anulación debe tener de 5 a 300 caracteres';
+
+/**
+ * Cuerpo de la anulación. `reason` es obligatorio desde SPEC 62 (5 a 300
+ * caracteres). Durante la transición, un cuerpo **sin la clave** `reason` (POS
+ * anterior: cuerpo vacío en línea o solo `voidedAt`/`voidedBy` al cerrar una
+ * anulación sin red) recibe `LEGACY_VOID_REASON`; una clave presente pero vacía,
+ * corta o `null` es un payload nuevo sin motivo y responde 400.
+ *
+ * `voidedAt`/`voidedBy` solo los manda el POS cuando cierra una anulación que
+ * ocurrió sin red: el instante y el cajero reales son los de entonces, no los
+ * del momento en que se logró sincronizar.
  */
 export const voidSaleSchema = z.preprocess(
     (value) => value ?? {},
     z.object({
+        reason: z.string({ invalid_type_error: VOID_REASON_MESSAGE })
+            .trim()
+            .min(5, VOID_REASON_MESSAGE)
+            .max(300, VOID_REASON_MESSAGE)
+            .optional(),
         voidedAt: parseableDate.optional(),
         /**
          * Uid del cajero que anuló en la caja. Se guarda como autor de la
@@ -60,7 +80,12 @@ export const voidSaleSchema = z.preprocess(
          * bitácora de auditoría sigue registrando al usuario del token.
          */
         voidedBy: z.string().min(1).max(128).optional(),
-    }),
+    }).transform((data) => ({
+        ...data,
+        reason: data.reason ?? LEGACY_VOID_REASON,
+        /** `true` si el motivo lo puso el servidor (POS anterior sin `reason`). */
+        reasonDefaulted: data.reason === undefined,
+    })),
 );
 
 /**

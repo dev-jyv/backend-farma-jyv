@@ -353,6 +353,9 @@ export const devoluciones: ReportDefinition = {
     },
 };
 
+/** Cancelación registrada antes de que el motivo fuera obligatorio (SPEC 62). */
+const NO_VOID_REASON = 'Sin motivo registrado';
+
 export const cancelaciones: ReportDefinition = {
     key: 'cancelaciones',
     title: 'Ventas canceladas',
@@ -363,6 +366,7 @@ export const cancelaciones: ReportDefinition = {
         { key: 'payment', header: 'Pago', type: 'text' },
         { key: 'voidedBy', header: 'Canceló', type: 'text' },
         { key: 'voidedAt', header: 'Fecha de cancelación', type: 'text' },
+        { key: 'reason', header: 'Motivo', type: 'text' },
         { key: 'amount', header: 'Importe', type: 'money', total: true },
     ],
     load: async ({ query, now }) => {
@@ -382,6 +386,8 @@ export const cancelaciones: ReportDefinition = {
                 voidedAt: sale.voidedAt
                     ? `${stampDate(sale.voidedAt)} ${stampTime(sale.voidedAt)}`
                     : '',
+                // Motivo obligatorio desde SPEC 62; las anteriores no lo tienen.
+                reason: sale.voidReason ?? NO_VOID_REASON,
                 amount: sale.total,
             }));
         return {
@@ -389,8 +395,8 @@ export const cancelaciones: ReportDefinition = {
             slug: range.slug,
             rows,
             emptyMessage: 'Sin ventas canceladas en el periodo.',
-            notes: ['El periodo filtra por la fecha de la venta. El sistema no guarda el motivo '
-                + 'de la cancelación; consulta la bitácora de auditoría.'],
+            notes: ['El periodo filtra por la fecha de la venta. Las cancelaciones anteriores '
+                + 'al motivo obligatorio aparecen como "' + NO_VOID_REASON + '".'],
         };
     },
 };

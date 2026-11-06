@@ -67,6 +67,7 @@ import {
 import { getControlledRule } from '../constants/controlled';
 import { recordAudit } from './audit.service';
 import { assertCanAccessSession } from './cash-sessions.service';
+import { LEGACY_VOID_REASON } from '../schemas/sales';
 import { hasPermission } from '../constants/permissions';
 import { RolePermission } from '../types';
 
@@ -2048,9 +2049,19 @@ const applyVoid = async (
      * cerrando en el siguiente sync: el instante y el cajero de entonces. Sin
      * esto, la venta quedaría anulada con la hora del sync y a nombre de quien
      * sincronizó, que puede ser otro turno y otra persona.
+     *
+     * `reason` es el motivo (SPEC 62), ya validado por `voidSaleSchema`; un
+     * llamador interno que no lo manda queda con `LEGACY_VOID_REASON`.
      */
-    reported?: { voidedAt?: string; voidedBy?: string },
+    reported?: {
+        voidedAt?: string;
+        voidedBy?: string;
+        reason?: string;
+        reasonDefaulted?: boolean;
+    },
 ): Promise<Sale> => {
+    const voidReason = reported?.reason?.trim() || LEGACY_VOID_REASON;
+    const reasonDefaulted = !reported?.reason?.trim() || reported?.reasonDefaulted === true;
     const firestore = db();
     const saleRef = firestore.collection('sales').doc(id);
 
@@ -2246,7 +2257,7 @@ const applyVoid = async (
             });
         }
 
-        transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author });
+        transaction.update(saleRef, { voidedAt: timestamp, voidedBy: author, voidReason });
         // Resta del día en que se hizo la venta (su fecha de negocio, SPEC 51), no
         // del día de la anulación.
         dailyStatsRepo.applySaleDelta(
@@ -2258,14 +2269,14 @@ const applyVoid = async (
             -1,
         );
 
-        return { ...existing, voidedAt: timestamp, voidedBy: author };
+        return { ...existing, voidedAt: timestamp, voidedBy: author, voidReason };
     });
 
     await recordAudit({
         action: 'sale.voided',
         entity: 'sale',
         entityId: sale.id,
-        summary: `Venta ${sale.folio} anulada por ${sale.total.toFixed(2)}`,
+        summary: `Venta ${sale.folio} anulada por ${sale.total.toFixed(2)}: ${voidReason}`,
         userId: voidedBy,
         roleSlug: roleSlug ?? null,
         metadata: {
@@ -2273,6 +2284,9 @@ const applyVoid = async (
             total: sale.total,
             paymentMethod: sale.paymentMethod,
             items: sale.items.length,
+            reason: voidReason,
+            // POS anterior a SPEC 62: el motivo lo puso el servidor.
+            ...(reasonDefaulted ? { reasonDefaulted: true } : {}),
             // Anulación hecha sin red y cerrada en el sync: quién la hizo en la
             // caja y cuándo, frente a quién la sincronizó (`userId`).
             ...(reported?.voidedBy || reported?.voidedAt

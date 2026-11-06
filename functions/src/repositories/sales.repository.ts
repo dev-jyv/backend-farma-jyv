@@ -100,6 +100,8 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
         invoiceStatus: (data.invoiceStatus as Sale['invoiceStatus']) ?? null,
         voidedAt: (data.voidedAt as Sale['voidedAt']) ?? null,
         voidedBy: (data.voidedBy as string | null) ?? null,
+        // Motivo de la anulación (SPEC 62): solo si la venta lo trae.
+        ...(typeof data.voidReason === 'string' ? { voidReason: data.voidReason } : {}),
         createdAt: data.createdAt as Sale['createdAt'],
         // Fecha de negocio (SPEC 51). Las ventas anteriores no la traen: su
         // fecha de negocio es la de recepción y nunca tuvieron `soldAt` creído.

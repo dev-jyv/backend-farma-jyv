@@ -1340,6 +1340,11 @@ export interface Sale {
     invoiceStatus: 'pending' | null;
     voidedAt: Timestamp | null;
     voidedBy: string | null;
+    /**
+     * Motivo de la anulación (SPEC 62). Ausente en ventas vigentes y en las
+     * anuladas antes de que fuera obligatorio.
+     */
+    voidReason?: string;
     /** Fecha de **recepción** en el servidor. */
     createdAt: Timestamp;
     /**
