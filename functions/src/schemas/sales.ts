@@ -233,12 +233,20 @@ export const createSaleSchema = z.object({
     }
 });
 
+/** Ventas por lote: el POS trocea su cola en bloques de este tamaño (SPEC 48). */
+export const BULK_SALES_MAX_ITEMS = 50;
+
 /**
  * Empuje del sync local-first del POS: todas las ventas pendientes de una caja
  * en una sola llamada, en vez de un `POST /sales` por venta.
+ *
+ * Cada venta se valida **dentro del loop** con `createSaleSchema.safeParse`
+ * (SPEC 48): con `z.array(createSaleSchema)` una sola venta inválida respondía
+ * 400 al lote entero y la cola de la caja se atoraba en cada sync. Aquí solo se
+ * valida la forma del lote.
  */
 export const bulkCreateSalesSchema = z.object({
-    items: z.array(createSaleSchema).min(1).max(200),
+    items: z.array(z.unknown()).min(1).max(BULK_SALES_MAX_ITEMS),
 });
 
 export const createSaleReturnSchema = z.object({

@@ -30,7 +30,11 @@ import { requiresIdempotencyKey } from '../../config/env';
 import { AuthUser } from '../../types';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
-import { ZodValidationPipe } from '../../common/zod-validation.pipe';
+import {
+    formatZodError,
+    spanishZodErrorMap,
+    ZodValidationPipe,
+} from '../../common/zod-validation.pipe';
 
 type CreateSaleInput = z.infer<typeof createSaleSchema>;
 type BulkCreateSalesInput = z.infer<typeof bulkCreateSalesSchema>;
@@ -49,6 +53,18 @@ type ListUnreconciledQuery = z.infer<typeof listUnreconciledSalesQuerySchema>;
  */
 const logger = new Logger('SalesIdempotency');
 const bulkLogger = new Logger('SalesBulk');
+
+/**
+ * Presupuesto del lote (SPEC 48): la función vive 60 s y, si el lote no responde
+ * a tiempo, la caja no recibe ningún resultado y reintenta todo. A los 40 s lo
+ * que falte se devuelve `DEFERRED` sin procesarse y la caja lo manda en el
+ * siguiente envío. Se mide desde que la petición llega al handler.
+ */
+export const SALES_BULK_BUDGET_MS = 40_000;
+
+type BulkSaleResult =
+    | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
+    | { ok: false; error: string; code: SyncErrorCode; retryable: boolean };
 
 const assertIdempotencyKey = (key: string | undefined, userId: string): void => {
     if (key) {
@@ -95,11 +111,21 @@ export class SalesController {
     }
 
     /**
+     * Presupuesto del lote en ms. Propiedad de la instancia para que una prueba
+     * lo fuerce (a 0 ms: todo `DEFERRED` y nada escrito) sin tocar el reloj.
+     */
+    bulkBudgetMs = SALES_BULK_BUDGET_MS;
+
+    /**
      * Empuje del sync local-first del POS: procesa las ventas en el orden en que
      * se capturaron (secuencial, no en paralelo, para no pelear folios) y
      * devuelve un resultado por índice — una venta rechazada no tumba el resto
      * del lote. La `idempotencyKey` de cada una la protege de un reintento por
      * un corte de red a mitad del lote.
+     *
+     * SPEC 48: cada venta se valida aquí (`safeParse`), así una inválida responde
+     * `VALIDATION` solo en su índice; y al agotarse el presupuesto las restantes
+     * responden `DEFERRED` reintentable sin procesarse.
      */
     @Post('bulk')
     @RequirePermission('pos')
@@ -108,12 +134,35 @@ export class SalesController {
         @Body(new ZodValidationPipe(bulkCreateSalesSchema)) body: BulkCreateSalesInput,
         @CurrentUser() user: AuthUser,
     ) {
-        const results: Array<
-            | { ok: true; sale: Awaited<ReturnType<typeof salesService.createSale>> }
-            | { ok: false; error: string; code: SyncErrorCode; retryable: boolean }
-        > = [];
+        const deadline = Date.now() + this.bulkBudgetMs;
+        const results: BulkSaleResult[] = [];
 
-        for (const item of body.items) {
+        for (const rawItem of body.items) {
+            if (Date.now() >= deadline) {
+                results.push({
+                    ok: false,
+                    code: 'DEFERRED',
+                    error: 'El lote no alcanzó a procesar esta venta; se enviará en el ' +
+                        'siguiente intento',
+                    retryable: true,
+                });
+                continue;
+            }
+
+            const parsed = createSaleSchema.safeParse(rawItem, {
+                errorMap: spanishZodErrorMap,
+            });
+            if (!parsed.success) {
+                results.push({
+                    ok: false,
+                    code: 'VALIDATION',
+                    error: formatZodError(parsed.error),
+                    retryable: false,
+                });
+                continue;
+            }
+            const item = parsed.data;
+
             try {
                 // Con la bandera encendida cada venta del lote exige su llave: un
                 // reintento del lote completo (corte de red, timeout de 60 s) ya no

@@ -119,8 +119,20 @@ const buildIdempotencyDocId = (cashierId: string, key: string): string =>
  * Huella del cobro. Si llega la misma llave con un cobro distinto es un bug del
  * cliente (llave reciclada), no un retry: mejor fallar que devolver otra venta.
  */
+/** Lo que la huella lee de cada partida: `SaleLineItem` resuelto o su réplica. */
+interface FingerprintLine {
+    kind?: 'product' | 'service';
+    productId?: string;
+    serviceId?: string;
+    quantity: number;
+    unitPrice: number;
+    discountAmount: number;
+    promotion?: { promotionId: string } | null;
+    saleUnit?: { type: 'box'; boxes: number; piecesPerBox: number; boxPrice: number };
+}
+
 const buildRequestFingerprint = (input: {
-    items: SaleLineItem[];
+    items: FingerprintLine[];
     total: number;
     paymentMethod: PaymentMethod;
     cashSessionId: string;
@@ -130,7 +142,7 @@ const buildRequestFingerprint = (input: {
         // La partida de mercancía conserva **exactamente** la forma de siempre:
         // cambiarla invalidaría las llaves vivas (48 h de TTL) y un retry legítimo
         // de una venta ya registrada respondería "llave usada para otra venta".
-        items: input.items.map((item) => (isSaleServiceItem(item)
+        items: input.items.map((item) => (item.kind === 'service'
             ? {
                 kind: 'service',
                 serviceId: item.serviceId,
@@ -168,6 +180,183 @@ const buildRequestFingerprint = (input: {
     }))
     .digest('hex');
 
+/**
+ * Huella del **payload normalizado** (SPEC 48): no depende del catálogo, del stock
+ * ni del rol, así que se calcula antes de leer nada y un reintento con la misma
+ * llave se reconoce aunque el producto se haya desactivado, el lote haya caducado
+ * o el precio haya cambiado desde el primer intento.
+ *
+ * Se guarda junto a `requestFingerprint` (la huella resuelta de siempre) y manda
+ * cuando existe. Las llaves anteriores a este campo (TTL de 48 h) solo traen la
+ * resuelta y se comparan con ella: ver `buildLegacyRequestFingerprint`.
+ */
+const buildPayloadFingerprint = (input: {
+    items: SaleItemInput[];
+    saleDiscountAmount?: number;
+    paymentMethod: PaymentMethod;
+    cashSessionId: string;
+    couponCode?: string;
+}): string => {
+    const cents = (value: number | undefined): number | null =>
+        (value === undefined || value === null ? null : toCents(value));
+    return createHash('sha256')
+        .update(JSON.stringify({
+            v: 2,
+            items: input.items.map((item) => (item.kind === 'service'
+                ? {
+                    kind: 'service',
+                    serviceId: item.serviceId,
+                    quantity: item.quantity,
+                    unitPrice: cents(item.unitPrice),
+                    discountAmount: toCents(item.discountAmount ?? 0),
+                }
+                : {
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    unitPrice: cents(item.unitPrice),
+                    discountAmount: toCents(item.discountAmount ?? 0),
+                    ...(item.promotionId ? { promotionId: item.promotionId } : {}),
+                    ...(item.saleUnit ? { saleUnit: item.saleUnit } : {}),
+                })),
+            saleDiscountAmount: toCents(input.saleDiscountAmount ?? 0),
+            paymentMethod: input.paymentMethod,
+            cashSessionId: input.cashSessionId,
+            ...(input.couponCode ? { couponCode: input.couponCode } : {}),
+        }))
+        .digest('hex');
+};
+
+/**
+ * Huella resuelta (`buildRequestFingerprint`) de un payload, para comparar con
+ * una llave guardada antes de `payloadFingerprint`. Resuelve **solo precios**
+ * (producto, caja, servicio y la regla de la promoción), nunca lotes, y replica
+ * paso a paso las cuentas de `applySale` (mismos redondeos, mismo orden) para
+ * dar el mismo hash.
+ *
+ * Devuelve `null` si no puede resolverla (un producto o servicio que ya no
+ * existe): entonces decide la ruta de siempre, que vuelve a comparar con la
+ * huella calculada sobre la venta resuelta.
+ */
+const buildLegacyRequestFingerprint = async (input: {
+    items: SaleItemInput[];
+    saleDiscountAmount?: number;
+    paymentMethod: PaymentMethod;
+    cashSessionId: string;
+    couponCode?: string;
+}): Promise<string | null> => {
+    const productIds = input.items.flatMap((item) => (item.kind !== 'service'
+        ? [item.productId]
+        : []));
+    const serviceIds = [...new Set(input.items.flatMap((item) => (item.kind === 'service'
+        ? [item.serviceId]
+        : [])))];
+    const [products, promotions, services] = await Promise.all([
+        productsRepo.getProductsByIds(productIds),
+        promotionsRepo.getPromotionsByIds(input.items.flatMap((item) =>
+            (item.kind !== 'service' && item.promotionId ? [item.promotionId] : []))),
+        Promise.all(serviceIds.map((id) => pharmacyServicesRepo.getPharmacyServiceById(id))),
+    ]);
+    const serviceById = new Map(serviceIds.map((id, index) => [id, services[index]]));
+
+    const lines: FingerprintLine[] = [];
+    let subtotal = 0;
+    let lineDiscountTotal = 0;
+    for (const item of input.items) {
+        if (item.kind === 'service') {
+            const service = serviceById.get(item.serviceId);
+            if (!service) {
+                return null;
+            }
+            const unitPrice = item.unitPrice ?? service.price;
+            const itemSubtotal = fromCents(toCents(unitPrice * item.quantity));
+            const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
+            subtotal += itemSubtotal;
+            lineDiscountTotal += discountAmount;
+            lines.push({
+                kind: 'service',
+                serviceId: item.serviceId,
+                quantity: item.quantity,
+                unitPrice,
+                discountAmount,
+            });
+            continue;
+        }
+        const product = products.get(item.productId);
+        const isBox = item.saleUnit === 'box';
+        if (!product || (isBox && !(product.boxQuantity && product.boxPrice))) {
+            return null;
+        }
+        const piecesPerBox = isBox ? product.boxQuantity as number : 1;
+        const catalogPrice = isBox ? product.boxPrice as number : product.salePrice;
+        const chargedPrice = item.unitPrice ?? catalogPrice;
+        const unitPrice = isBox ? chargedPrice / piecesPerBox : chargedPrice;
+        const itemSubtotal = fromCents(toCents(chargedPrice * item.quantity));
+        const discountAmount = Math.min(Math.max(0, item.discountAmount ?? 0), itemSubtotal);
+        subtotal += itemSubtotal;
+        lineDiscountTotal += discountAmount;
+
+        let promotion: { promotionId: string } | null = null;
+        if (item.promotionId) {
+            const rule = promotions.get(item.promotionId);
+            if (!rule || !rule.productIds.includes(product.id)) {
+                return null;
+            }
+            const promoDiscount = Math.min(
+                computePromotionDiscount(rule.rule, unitPrice, item.quantity),
+                discountAmount,
+            );
+            promotion = promoDiscount > 0 ? { promotionId: rule.id } : null;
+        }
+        lines.push({
+            kind: 'product',
+            productId: product.id,
+            quantity: item.quantity * piecesPerBox,
+            unitPrice,
+            discountAmount,
+            promotion,
+            ...(isBox
+                ? {
+                    saleUnit: {
+                        type: 'box' as const,
+                        boxes: item.quantity,
+                        piecesPerBox,
+                        boxPrice: chargedPrice,
+                    },
+                }
+                : {}),
+        });
+    }
+    const saleDiscountAmount = Math.min(
+        Math.max(0, input.saleDiscountAmount ?? 0),
+        subtotal - lineDiscountTotal,
+    );
+    const discountTotal = fromCents(toCents(lineDiscountTotal) + toCents(saleDiscountAmount));
+    return buildRequestFingerprint({
+        items: lines,
+        total: fromCents(toCents(subtotal) - toCents(discountTotal)),
+        paymentMethod: input.paymentMethod,
+        cashSessionId: input.cashSessionId,
+        couponCode: input.couponCode,
+    });
+};
+
+/** Las dos huellas de un intento; `resolved` es `null` mientras no se calcula. */
+interface SaleFingerprints {
+    payload: string;
+    resolved: string | null;
+}
+
+/**
+ * Manda `payloadFingerprint` cuando la llave lo trae (escrita desde SPEC 48); si
+ * no, la llave es anterior y se compara la huella resuelta de siempre.
+ */
+const matchesStoredFingerprint = (
+    stored: FirebaseFirestore.DocumentData,
+    fingerprints: SaleFingerprints,
+): boolean => (typeof stored.payloadFingerprint === 'string'
+    ? stored.payloadFingerprint === fingerprints.payload
+    : stored.requestFingerprint === fingerprints.resolved);
+
 const mapSaleDoc = (doc: FirebaseFirestore.DocumentSnapshot): Sale => {
     const data = doc.data()!;
     return {
@@ -185,10 +374,9 @@ const mapSaleDoc = (doc: FirebaseFirestore.DocumentSnapshot): Sale => {
 const resolveReplayedSale = (
     idemDoc: FirebaseFirestore.DocumentSnapshot,
     saleDoc: FirebaseFirestore.DocumentSnapshot,
-    fingerprint: string,
+    fingerprints: SaleFingerprints,
 ): Sale => {
-    const stored = idemDoc.data()!;
-    if (stored.requestFingerprint !== fingerprint) {
+    if (!matchesStoredFingerprint(idemDoc.data()!, fingerprints)) {
         throw conflict(
             'Esta llave de idempotencia ya se usó para una venta distinta',
             'IDEMPOTENCY_CONFLICT',
@@ -618,6 +806,48 @@ const applySale = async (input: {
     const cashSessionRef = firestore.collection('cashSessions').doc(input.cashSessionId);
     const counterRef = firestore.collection('counters').doc(SALES_COUNTER_ID);
     const timestamp = now();
+    const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
+
+    // Idempotencia **antes de todo** (SPEC 48): antes del catálogo, del stock, de
+    // FEFO y del tope de descuento. Si una venta se confirmó y su respuesta se
+    // perdió, el reintento ya no ve el stock descontado ni el producto
+    // desactivado ni el rol cambiado: ve su venta. La huella es la del payload,
+    // que no necesita leer nada.
+    const payloadFingerprint = buildPayloadFingerprint({
+        items: input.items,
+        saleDiscountAmount: input.saleDiscountAmount,
+        paymentMethod: input.paymentMethod,
+        cashSessionId: input.cashSessionId,
+        couponCode,
+    });
+    const idempotencyRef = input.idempotencyKey
+        ? firestore
+            .collection(IDEMPOTENCY_COLLECTION)
+            .doc(buildIdempotencyDocId(input.cashierId, input.idempotencyKey))
+        : null;
+    if (idempotencyRef) {
+        const idemDoc = await idempotencyRef.get();
+        const stored = idemDoc.data();
+        if (stored) {
+            // Llave anterior a `payloadFingerprint`: se compara con la huella
+            // resuelta, leyendo solo precios. Si no coincide o no se puede
+            // resolver, sigue la ruta de siempre y la transacción decide.
+            const resolved = typeof stored.payloadFingerprint === 'string'
+                ? null
+                : await buildLegacyRequestFingerprint({ ...input, couponCode });
+            if (typeof stored.payloadFingerprint === 'string' ||
+                (resolved !== null && resolved === stored.requestFingerprint)) {
+                const existingSaleDoc = await firestore
+                    .collection('sales')
+                    .doc(stored.saleId as string)
+                    .get();
+                return resolveReplayedSale(idemDoc, existingSaleDoc, {
+                    payload: payloadFingerprint,
+                    resolved,
+                });
+            }
+        }
+    }
 
     const saleItems: SaleLineItem[] = [];
     let subtotal = 0;
@@ -661,14 +891,29 @@ const applySale = async (input: {
 
     // El cupón se lee una vez aquí (vigencia, productos, mínimo) y otra dentro
     // de la transacción (`usedCount`), que es la que decide el último uso.
-    const couponCode = input.couponCode?.trim().toUpperCase() || undefined;
-    const preloadedCoupon = couponCode ? await couponsRepo.getCouponByCode(couponCode) : null;
-
-    // Lecturas previas en bloque: solo sirven para validar y armar el plan. La
-    // transacción vuelve a leer lotes y productos y es la que decide.
-    const preloadedProducts = await productsRepo.getProductsByIds(
-        input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
-    );
+    //
+    // Lecturas previas en bloque y en paralelo: solo sirven para validar y armar el
+    // plan. La transacción vuelve a leer lotes y productos y es la que decide. Los
+    // lotes de cada producto se piden a la vez, no uno por partida en serie: con 50
+    // ventas por lote la serie rozaba los 60 s (SPEC 48).
+    const cartProductIds = [...new Set(input.items.flatMap((item) => (item.kind !== 'service'
+        ? [item.productId]
+        : [])))];
+    const [preloadedCoupon, preloadedProducts, preloadedBatches] = await Promise.all([
+        couponCode ? couponsRepo.getCouponByCode(couponCode) : Promise.resolve(null),
+        productsRepo.getProductsByIds(
+            input.items.flatMap((item) => (item.kind !== 'service' ? [item.productId] : [])),
+        ),
+        Promise.all(cartProductIds.map((productId) =>
+            batchesRepo.listBatchesByProduct(productId, { onlyAvailable: true }))),
+    ]);
+    cartProductIds.forEach((productId, index) => {
+        batchCache.set(productId, preloadedBatches[index]);
+        batchStockBefore.set(
+            productId,
+            preloadedBatches[index].reduce((sum, batch) => sum + batch.quantity, 0),
+        );
+    });
 
     for (const item of input.items) {
         if (item.quantity <= 0) {
@@ -784,17 +1029,7 @@ const applySale = async (input: {
             );
         }
 
-        let batches = batchCache.get(item.productId);
-        if (!batches) {
-            batches = await batchesRepo.listBatchesByProduct(item.productId, {
-                onlyAvailable: true,
-            });
-            batchCache.set(item.productId, batches);
-            batchStockBefore.set(
-                item.productId,
-                batches.reduce((sum, batch) => sum + batch.quantity, 0),
-            );
-        }
+        const batches = batchCache.get(item.productId) ?? [];
 
         let allocations;
         try {
@@ -1086,32 +1321,19 @@ const applySale = async (input: {
         }
     }
 
-    // Corto circuito de idempotencia antes de cobrar/consultar Mercado Pago: un
-    // retry de red no debe crear una segunda venta ni chocar con la validación de
-    // "esta order ya está asociada a una venta".
-    const fingerprint = buildRequestFingerprint({
-        items: saleItems,
-        total,
-        paymentMethod: input.paymentMethod,
-        cashSessionId: input.cashSessionId,
-        couponCode,
-    });
-    const idempotencyRef = input.idempotencyKey
-        ? firestore
-            .collection(IDEMPOTENCY_COLLECTION)
-            .doc(buildIdempotencyDocId(input.cashierId, input.idempotencyKey))
-        : null;
-
-    if (idempotencyRef) {
-        const idemDoc = await idempotencyRef.get();
-        if (idemDoc.exists) {
-            const existingSaleDoc = await firestore
-                .collection('sales')
-                .doc(idemDoc.data()!.saleId as string)
-                .get();
-            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
-        }
-    }
+    // Huella resuelta de siempre: se sigue guardando en `requestFingerprint` para
+    // que un despliegue anterior (rollback) reconozca las llaves nuevas. La
+    // revisión de idempotencia ya se hizo al principio con la del payload.
+    const fingerprints: SaleFingerprints = {
+        payload: payloadFingerprint,
+        resolved: buildRequestFingerprint({
+            items: saleItems,
+            total,
+            paymentMethod: input.paymentMethod,
+            cashSessionId: input.cashSessionId,
+            couponCode,
+        }),
+    };
 
     if (closedPromotionName) {
         throw badRequest(`La promoción "${closedPromotionName}" no está vigente`);
@@ -1231,7 +1453,7 @@ const applySale = async (input: {
             const existingSaleDoc = await transaction.get(
                 firestore.collection('sales').doc(idemDoc.data()!.saleId as string),
             );
-            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprint);
+            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprints);
         }
 
         // Cupón: `usedCount` se lee aquí, antes de cualquier escritura. Dos ventas
@@ -1421,7 +1643,8 @@ const applySale = async (input: {
                 saleId: saleRef.id,
                 folio,
                 cashierId: input.cashierId,
-                requestFingerprint: fingerprint,
+                requestFingerprint: fingerprints.resolved,
+                payloadFingerprint: fingerprints.payload,
                 createdAt: timestamp,
                 // Campo para la política TTL de Firestore sobre esta colección.
                 expiresAt: Timestamp.fromMillis(
