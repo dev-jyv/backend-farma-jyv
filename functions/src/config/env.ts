@@ -133,6 +133,13 @@ export const getPriceDeviationAlertMxn = (): number => {
 };
 
 /**
+ * Versión mínima aceptable del POS (SPEC 67), p. ej. `1.4.0`. Sin la variable no
+ * hay mínimo y ninguna caja sale marcada. Solo informa: no rechaza a nadie.
+ */
+export const getPosMinVersion = (): string | null =>
+    process.env.POS_MIN_VERSION?.trim() || null;
+
+/**
  * Datos de la farmacia impresos en el ticket. Todos opcionales salvo el nombre,
  * que cae a un valor genérico para no romper la impresión si falta la variable.
  */

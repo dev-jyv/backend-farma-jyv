@@ -257,6 +257,37 @@ export const getProductsByIds = async (ids: string[]): Promise<Map<string, Produ
     return result;
 };
 
+/** Tope de referencias por `getAll`: bloques chicos para no armar una llamada enorme. */
+const STOCK_READ_CHUNK = 100;
+
+/**
+ * Nombre y `totalStock` de varios productos (SPEC 67), con `getAll` por bloques
+ * y máscara de campos: una lectura por producto, sin bajar el documento entero.
+ * Los ids que no existen no aparecen en el mapa.
+ */
+export const getStockByIds = async (
+    ids: readonly string[],
+): Promise<Map<string, { name: string; totalStock: number }>> => {
+    const unique = [...new Set(ids)];
+    const result = new Map<string, { name: string; totalStock: number }>();
+    for (let index = 0; index < unique.length; index += STOCK_READ_CHUNK) {
+        const chunk = unique.slice(index, index + STOCK_READ_CHUNK);
+        const docs = await db().getAll(
+            ...chunk.map((id) => collection().doc(id)),
+            { fieldMask: ['name', 'totalStock'] },
+        );
+        for (const doc of docs) {
+            if (doc.exists) {
+                result.set(doc.id, {
+                    name: String(doc.get('name') ?? doc.id),
+                    totalStock: Number(doc.get('totalStock') ?? 0),
+                });
+            }
+        }
+    }
+    return result;
+};
+
 export const createProduct = async (
     data: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>,
 ): Promise<Product> => db().runTransaction(async (transaction) => {

@@ -200,3 +200,81 @@ export const PosBlockedSalesAlertEmail = ({
         </Layout>
     );
 };
+
+export interface PosStockDriftAlertEmailProps {
+    deviceName: string;
+    /** Hora local de la comparación de hoy. */
+    checkedAtLocal: string;
+    /** Productos comparados hoy. */
+    compared: number;
+    /** Divergentes hoy (incluye los que no se repitieron). */
+    divergingToday: number;
+    /** Los que divergieron ayer y hoy, con las cifras de hoy. */
+    repeated: Array<{
+        productId: string;
+        name: string | null;
+        local: number;
+        server: number | null;
+    }>;
+}
+
+const stockDelta = (item: { local: number; server: number | null }): string => {
+    if (item.server === null) {
+        return 'no existe en el servidor';
+    }
+    const delta = item.local - item.server;
+    return `${delta > 0 ? '+' : ''}${delta} en la caja`;
+};
+
+/**
+ * Stock de la caja distinto al del servidor en el mismo producto dos días
+ * seguidos (SPEC 67). Un día suelto no llega aquí: puede ser una venta en
+ * vuelo. Dos días ya es un inventario que la caja y el panel cuentan distinto.
+ */
+export const PosStockDriftAlertEmail = ({
+    deviceName,
+    checkedAtLocal,
+    compared,
+    divergingToday,
+    repeated,
+}: PosStockDriftAlertEmailProps) => {
+    const shown = repeated.slice(0, MAX_ROWS);
+    const rest = repeated.length - shown.length;
+    return (
+        <Layout
+            preview={`Caja ${deviceName}: ${repeated.length} productos con stock distinto al ` +
+                'servidor dos días seguidos'}
+            title={`Caja ${deviceName}: stock distinto al servidor`}
+        >
+            <HeroMetric
+                label="Productos con diferencia dos días seguidos"
+                value={String(repeated.length)}
+                tone={palette.negative}
+                caption={`Hoy: ${divergingToday} de ${compared} comparados · ${checkedAtLocal}`}
+            />
+            <ReportSection title="Productos">
+                <DataTable
+                    rows={shown.map((item) => ({
+                        key: item.productId,
+                        label: item.name ?? item.productId,
+                        sublabel: stockDelta(item),
+                        value: `Caja ${item.local} · Servidor ${item.server ?? '—'}`,
+                    }))}
+                />
+                {rest > 0 ? (
+                    <Text style={{ ...text.label, margin: '8px 0 0' }}>
+                        {`y ${rest} productos más`}
+                    </Text>
+                ) : null}
+            </ReportSection>
+            <ReportSection title="Qué hacer">
+                <Text style={{ ...text.label, lineHeight: '18px' }}>
+                    La caja solo compara productos sin cambios pendientes de subir, así que la
+                    diferencia no es una venta en camino. Cuenta físicamente esos productos y
+                    corrige el inventario; nada se ajusta solo. El detalle está en la ficha de
+                    la caja en «Salud de cajas».
+                </Text>
+            </ReportSection>
+        </Layout>
+    );
+};

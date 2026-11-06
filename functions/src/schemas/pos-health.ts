@@ -20,6 +20,8 @@ export const POS_DIAGNOSTICS_LIMITS = {
     unsyncedProducts: 200,
     recentSyncRuns: 50,
     syncLog: 200,
+    /** SPEC 67: muestra diaria de stock; con más, se compara solo lo primero. */
+    stockSample: 300,
 } as const;
 
 const truncate = (max: number) => (value: string): string =>
@@ -154,6 +156,24 @@ export const posDiagnosticsSchema = z.object({
      * Opcional: las cajas sin actualizar no lo mandan.
      */
     clockSkewMs: z.number().finite().nullable().optional(),
+    /**
+     * Muestra del stock local (SPEC 67), una vez al día: solo productos sin
+     * pendientes de subida, los más vendidos primero. `productId` es el id
+     * remoto (Firestore). No se guarda tal cual: el servidor la compara contra
+     * `products.totalStock` y guarda el resultado en `stockDrift`.
+     */
+    stockSample: cappedArray(
+        z.object({
+            productId: text(128),
+            localStock: z.number().finite(),
+        }),
+        POS_DIAGNOSTICS_LIMITS.stockSample,
+    ).optional(),
+    /** Último error del actualizador automático (SPEC 67); `null`/ausente si no hubo. */
+    updateError: nullableText(),
+    /** Cuándo revisó la caja si había actualización (reloj de la caja). */
+    updateCheckedAt: z.string().nullish().transform((value) =>
+        value == null ? null : truncate(64)(value)),
 });
 
 export const posCommandTypeSchema = z.enum([

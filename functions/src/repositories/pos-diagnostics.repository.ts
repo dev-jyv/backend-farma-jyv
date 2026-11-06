@@ -1,5 +1,10 @@
 import { Timestamp } from 'firebase-admin/firestore';
-import { PosBlockedSale, PosDiagnosticsInput, PosDiagnosticsSnapshot } from '../types';
+import {
+    PosBlockedSale,
+    PosDiagnosticsInput,
+    PosDiagnosticsSnapshot,
+    PosStockDrift,
+} from '../types';
 import { db, now } from '../utils/firestore';
 
 /**
@@ -10,8 +15,17 @@ import { db, now } from '../utils/firestore';
  */
 const collection = () => db().collection('posDiagnostics');
 
-/** Snapshot sin `pendingCommands`: ese dato vive en `posCommands` y lo agrega el service. */
-export type StoredPosDiagnostics = Omit<PosDiagnosticsSnapshot, 'pendingCommands'>;
+/**
+ * Snapshot sin `pendingCommands` (vive en `posCommands`) ni `belowMinVersion`
+ * (depende de `POS_MIN_VERSION` al leer): los dos los agrega el service.
+ */
+export type StoredPosDiagnostics =
+    Omit<PosDiagnosticsSnapshot, 'pendingCommands' | 'belowMinVersion'>;
+
+/** Lo que se escribe: el reporte sin la muestra de stock, con la comparación ya hecha. */
+export type PosDiagnosticsToSave = Omit<PosDiagnosticsInput, 'stockSample'> & {
+    stockDrift: PosStockDrift | null;
+};
 
 const mapSnapshot = (data: FirebaseFirestore.DocumentData): StoredPosDiagnostics => {
     const { receivedAt, reportedBy, silenceAlertedAt, ...input } = data;
@@ -22,6 +36,10 @@ const mapSnapshot = (data: FirebaseFirestore.DocumentData): StoredPosDiagnostics
         lastLocalBackupAt: (input.lastLocalBackupAt as string | null | undefined) ?? null,
         // Igual para el desfase del reloj (SPEC 65): sin medir es `null`.
         clockSkewMs: (input.clockSkewMs as number | null | undefined) ?? null,
+        // SPEC 67: ausentes en cajas y snapshots anteriores.
+        updateError: (input.updateError as string | null | undefined) ?? null,
+        updateCheckedAt: (input.updateCheckedAt as string | null | undefined) ?? null,
+        stockDrift: (input.stockDrift as PosStockDrift | null | undefined) ?? null,
         receivedAt: (receivedAt as Timestamp).toDate().toISOString(),
         reportedBy: reportedBy as string,
         // Ausente en snapshots anteriores a SPEC 44: equivale a "no se ha avisado".
@@ -34,7 +52,7 @@ const mapSnapshot = (data: FirebaseFirestore.DocumentData): StoredPosDiagnostics
 export const diagnosticsRef = (deviceId: string) => collection().doc(deviceId);
 
 export const saveDiagnostics = async (
-    input: PosDiagnosticsInput,
+    input: PosDiagnosticsToSave,
     reportedBy: string,
 ): Promise<void> => {
     // `set` sin merge a propósito: una lista que la caja ya no manda (porque se
@@ -49,21 +67,35 @@ export const saveDiagnostics = async (
     });
 };
 
+export interface PreviousReportState {
+    blockedSales: Pick<PosBlockedSale, 'localId'>[];
+    /** Última comparación de stock (SPEC 67), `null` si no hay. */
+    stockDrift: PosStockDrift | null;
+}
+
 /**
- * Ventas bloqueadas del snapshot que está por sobrescribirse, para decidir si
- * el reporte nuevo amerita alerta (`evaluateBlockedSalesAlert`). Una lectura
- * con máscara de campos: el documento puede pesar cientos de KB por la bitácora
- * y aquí solo hace falta esta lista.
+ * Lo que el reporte nuevo necesita del snapshot que está por sobrescribirse: las
+ * ventas bloqueadas, para decidir la alerta (`evaluateBlockedSalesAlert`), y la
+ * última comparación de stock, que se arrastra hasta la siguiente muestra y
+ * decide la alerta de divergencia repetida (SPEC 67). Una lectura con máscara de
+ * campos: el documento puede pesar cientos de KB por la bitácora.
  */
-export const getPreviousBlockedSales = async (
+export const getPreviousReportState = async (
     deviceId: string,
-): Promise<{ blockedSales: Pick<PosBlockedSale, 'localId'>[] } | null> => {
-    const [doc] = await db().getAll(diagnosticsRef(deviceId), { fieldMask: ['blockedSales'] });
+): Promise<PreviousReportState | null> => {
+    const [doc] = await db().getAll(
+        diagnosticsRef(deviceId),
+        { fieldMask: ['blockedSales', 'stockDrift'] },
+    );
     if (!doc.exists) {
         return null;
     }
     const blockedSales = doc.get('blockedSales');
-    return { blockedSales: Array.isArray(blockedSales) ? blockedSales : [] };
+    const stockDrift = doc.get('stockDrift') as PosStockDrift | null | undefined;
+    return {
+        blockedSales: Array.isArray(blockedSales) ? blockedSales : [],
+        stockDrift: stockDrift ?? null,
+    };
 };
 
 /** Lo que necesita la revisión de silencio de cada caja; sin bitácora ni corridas. */

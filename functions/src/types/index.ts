@@ -2103,6 +2103,41 @@ export interface PosDiagnosticsInput {
      * la caja va atrasada. Ausente en cajas anteriores; al leer se normaliza a `null`.
      */
     clockSkewMs?: number | null;
+    /**
+     * Muestra diaria del stock local (SPEC 67). Solo viaja en la entrada: el
+     * snapshot guarda `stockDrift`, no la muestra.
+     */
+    stockSample?: PosStockSampleItem[];
+    /** Último error del actualizador automático (SPEC 67); `null` si no hubo. */
+    updateError?: string | null;
+    /** Última revisión de actualizaciones (reloj de la caja). */
+    updateCheckedAt?: string | null;
+}
+
+export interface PosStockSampleItem {
+    /** Id remoto del producto (Firestore). */
+    productId: string;
+    localStock: number;
+}
+
+/** Un producto con stock distinto en la caja y en el servidor (SPEC 67). */
+export interface PosStockDivergence {
+    productId: string;
+    /** `null` si el producto ya no existe en el servidor. */
+    name: string | null;
+    local: number;
+    /** `products.totalStock`; `null` si el producto ya no existe. */
+    server: number | null;
+}
+
+/** Resultado de comparar la muestra de stock de la caja con el servidor (SPEC 67). */
+export interface PosStockDrift {
+    /** Cuándo comparó el servidor (ISO, hora del servidor). */
+    checkedAt: string;
+    /** Productos comparados. */
+    compared: number;
+    /** Hasta 50 productos divergentes, en el orden de la muestra. */
+    diverging: PosStockDivergence[];
 }
 
 export type PosCommandType =
@@ -2131,7 +2166,14 @@ export interface PosCommand {
     result: string | null;
 }
 
-export interface PosDiagnosticsSnapshot extends PosDiagnosticsInput {
+export interface PosDiagnosticsSnapshot extends Omit<PosDiagnosticsInput, 'stockSample'> {
+    /**
+     * Última comparación de stock (SPEC 67), arrastrada entre reportes hasta la
+     * siguiente muestra. `null` si la caja nunca mandó una (POS viejo).
+     */
+    stockDrift?: PosStockDrift | null;
+    /** Versión menor a `POS_MIN_VERSION` (SPEC 67); calculado al leer, no se guarda. */
+    belowMinVersion?: boolean;
     receivedAt: string;
     reportedBy: string;
     /** Nombre del cajero que reportó, resuelto al leer. `null` si ya no existe. */
