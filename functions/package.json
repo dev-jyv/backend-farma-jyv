@@ -18,6 +18,7 @@
     "backfill:calendar-dates": "npm run build && node lib/scripts/backfill-calendar-dates.js",
     "backfill:daily-stats": "npm run build && node lib/scripts/backfill-daily-stats.js",
     "pitr:restore": "npm run build && node lib/scripts/pitr-restore.js",
+    "register:unreconciled": "npm run build && node lib/scripts/register-unreconciled.js",
     "logs": "firebase functions:log",
     "test": "firebase emulators:exec --only firestore \"jest\"",
     "test:rules": "jest --config jest.rules.config.js",
