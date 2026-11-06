@@ -211,6 +211,9 @@ const registerFromPayload = async (
             cashierId: unreconciled.cashierId,
             roleSlug,
             offline: true,
+            // Quien resuelve responde por la hora de cobro: el turno pudo nacer
+            // en el servidor después de la venta (ver `createSale`).
+            soldAtBeforeSessionAuthorized: true,
         });
     } catch (error) {
         throw asRegisterRejection(error);
@@ -290,6 +293,9 @@ export const resolveUnreconciledSale = async (
                 cashierId: resolved.cashierId,
                 total: resolved.total,
                 resolvedSaleId: sale?.id ?? null,
+                // Fecha con la que quedó: quien resolvió autorizó la hora de cobro.
+                saleBusinessAt: sale?.businessAt?.toDate().toISOString() ?? null,
+                lateSync: sale?.lateSync === true,
             },
         }),
     );

@@ -908,6 +908,16 @@ const applySale = async (input: {
     callerHasPosWrite?: boolean;
     /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
     discountAuthorizedBy?: string;
+    /**
+     * Solo lo pone `resolveUnreconciledSale` (SPEC 53), nunca una ruta HTTP: quien
+     * registra una no conciliada **autoriza** la hora de cobro de la caja aunque
+     * sea anterior a la apertura que guardó el servidor. El turno pudo crearse
+     * allá al sincronizar, horas después de abrirse en la caja (el POS no manda
+     * su hora de apertura), y sin esto toda venta de ese turno caía en "antes de
+     * la apertura", tomaba la fecha de recepción y se rechazaba por turno
+     * cerrado. Las otras guardas siguen: reloj adelantado, 7 días y el cierre.
+     */
+    soldAtBeforeSessionAuthorized?: boolean;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -1078,7 +1088,8 @@ const applySale = async (input: {
         const openedAtMs = preloadedSession?.openedAt?.toMillis();
         if (soldAtMs > timestamp.toMillis() + SOLD_AT_MAX_CLOCK_AHEAD_MS) {
             soldAtUntrustedReason = 'clock_ahead';
-        } else if (openedAtMs !== undefined && soldAtMs < openedAtMs) {
+        } else if (openedAtMs !== undefined && soldAtMs < openedAtMs &&
+            !input.soldAtBeforeSessionAuthorized) {
             soldAtUntrustedReason = 'before_session';
         } else if (soldAtMs < timestamp.toMillis() - SOLD_AT_MAX_AGE_MS) {
             soldAtUntrustedReason = 'too_old';
