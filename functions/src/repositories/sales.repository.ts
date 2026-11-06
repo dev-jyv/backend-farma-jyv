@@ -73,6 +73,11 @@ const mapSale = (id: string, data: FirebaseFirestore.DocumentData): Sale => {
         pointPayment: (data.pointPayment as Sale['pointPayment']) ?? null,
         cashSessionId: (data.cashSessionId as string | null) ?? null,
         cashierId: data.cashierId as string,
+        // Autor original (SPEC 54): solo si la venta los trae.
+        ...(typeof data.syncedBy === 'string' ? { syncedBy: data.syncedBy } : {}),
+        ...(typeof data.discountAuthorizedBy === 'string'
+            ? { discountAuthorizedBy: data.discountAuthorizedBy }
+            : {}),
         customerId: (data.customerId as string | null) ?? null,
         customerName: (data.customerName as string | null) ?? null,
         prescription: (data.prescription as Sale['prescription']) ?? null,

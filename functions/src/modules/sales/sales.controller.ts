@@ -29,6 +29,7 @@ import { badRequest, describeSyncError } from '../../utils/errors';
 import { SyncErrorCode } from '../../constants/sync-error-codes';
 import { requiresIdempotencyKey } from '../../config/env';
 import { AuthUser } from '../../types';
+import { hasPermission } from '../../constants/permissions';
 import { CurrentUser } from '../identity/decorators/current-user.decorator';
 import { RequirePermission } from '../identity/decorators/require-permission.decorator';
 import {
@@ -137,6 +138,12 @@ export class SalesController {
     ) {
         const deadline = Date.now() + this.bulkBudgetMs;
         const results: BulkSaleResult[] = [];
+        const callerHasPosWrite = hasPermission(
+            user.permissions ?? [],
+            'pos',
+            'write',
+            user.role.slug,
+        );
 
         for (const rawItem of body.items) {
             if (Date.now() >= deadline) {
@@ -174,6 +181,8 @@ export class SalesController {
                     cashierId: user.uid,
                     roleSlug: user.role.slug,
                     offline: true,
+                    // `soldBy` (SPEC 54) solo vale para quien puede vender.
+                    callerHasPosWrite,
                 });
                 results.push({ ok: true, sale: toSaleResponse(sale) });
             } catch (error) {

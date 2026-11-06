@@ -216,6 +216,13 @@ export const createSaleSchema = z.object({
      * (redondeado) y nunca la rechaza; `soldAt` ya viene corregido.
      */
     clockSkewMs: nullable(z.number().finite()),
+    /**
+     * Uid de quien **cobró** (SPEC 54). Solo cuenta en `/sales/bulk`: si es quien
+     * abrió el turno, la venta queda a su nombre aunque la suba otro usuario.
+     */
+    soldBy: nullable(z.string().trim().min(1).max(128)),
+    /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
+    discountAuthorizedBy: nullable(z.string().trim().min(1).max(128)),
 }).superRefine((data, ctx) => {
     if (
         (data.paymentMethod === 'cash' || data.paymentMethod === 'mixed') &&

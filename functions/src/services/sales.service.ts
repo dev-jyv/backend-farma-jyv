@@ -125,11 +125,52 @@ const IDEMPOTENCY_TTL_HOURS = 48;
 const buildFolio = (sequence: number): string => `V-${String(sequence).padStart(6, '0')}`;
 
 /**
- * La llave se guarda por cajero para que la llave de un cajero no pueda devolver
- * la venta de otro (los uuid los genera el cliente y no son de confianza).
+ * Llave de idempotencia (SPEC 54): `<cashSessionId>:<key>` cuando la venta trae
+ * turno, `<soldBy ?? llamante>:<key>` cuando no. Ya no depende de quien
+ * sincroniza: si el cajero A cobró y un admin reenvía la cola, el reintento cae
+ * en la misma llave y devuelve la venta en vez de duplicarla. Que la llave de
+ * otro turno no devuelva una venta ajena lo cuida `assertCanReplaySale`.
  */
-const buildIdempotencyDocId = (cashierId: string, key: string): string =>
-    `${cashierId}:${key}`;
+const buildIdempotencyDocId = (
+    scope: { cashSessionId?: string | null; soldBy?: string | null; callerId: string },
+    key: string,
+): string => (scope.cashSessionId
+    ? `${scope.cashSessionId}:${key}`
+    : `${scope.soldBy ?? scope.callerId}:${key}`);
+
+/**
+ * Llaves escritas antes de SPEC 54 (`<cajero>:<key>`), vivas mientras dure su TTL
+ * de 48 h: la del llamante y, si la venta trae otro `soldBy`, la de quien cobró
+ * (su primer intento pudo confirmar con el backend anterior).
+ */
+const legacyIdempotencyDocIds = (
+    callerId: string,
+    soldBy: string | null,
+    key: string,
+): string[] => [...new Set([callerId, ...(soldBy ? [soldBy] : [])])]
+    .map((owner) => `${owner}:${key}`);
+
+/**
+ * Una llave devuelve la venta solo a quien puede verla: su cajero, quien la
+ * sincronizó, un admin, o quien sube la cola de ese cajero con su `soldBy`
+ * (SPEC 54). Con la llave por turno, sin esto bastaría conocer el payload de
+ * otro turno para leer su venta.
+ */
+const assertCanReplaySale = (
+    sale: Sale,
+    callerId: string,
+    roleSlug: string | undefined,
+    soldBy: string | null,
+): void => {
+    if (roleSlug === 'admin' || sale.cashierId === callerId || sale.syncedBy === callerId ||
+        (soldBy !== null && soldBy === sale.cashierId)) {
+        return;
+    }
+    throw forbidden(
+        'Solo el cajero que abrió el turno o un administrador puede usarlo',
+        'SESSION_FORBIDDEN',
+    );
+};
 
 /**
  * Huella del cobro. Si llega la misma llave con un cobro distinto es un bug del
@@ -851,6 +892,17 @@ const applySale = async (input: {
     couponCode?: string;
     /** Desfase del reloj de la caja (ms, SPEC 65); informativo, no entra a la huella. */
     clockSkewMs?: number;
+    /**
+     * Uid de quien **cobró** (SPEC 54), solo offline. Se toma como `cashierId` si
+     * es quien abrió el turno de la venta y quien llama tiene `pos:write`
+     * (`callerHasPosWrite`); si no, se ignora (y se audita) y la venta es de quien
+     * llama, como siempre. `cashierId` es siempre **quien llama**.
+     */
+    soldBy?: string;
+    /** Quien llama tiene `pos:write`: requisito para respetar `soldBy`. */
+    callerHasPosWrite?: boolean;
+    /** Uid de quien autorizó el descuento en la caja; informativo (SPEC 54). */
+    discountAuthorizedBy?: string;
 }): Promise<Sale> => {
     if (!input.items.length) {
         throw badRequest('La venta debe tener al menos un producto');
@@ -880,15 +932,35 @@ const applySale = async (input: {
         cashSessionId: input.cashSessionId,
         couponCode,
     });
-    const idempotencyRef = input.idempotencyKey
-        ? firestore
-            .collection(IDEMPOTENCY_COLLECTION)
-            .doc(buildIdempotencyDocId(input.cashierId, input.idempotencyKey))
+    // Autor original (SPEC 54). Quien llama es `input.cashierId`; `soldBy` solo
+    // cuenta offline, cuando difiere de quien llama y este puede vender.
+    const callerId = input.cashierId;
+    const soldByCandidate = input.offline && input.callerHasPosWrite && input.soldBy &&
+        input.soldBy !== callerId
+        ? input.soldBy
         : null;
-    if (idempotencyRef) {
-        const idemDoc = await idempotencyRef.get();
-        const stored = idemDoc.data();
-        if (stored) {
+    const idempotencyCollection = firestore.collection(IDEMPOTENCY_COLLECTION);
+    const idempotencyRef = input.idempotencyKey
+        ? idempotencyCollection.doc(buildIdempotencyDocId({
+            cashSessionId: input.cashSessionId,
+            soldBy: soldByCandidate,
+            callerId,
+        }, input.idempotencyKey))
+        : null;
+    // La llave nueva primero; las de antes de SPEC 54 después (TTL de 48 h).
+    const idempotencyRefs = idempotencyRef
+        ? [
+            idempotencyRef,
+            ...legacyIdempotencyDocIds(callerId, soldByCandidate, input.idempotencyKey!)
+                .filter((id) => id !== idempotencyRef.id)
+                .map((id) => idempotencyCollection.doc(id)),
+        ]
+        : [];
+    if (idempotencyRefs.length) {
+        const idemDocs = await firestore.getAll(...idempotencyRefs);
+        const idemDoc = idemDocs.find((doc) => doc.exists);
+        const stored = idemDoc?.data();
+        if (idemDoc && stored) {
             // Llave anterior a `payloadFingerprint`: se compara con la huella
             // resuelta, leyendo solo precios. Si no coincide o no se puede
             // resolver, sigue la ruta de siempre y la transacción decide.
@@ -901,10 +973,12 @@ const applySale = async (input: {
                     .collection('sales')
                     .doc(stored.saleId as string)
                     .get();
-                return resolveReplayedSale(idemDoc, existingSaleDoc, {
+                const replay = resolveReplayedSale(idemDoc, existingSaleDoc, {
                     payload: payloadFingerprint,
                     resolved,
                 });
+                assertCanReplaySale(replay, callerId, input.roleSlug, soldByCandidate);
+                return replay;
             }
         }
     }
@@ -960,15 +1034,32 @@ const applySale = async (input: {
             ),
             Promise.all(cartProductIds.map((productId) =>
                 batchesRepo.listBatchesByProduct(productId, { onlyAvailable: true }))),
-            // La apertura del turno decide si el `soldAt` es creíble; solo hace
-            // falta con `soldAt` offline. `openedAt` no cambia: basta leerla aquí.
-            hasSoldAt
+            // La apertura del turno decide si el `soldAt` es creíble y quién lo
+            // abrió decide si vale el `soldBy` (SPEC 54); solo hace falta con
+            // alguno de los dos offline. `openedAt` y `openedBy` no cambian:
+            // basta leerlos aquí (la transacción vuelve a comprobar `openedBy`).
+            hasSoldAt || soldByCandidate
                 ? cashSessionsRepo.getCashSessionById(input.cashSessionId)
                 : Promise.resolve(null),
         ]);
     cartProductIds.forEach((productId, index) => {
         batchCache.set(productId, preloadedBatches[index]);
     });
+
+    // `soldBy` válido (SPEC 54): es quien abrió el turno. La venta queda a su
+    // nombre y quien la subió en `syncedBy`. Si no coincide se ignora: la venta
+    // es de quien llama, como siempre, y queda en la bitácora.
+    const soldByValid = soldByCandidate !== null &&
+        preloadedSession?.openedBy === soldByCandidate;
+    const soldByIgnored = soldByCandidate !== null && !soldByValid;
+    const cashierId = soldByValid ? soldByCandidate! : callerId;
+    const syncedBy = soldByValid ? callerId : null;
+    // El tope de descuento se mide con el rol de quien cobró. Se conoce sin otra
+    // lectura solo si el turno lo guardó al abrirse (`openedByRoleSlug`); en
+    // turnos anteriores, el de quien llama.
+    const capRoleSlug = soldByValid
+        ? preloadedSession?.openedByRoleSlug ?? input.roleSlug
+        : input.roleSlug;
 
     // Fecha de negocio (SPEC 51). Offline vale la hora del cobro que reporta la
     // caja si es creíble: no más de 10 min en el futuro (reloj adelantado), no
@@ -1363,7 +1454,7 @@ const applySale = async (input: {
 
     // Con un cupón que se va a rechazar no hay venta que topar: se omite para que
     // el cajero reciba el motivo real (o el reintento su venta), no un 403.
-    if (input.roleSlug !== 'admin' && !couponError) {
+    if (capRoleSlug !== 'admin' && !couponError) {
         const lineOverCap = saleItems.find(isLineOverCap);
         if (lineOverCap) {
             throw forbidden(
@@ -1476,13 +1567,20 @@ const applySale = async (input: {
         // Segundo chequeo dentro de la transacción: dos requests simultáneos con la
         // misma llave contienden por este documento y el perdedor reintenta, ve la
         // venta ya escrita y la devuelve en lugar de duplicarla.
-        const idemDoc = idempotencyRef ? await transaction.get(idempotencyRef) : null;
-        if (idemDoc?.exists) {
+        // Incluye las llaves de antes de SPEC 54: una vieja con otra huella sigue
+        // siendo un conflicto, no una venta nueva con la llave nueva.
+        const idemDocs = idempotencyRefs.length
+            ? await transaction.getAll(...idempotencyRefs)
+            : [];
+        const idemDoc = idemDocs.find((doc) => doc.exists);
+        if (idemDoc) {
             const existingSaleDoc = await transaction.get(
                 firestore.collection('sales').doc(idemDoc.data()!.saleId as string),
             );
             replayed = true;
-            return resolveReplayedSale(idemDoc, existingSaleDoc, fingerprints);
+            const replay = resolveReplayedSale(idemDoc, existingSaleDoc, fingerprints);
+            assertCanReplaySale(replay, callerId, input.roleSlug, soldByCandidate);
+            return replay;
         }
 
         // Cupón: `usedCount` se lee aquí, antes de cualquier escritura. Dos ventas
@@ -1531,12 +1629,15 @@ const applySale = async (input: {
             throw notFound('Turno de caja');
         }
         // El turno es de quien lo abrió: sin esto un cajero puede cargar ventas en
-        // efectivo al turno de otro y dejarle el faltante en su corte.
-        assertCanAccessSession(
-            { openedBy: cashSessionDoc.data()!.openedBy as string },
-            input.cashierId,
-            input.roleSlug,
-        );
+        // efectivo al turno de otro y dejarle el faltante en su corte. Con un
+        // `soldBy` válido (SPEC 54) cualquiera con `pos:write` sube la cola de
+        // ese turno: la venta es de quien lo abrió, no de quien sincroniza.
+        const sessionOpenedBy = cashSessionDoc.data()!.openedBy as string;
+        if (soldByValid) {
+            assertCanAccessSession({ openedBy: sessionOpenedBy }, cashierId, null);
+        } else {
+            assertCanAccessSession({ openedBy: sessionOpenedBy }, callerId, input.roleSlug);
+        }
         // Turno cerrado (SPEC 52): una venta offline cobrada **antes** del cierre
         // se registra en ese turno marcada `lateSync`, y el turno queda con ajuste
         // pendiente y el efectivo que llegó tarde en `lateSales`. Cobrada después
@@ -1648,7 +1749,7 @@ const applySale = async (input: {
                     batchId: allocation.batchId,
                     quantity: allocation.quantity,
                     referenceId: saleRef.id,
-                    userId: input.cashierId,
+                    userId: cashierId,
                     // Fecha del hecho = fecha de negocio (SPEC 51); la de registro
                     // queda en `recordedAt`.
                     createdAt: businessAt,
@@ -1743,7 +1844,13 @@ const applySale = async (input: {
             cardPaymentReference: pointPayment?.orderId ?? tender.cardPaymentReference,
             pointPayment,
             cashSessionId: input.cashSessionId,
-            cashierId: input.cashierId,
+            cashierId,
+            // Quien subió la venta, cuando no es quien la cobró (SPEC 54).
+            ...(syncedBy ? { syncedBy } : {}),
+            // Quien autorizó el descuento en la caja: informativo (SPEC 54).
+            ...(input.discountAuthorizedBy
+                ? { discountAuthorizedBy: input.discountAuthorizedBy }
+                : {}),
             customerId,
             customerName,
             prescription,
@@ -1782,7 +1889,8 @@ const applySale = async (input: {
             transaction.create(idempotencyRef, {
                 saleId: saleRef.id,
                 folio,
-                cashierId: input.cashierId,
+                cashierId,
+                ...(syncedBy ? { syncedBy } : {}),
                 requestFingerprint: fingerprints.resolved,
                 payloadFingerprint: fingerprints.payload,
                 createdAt: timestamp,
@@ -1816,7 +1924,7 @@ const applySale = async (input: {
                 prescription,
                 prescriptionRetained: Boolean(input.prescriptionRetained),
                 customerName,
-                userId: input.cashierId,
+                userId: cashierId,
                 // El renglón lleva la fecha del cobro (SPEC 51); con faltante de
                 // stock registra igual la cantidad completa: la salida física
                 // ocurrió (SPEC 52).
@@ -1834,6 +1942,41 @@ const applySale = async (input: {
         );
         return { id: saleRef.id, ...saleData };
     });
+
+    if (!replayed && (syncedBy || soldByIgnored)) {
+        await recordAudit(syncedBy
+            ? {
+                action: 'sale.synced_by_other',
+                entity: 'sale',
+                entityId: sale.id,
+                summary: `Venta ${sale.folio} cobrada por ${cashierId} y sincronizada ` +
+                    `por ${syncedBy}`,
+                userId: callerId,
+                roleSlug: input.roleSlug ?? null,
+                metadata: {
+                    folio: sale.folio,
+                    cashierId,
+                    syncedBy,
+                    cashSessionId: input.cashSessionId,
+                },
+            }
+            : {
+                action: 'sale.sold_by_ignored',
+                entity: 'sale',
+                entityId: sale.id,
+                summary: `Venta ${sale.folio}: el autor reportado por la caja no abrió ` +
+                    'el turno; queda a nombre de quien la sincronizó',
+                userId: callerId,
+                roleSlug: input.roleSlug ?? null,
+                metadata: {
+                    folio: sale.folio,
+                    soldBy: soldByCandidate,
+                    sessionOpenedBy: preloadedSession?.openedBy ?? null,
+                    cashierId,
+                    cashSessionId: input.cashSessionId,
+                },
+            });
+    }
 
     if (!replayed) {
         await recordOfflineReviewAudits({
@@ -1904,11 +2047,14 @@ const applySale = async (input: {
             summary: `Descuento de ${discountTotal.toFixed(2)} sobre ${subtotal.toFixed(2)} ` +
                 `en la venta ${sale.folio} (arriba del ${MAX_NON_ADMIN_DISCOUNT_RATE * 100}%)`,
             userId: input.cashierId,
-            roleSlug: input.roleSlug ?? null,
+            roleSlug: capRoleSlug ?? null,
             metadata: {
                 folio: sale.folio,
                 subtotal,
                 discountTotal,
+                cashierId,
+                ...(syncedBy ? { syncedBy } : {}),
+                discountAuthorizedBy: input.discountAuthorizedBy ?? null,
                 lineOverCap: overCapLines.map((item) => ({
                     productId: isSaleServiceItem(item) ? item.serviceId : item.productId,
                     productName: saleItemName(item),

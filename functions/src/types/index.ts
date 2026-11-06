@@ -177,6 +177,13 @@ export type AuditAction =
     | 'sale.catalog_review'
     /** Venta offline registrada en un turno ya cerrado (SPEC 52); el turno pide ajuste. */
     | 'sale.late_sync'
+    /** Venta cobrada por un cajero y subida por otro usuario (SPEC 54). */
+    | 'sale.synced_by_other'
+    /**
+     * El `soldBy` que mandó la caja no es quien abrió el turno (SPEC 54): se
+     * ignoró y la venta quedó a nombre de quien la subió.
+     */
+    | 'sale.sold_by_ignored'
     | 'sale.returned'
     /** Reembolso hecho directo sobre una order de Mercado Pago, sin pasar por una devolución. */
     | 'pointOrder.refunded'
@@ -1309,7 +1316,12 @@ export interface Sale {
     cardPaymentReference: string | null;
     pointPayment: PointPaymentSnapshot | null;
     cashSessionId: string | null;
+    /** Quien **cobró** la venta (SPEC 54: el `soldBy` válido de la caja, o quien la subió). */
     cashierId: string;
+    /** Quien subió la venta cuando no es quien la cobró (SPEC 54); ausente si es el mismo. */
+    syncedBy?: string;
+    /** Quien autorizó el descuento en la caja (SPEC 54); informativo. */
+    discountAuthorizedBy?: string;
     customerId: string | null;
     customerName: string | null;
     prescription: SalePrescription | null;
@@ -1512,6 +1524,12 @@ export type CashAdjustmentStatus = 'pending' | 'approved' | 'rejected';
 export interface CashSession {
     id: string;
     openedBy: string;
+    /**
+     * Rol de quien abrió el turno al abrirlo (SPEC 54). Con él, el tope de
+     * descuento de una venta subida por otro usuario se mide con el rol de quien
+     * cobró sin otra lectura. Ausente en turnos anteriores.
+     */
+    openedByRoleSlug?: string;
     openingAmount: number;
     /** Efectivo esperado **de farmacia**; el de servicios va aparte. */
     expectedCashAmount: number | null;

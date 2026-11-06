@@ -295,6 +295,8 @@ export const openSession = async (
 
     const created = await cashSessionsRepo.createCashSessionIfNoneOpen({
         openedBy: userId,
+        // Para medir el tope de descuento de sus ventas subidas por otro (SPEC 54).
+        ...(opening.roleSlug ? { openedByRoleSlug: opening.roleSlug } : {}),
         openingAmount: hasCount ? counted! : openingAmount,
         ...(hasCount ? { openingCounted: counted } : {}),
         ...(inherited !== undefined ? { inheritedFloat: inherited, openingDifference } : {}),

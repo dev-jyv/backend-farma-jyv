@@ -1,4 +1,3 @@
-import { FieldValue } from 'firebase-admin/firestore';
 import { ZodValidationPipe } from '../src/common/zod-validation.pipe';
 import { SalesController } from '../src/modules/sales/sales.controller';
 import * as batchesRepo from '../src/repositories/batches.repository';
@@ -79,11 +78,19 @@ const batchQty = async (batchId: string) =>
 const salesOfSession = async (sessionId: string) =>
     (await db().collection('sales').where('cashSessionId', '==', sessionId).get()).size;
 
-/** Simula una llave escrita antes de SPEC 48: solo trae la huella resuelta. */
-const makeLegacy = async (cashierId: string, idempotencyKey: string) => {
-    const ref = db().collection('saleIdempotencyKeys').doc(`${cashierId}:${idempotencyKey}`);
-    expect((await ref.get()).data()?.payloadFingerprint).toEqual(expect.any(String));
-    await ref.update({ payloadFingerprint: FieldValue.delete() });
+/**
+ * Simula una llave escrita antes de SPEC 48: solo trae la huella resuelta. Las de
+ * entonces se guardaban como `<cajero>:<key>` (SPEC 54 las guarda por turno), así
+ * que se mueve el documento a ese id.
+ */
+const makeLegacy = async (sessionId: string, cashierId: string, idempotencyKey: string) => {
+    const keys = db().collection('saleIdempotencyKeys');
+    const current = keys.doc(`${sessionId}:${idempotencyKey}`);
+    const data = (await current.get()).data()!;
+    expect(data.payloadFingerprint).toEqual(expect.any(String));
+    delete data.payloadFingerprint;
+    await keys.doc(`${cashierId}:${idempotencyKey}`).set(data);
+    await current.delete();
 };
 
 const rejection = async (promise: Promise<unknown>): Promise<AppError> => {
@@ -236,7 +243,7 @@ describe('SPEC 48 — idempotencia antes de catálogo, stock y tope', () => {
             cashierId: CASHIER,
         });
         const stored = (await db().collection('saleIdempotencyKeys')
-            .doc(`${CASHIER}:${idempotencyKey}`).get()).data()!;
+            .doc(`${session.id}:${idempotencyKey}`).get()).data()!;
         expect(stored.payloadFingerprint).toMatch(/^[0-9a-f]{64}$/);
         expect(stored.requestFingerprint).toMatch(/^[0-9a-f]{64}$/);
         expect(stored.payloadFingerprint).not.toBe(stored.requestFingerprint);
@@ -256,7 +263,7 @@ describe('SPEC 48 — idempotencia antes de catálogo, stock y tope', () => {
                 cashierId: CASHIER,
             };
             const first = await salesService.createSale(input);
-            await makeLegacy(CASHIER, input.idempotencyKey);
+            await makeLegacy(input.cashSessionId, CASHIER, input.idempotencyKey);
             expect(await batchQty(batch.id)).toBe(0);
 
             const batchReads = jest.spyOn(batchesRepo, 'listBatchesByProduct');
@@ -276,7 +283,7 @@ describe('SPEC 48 — idempotencia antes de catálogo, stock y tope', () => {
                 cashierId: CASHIER,
             };
             const first = await salesService.createSale(input);
-            await makeLegacy(CASHIER, input.idempotencyKey);
+            await makeLegacy(input.cashSessionId, CASHIER, input.idempotencyKey);
 
             expect((await salesService.createSale(input)).id).toBe(first.id);
         });
@@ -318,7 +325,7 @@ describe('SPEC 48 — idempotencia antes de catálogo, stock y tope', () => {
             };
             const first = await salesService.createSale(input);
             expect(first.promotionIds).toEqual([promotion.id]);
-            await makeLegacy(CASHIER, input.idempotencyKey);
+            await makeLegacy(input.cashSessionId, CASHIER, input.idempotencyKey);
 
             expect((await salesService.createSale(input)).id).toBe(first.id);
         });
@@ -338,7 +345,7 @@ describe('SPEC 48 — idempotencia antes de catálogo, stock y tope', () => {
                 items: [{ productId: product.id, quantity: 1, unitPrice: 20 }],
                 amountReceived: 20,
             });
-            await makeLegacy(CASHIER, idempotencyKey);
+            await makeLegacy(session.id, CASHIER, idempotencyKey);
 
             const error = await rejection(salesService.createSale({
                 ...base,
@@ -482,7 +489,7 @@ describe('SPEC 48 — POST /sales/bulk tolerante', () => {
             .where('cashierId', '==', CASHIER).get();
         const keyIds = new Set(keys.docs.map((doc) => doc.id));
         for (const item of items) {
-            expect(keyIds.has(`${CASHIER}:${item.idempotencyKey}`)).toBe(false);
+            expect(keyIds.has(`${session.id}:${item.idempotencyKey}`)).toBe(false);
         }
     });
 
