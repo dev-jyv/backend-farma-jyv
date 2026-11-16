@@ -92,12 +92,15 @@ jobs:
       - name: Esperar a que los índices estén listos
         run: scripts/ci/wait-firestore-indexes.sh "${PROJECT_ID}"
 
-      # Sin `--force`: si una función desapareció del código, el CLI se niega a
-      # borrarla sin confirmación y el job falla en vez de borrar algo en silencio.
+      # Dev solo lleva las funciones HTTP: las programadas (y sus jobs de Cloud
+      # Scheduler) se borraron de farma-jyv-dev el 2026-11-16 por costo — en dev no
+      # hay a quién mandarle reportes ni backups que conservar. Desplegar
+      # `functions` completo las recrearía. Una función HTTP nueva se añade aquí.
       - name: Desplegar funciones, reglas y Storage
         run: >-
           firebase deploy --project dev
-          --only functions,firestore:rules,storage --non-interactive
+          --only functions:api,functions:reportsPdf,firestore:rules,storage
+          --non-interactive
 
   verificar-tag:
     name: Verificar que el tag está en main

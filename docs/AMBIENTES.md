@@ -63,6 +63,14 @@ Lo que falta hacer una sola vez (requiere cuenta con permisos en Firebase):
    (Mercado Pago `TEST-...`): RUNBOOK «Secretos».
 6. `npm --prefix functions run deploy:dev`, luego `npm run migrate:roles` contra dev.
 
+**Dev no tiene funciones programadas.** `deploy:dev` y el job de dev de
+`deploy.yml` despliegan solo `api` y `reportsPdf`; los reportes, alertas,
+mantenimiento de promociones, backup nocturno y el chequeo de silencio de cajas
+(y sus jobs de Cloud Scheduler y políticas de alerta) se borraron de
+`farma-jyv-dev` el 2026-11-16 para no pagar por ellos. Para probar uno, usar el
+emulador o el disparo manual de `/v1/internal/reports/*`. Nunca correr
+`firebase deploy --only functions` contra dev: las recrea.
+
 ## Secretos: Secret Manager, no `.env` (SPEC 35)
 
 Las siete credenciales del backend viven en **Cloud Secret Manager** de cada
