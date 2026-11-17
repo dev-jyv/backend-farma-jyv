@@ -1,12 +1,16 @@
 import { createStockEntrySchema } from '../src/schemas/stock-entries';
+import { APP_TIME_ZONE, getZonedYmd } from '../src/utils/timezone';
 
 /**
  * Reglas de la entrada de stock desde la caja. Todo es validación pura del
  * schema: no toca Firestore ni el emulador.
  */
 
-const tomorrow = (): string => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
-const yesterday = (): string => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+// El día se toma en la zona de la farmacia, como el schema: con el día UTC,
+// entre 18:00 y 24:00 de México «ayer» en UTC es «hoy» local y la caducidad pasa.
+const localDay = (offsetMs: number): string => getZonedYmd(Date.now() + offsetMs, APP_TIME_ZONE);
+const tomorrow = (): string => localDay(86_400_000);
+const yesterday = (): string => localDay(-86_400_000);
 
 const nuevoProducto = {
     name: 'Paracetamol 500mg',
