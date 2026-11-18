@@ -48,7 +48,7 @@ const parseOptions = (argv: string[]): Options => {
     const project = valueOf(argv, '--project');
     const from = valueOf(argv, '--from');
     if (!project) {
-        throw new Error('Falta --project (farma-jyv, farma-jyv-dev o demo-farmajyv)');
+        throw new Error('Falta --project (farma-jyv o demo-farmajyv)');
     }
     if (!from || !/^\d{4}-\d{2}-\d{2}$/.test(from)) {
         throw new Error('Falta --from YYYY-MM-DD');

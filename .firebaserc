@@ -1,7 +1,6 @@
 {
   "projects": {
     "default": "farma-jyv",
-    "prod": "farma-jyv",
-    "dev": "farma-jyv-dev"
+    "prod": "farma-jyv"
   }
 }

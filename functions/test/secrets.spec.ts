@@ -173,7 +173,7 @@ describe('scripts locales', () => {
 
     it('check-env-split rechaza los siete en un .env.<proyecto>, aun vacíos', () => {
         writeFileSync(
-            join(dir, '.env.farma-jyv-dev'),
+            join(dir, '.env.prod'),
             'R2_BUCKET=b\nR2_SECRET_ACCESS_KEY=\nMIGRATE_SECRET=x\n',
         );
         const resultado = checkEnvSplit();
@@ -189,7 +189,7 @@ describe('scripts locales', () => {
         writeFileSync(join(dir, '.env.local'), 'MIGRATE_SECRET=local-dev-secret\n');
         writeFileSync(join(dir, '.secret.local'), 'RESEND_API_KEY=" "\n');
         writeFileSync(join(dir, '.env.demo-farmajyv'), 'OPENROUTER_API_KEY=x\n');
-        writeFileSync(join(dir, '.env.farma-jyv-dev.example'), 'RESEND_API_KEY=\n');
+        writeFileSync(join(dir, '.env.farma-jyv.example'), 'RESEND_API_KEY=\n');
         expect(checkEnvSplit().status).toBe(0);
     });
 

@@ -30,7 +30,7 @@ const SECRET_PATTERNS = [/^MERCADOPAGO_/, ...SECRET_NAMES.map((name) => new RegE
 // No son credenciales: `MERCADOPAGO_USER_ID` es el id público de la cuenta y
 // `MERCADOPAGO_PRINT_ON_TERMINAL` solo dice si la Point imprime el ticket.
 const NOT_SECRET = new Set(['MERCADOPAGO_USER_ID', 'MERCADOPAGO_PRINT_ON_TERMINAL']);
-const ALLOWED_PROJECTS = new Set(['farma-jyv', 'farma-jyv-dev']);
+const ALLOWED_PROJECTS = new Set(['farma-jyv']);
 
 const fail = (message) => {
     console.error(`::error::${message}`);
@@ -39,7 +39,7 @@ const fail = (message) => {
 
 const projectId = process.argv[2];
 if (!ALLOWED_PROJECTS.has(projectId)) {
-    fail(`Proyecto inválido: "${projectId ?? ''}". Debe ser farma-jyv o farma-jyv-dev.`);
+    fail(`Proyecto inválido: "${projectId ?? ''}". Debe ser farma-jyv.`);
 }
 
 const functionsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'functions');

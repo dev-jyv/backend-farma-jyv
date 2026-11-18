@@ -1,8 +1,9 @@
 name: Deploy
 
-# Despliegue del backend (SPEC 39). Contrato: `main` con CI verde → `farma-jyv-dev`
-# automático; tag `vX.Y.Z` sobre `main` → `farma-jyv` tras aprobación en el
-# environment `production`. Solo despliega este repo: los tags del panel son
+# Despliegue del backend (SPEC 39). Contrato: tag `vX.Y.Z` sobre `main` →
+# `farma-jyv` tras aprobación en el environment `production`. Ya no hay
+# despliegue automático a dev: el proyecto `farma-jyv-dev` se borró el
+# 2026-11-18 (lo que antes se probaba ahí se prueba con los emuladores). Solo despliega este repo: los tags del panel son
 # independientes (RUNBOOK §10).
 #
 # Autenticación por Workload Identity Federation: no hay llave JSON en ningún
@@ -13,13 +14,7 @@ name: Deploy
 # `requiere-paso-manual` y el job `pasos-manuales` los lista antes de la aprobación.
 
 on:
-  # Dev: solo cuando el CI de un push a `main` terminó en verde (incluye las
-  # pruebas de reglas, SPEC 33).
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
-  # Prod: un tag `v*`. El tag no dispara `ci.yml`, así que aquí se vuelve a llamar.
+  # Un tag `v*`. El tag no dispara `ci.yml`, así que aquí se vuelve a llamar.
   push:
     tags: ['v*']
 
@@ -27,81 +22,6 @@ permissions:
   contents: read
 
 jobs:
-  dev:
-    name: Desplegar a farma-jyv-dev
-    if: >-
-      github.event_name == 'workflow_run' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
-    runs-on: ubuntu-latest
-    environment: dev
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      id-token: write
-    # Dos merges seguidos: el despliegue nuevo cancela el anterior.
-    concurrency:
-      group: deploy-backend-dev
-      cancel-in-progress: true
-    env:
-      PROJECT_ID: farma-jyv-dev
-    steps:
-      # El commit exacto que pasó el CI, no la punta de `main` al momento.
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: functions/package-lock.json
-
-      - name: Instalar dependencias
-        working-directory: functions
-        run: npm ci
-
-      - name: Instalar Firebase CLI
-        run: npm install -g firebase-tools@15
-
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Autenticar con Workload Identity Federation
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-
-      - name: Variables no secretas de las funciones
-        env:
-          FUNCTIONS_ENV_FILE: ${{ vars.FUNCTIONS_ENV_FILE }}
-        run: node scripts/ci/write-functions-env.mjs "${PROJECT_ID}"
-
-      # SPEC 35: cada secreto de `functions/src/config/secrets.ts` debe existir en
-      # el proyecto con su última versión habilitada (solo metadatos; la cuenta de
-      # despliegue tiene `roles/secretmanager.viewer`). Si falta uno, el job lo
-      # nombra y no despliega nada, en vez de fallar a media subida de funciones.
-      - name: Verificar secretos en Secret Manager
-        run: node functions/scripts/check-secrets.mjs dev
-
-      - name: Desplegar índices
-        run: >-
-          firebase deploy --project dev --only firestore:indexes --non-interactive
-
-      - name: Esperar a que los índices estén listos
-        run: scripts/ci/wait-firestore-indexes.sh "${PROJECT_ID}"
-
-      # Dev solo lleva las funciones HTTP: las programadas (y sus jobs de Cloud
-      # Scheduler) se borraron de farma-jyv-dev el 2026-11-16 por costo — en dev no
-      # hay a quién mandarle reportes ni backups que conservar. Desplegar
-      # `functions` completo las recrearía. Una función HTTP nueva se añade aquí.
-      - name: Desplegar funciones, reglas y Storage
-        run: >-
-          firebase deploy --project dev
-          --only functions:api,functions:reportsPdf,firestore:rules,storage
-          --non-interactive
-
   verificar-tag:
     name: Verificar que el tag está en main
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')

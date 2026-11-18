@@ -7,6 +7,15 @@ Para **cómo está construida** la API —módulos, permisos, reglas de dinero,
 idempotencia, integraciones y el diagrama del sistema— ver
 [`docs/DOSSIER_TECNICO.md`](docs/DOSSIER_TECNICO.md).
 
+> **No existe ambiente dev en la nube desde el 2026-11-18.** El proyecto
+> `farma-jyv-dev` se borró (restaurable con `gcloud projects undelete
+> farma-jyv-dev` hasta el 2026-12-18). Donde una sección de despliegue de un spec
+> ya aplicado dice `npm run deploy:dev`, `--project dev` o «probar en dev», ese
+> paso se hace con los emuladores (`npm run emulators`) y luego se sigue con
+> producción. `farma-jyv-dev` se queda a propósito en las listas de proyectos
+> protegidos de `scripts/ops` y en la prohibición del simulacro: protegen, no
+> despliegan.
+
 Requisitos: `firebase login` y `gcloud auth login` con una cuenta que tenga
 acceso al proyecto, y `firebase use <proyecto>` apuntando al correcto. Antes de
 cualquier comando, confirma contra cuál estás parado:
@@ -797,8 +806,7 @@ límite compartido es la respuesta o basta revisar el uso. No incluye compartir
 
 ## 10. Liberación (despliegue desde GitHub Actions)
 
-Contrato (SPEC 39): **merge a `main` con CI verde = `farma-jyv-dev`**; **tag
-`vX.Y.Z` sobre `main` = candidato a `farma-jyv`**, que sale solo cuando `dev-jyv`
+Contrato (SPEC 39): **tag `vX.Y.Z` sobre `main` = candidato a `farma-jyv`**, que sale solo cuando `dev-jyv`
 aprueba el environment `production`. El backend y el panel tienen **tags
 independientes**: un tag del backend despliega solo el backend y uno del panel
 solo el panel.
@@ -808,25 +816,23 @@ vive en GitHub. Nunca subas una llave de cuenta de servicio como secreto.
 
 ### 10.1 Una sola vez por proyecto (dueño de la cuenta)
 
-1. `scripts/ci/setup-wif.sh farma-jyv-dev` y `scripts/ci/setup-wif.sh farma-jyv`
-   (con `gcloud auth login`). Crean el pool `github-actions`, el proveedor `github`
-   (solo los repos `dev-jyv/backend-farma-jyv` y `dev-jyv/farma-jyv-admin`; dev
-   solo `main` + environment `dev`, prod solo tags `v*` + environment
-   `production`) y las cuentas `deploy-backend@` (Functions, reglas, índices,
+1. `scripts/ci/setup-wif.sh farma-jyv` (con `gcloud auth login`). Crea el pool
+   `github-actions`, el proveedor `github` (solo los repos
+   `dev-jyv/backend-farma-jyv` y `dev-jyv/farma-jyv-admin`, solo tags `v*` +
+   environment `production`) y las cuentas `deploy-backend@` (Functions, reglas, índices,
    Storage) y `deploy-admin@` (solo Hosting), cada una suplantable solo por su
    repo. Imprimen los valores de las variables de GitHub.
 2. Política de limpieza de imágenes de Functions, para que el deploy no
    interactivo no falle pidiéndola:
-   `firebase functions:artifacts:setpolicy --project <dev|prod> --location us-central1 --days 7 --force`.
+   `firebase functions:artifacts:setpolicy --project prod --location us-central1 --days 7 --force`.
 3. En **cada repo** (backend y panel), environments de GitHub:
-   - `dev`: rama de despliegue `main`. Variables `GCP_WORKLOAD_IDENTITY_PROVIDER`,
-     `GCP_DEPLOY_SERVICE_ACCOUNT` (las de `farma-jyv-dev`).
-   - `production`: reglas de despliegue solo tags `v*` y las mismas dos variables
-     con los valores de `farma-jyv`. En el backend, además, **revisor requerido
+   - `production`: reglas de despliegue solo tags `v*` y variables
+     `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT` con los valores
+     de `farma-jyv`. (El environment `dev` se borró con el proyecto.) En el backend, además, **revisor requerido
      `dev-jyv`**. El panel no lleva revisor: es un repo privado en el plan
      gratuito de GitHub, que no admite revisores ahí; crear el tag es la
      aprobación (§10.4).
-   - Solo backend, en los dos environments: variable `FUNCTIONS_ENV_FILE` con el
+   - Solo backend: variable `FUNCTIONS_ENV_FILE` con el
      contenido de `functions/.env.<proyecto>` **sin credenciales** (CORS, RECEIPT_*,
      REPORTS_EMAIL_*, R2_ACCOUNT_ID/R2_BUCKET, FIRESTORE_BACKUP_BUCKET…).
      `scripts/ci/write-functions-env.mjs` la escribe en el job y se niega si trae
@@ -862,8 +868,8 @@ resumen del run lo marca como "no indicado".
 
 ### 10.3 Liberar a producción
 
-1. Confirmar que `main` está desplegado y probado en `farma-jyv-dev` (el job `dev`
-   de `deploy.yml` corre solo tras cada CI verde de `main`).
+1. Confirmar que el CI de `main` está verde y que el cambio se probó con los
+   emuladores (ya no hay despliegue previo a dev).
 2. Si el panel a liberar depende de un cambio del backend: **backend primero**.
    Con tags independientes nada lo impone; liberar el panel antes rompe el panel
    en producción.
@@ -968,7 +974,7 @@ solos):
   algún secreto no existe en el proyecto o su última versión no está habilitada.
   Sin él, `firebase deploy` interactivo *pide el valor en la terminal* y lo crea
   al vuelo; no escribas valores ahí: cancela y sigue §11.1. A mano:
-  `npm --prefix functions run check:secrets -- dev`.
+  `npm --prefix functions run check:secrets -- prod`.
 
 Permisos de quien opera: `roles/secretmanager.admin` para crear y rotar (o
 `roles/secretmanager.secretVersionManager` si el secreto ya existe);
@@ -976,20 +982,20 @@ Permisos de quien opera: `roles/secretmanager.admin` para crear y rotar (o
 `roles/secretmanager.secretAccessor` (leer valores) solo a la cuenta de servicio
 de las funciones y, puntualmente, a quien corra `migrate:roles` remoto.
 
-### 11.1 Crear (por proyecto: primero `farma-jyv-dev`, luego `farma-jyv`)
+### 11.1 Crear (en `farma-jyv`)
 
 ```bash
 # Pide el valor sin mostrarlo. Repetir por cada secreto con valor.
-firebase functions:secrets:set RESEND_API_KEY --project dev
+firebase functions:secrets:set RESEND_API_KEY --project prod
 
 # MIGRATE_SECRET: 48 bytes aleatorios (≥ 32), sin salto de línea.
 openssl rand -base64 48 | tr -d '\n' \
-  | firebase functions:secrets:set MIGRATE_SECRET --data-file=- --project dev
+  | firebase functions:secrets:set MIGRATE_SECRET --data-file=- --project prod
 
 # MERCADOPAGO_WEBHOOK_SECRET todavía no tiene valor (configurarlo es otra tarea):
 # solo se reserva su espacio con un blanco (no vacío, para que la versión exista
 # con contenido), que el backend recorta y trata como "sin secreto".
-printf ' ' | firebase functions:secrets:set MERCADOPAGO_WEBHOOK_SECRET --data-file=- --project dev
+printf ' ' | firebase functions:secrets:set MERCADOPAGO_WEBHOOK_SECRET --data-file=- --project prod
 
 # Verificar que estén los siete antes de desplegar:
 npm --prefix functions run check:secrets -- dev

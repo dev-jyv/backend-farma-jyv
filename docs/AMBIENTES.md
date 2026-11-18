@@ -1,19 +1,25 @@
 # Ambientes de FarmaJyV
 
-Tres ambientes, los mismos en los cuatro repos (backend, admin, clinic, pos):
+Dos ambientes, los mismos en los cuatro repos (backend, admin, clinic, pos):
 
 | Ambiente | Proyecto Firebase | API | Para qué |
 |---|---|---|---|
 | **emulator** | `demo-farmajyv` | `http://127.0.0.1:5001/demo-farmajyv/us-central1/api/v1` | Desarrollo diario. Todo local, datos ficticios. |
-| **dev** | `farma-jyv-dev` | `https://us-central1-farma-jyv-dev.cloudfunctions.net/api/v1` | Probar integrado en la nube antes de producción. |
 | **prod** | `farma-jyv` | la actual | Farmacia real. |
 
 El prefijo `demo-` no es casual: Firebase garantiza que un proyecto `demo-*` no
 existe en la nube, así que el emulador no puede escribir en nada real aunque
 alguien se equivoque de credenciales.
 
-`.firebaserc` de cada repo conserva `default: farma-jyv` y añade los alias `prod`
-y `dev`. **Todo deploy pasa `--project` explícito** (`deploy:dev` / `deploy:prod`).
+`.firebaserc` de cada repo conserva `default: farma-jyv` y añade el alias `prod`.
+**Todo deploy pasa `--project` explícito** (`deploy:prod`).
+
+**Ya no hay ambiente dev en la nube.** El proyecto `farma-jyv-dev` (Functions,
+Firestore, Auth, Storage, Hosting `farma-jyv-dev`, `-clinic` y `-updates`) se
+borró el 2026-11-18 por costo; se puede restaurar con `gcloud projects undelete
+farma-jyv-dev` hasta el 2026-12-18 y después desaparece, y su id no se puede
+volver a usar. Lo que se probaba ahí se prueba con los emuladores; la integración
+en la nube es la liberación a producción (RUNBOOK §10).
 
 ## Desarrollo local (emuladores)
 
@@ -48,29 +54,6 @@ recargan al volver a arrancar. Para empezar de cero, borra esa carpeta.
 
 Cada front por separado: `npm start` en su repo ya apunta al emulador.
 
-## Proyecto `farma-jyv-dev` (nube)
-
-Lo que falta hacer una sola vez (requiere cuenta con permisos en Firebase):
-
-1. Crear el proyecto `farma-jyv-dev` (plan Blaze, para Functions).
-2. Habilitar Auth (correo/contraseña), Firestore (us-central1) y Storage.
-3. Registrar tres web apps (admin, clinic, pos) y pegar su config en
-   `environment.dev-cloud.ts` de cada front (hoy dicen `REEMPLAZAR_CON_CONFIG_DE_farma-jyv-dev`).
-4. Crear los sitios de Hosting `farma-jyv-dev`, `farma-jyv-dev-clinic` y `farma-jyv-dev-updates`.
-5. `cp functions/.env.farma-jyv-dev.example functions/.env.farma-jyv-dev` y
-   rellenar la configuración no secreta (bucket R2 aparte, correos de prueba).
-   Crear los siete secretos en `farma-jyv-dev` con credenciales de **prueba**
-   (Mercado Pago `TEST-...`): RUNBOOK «Secretos».
-6. `npm --prefix functions run deploy:dev`, luego `npm run migrate:roles` contra dev.
-
-**Dev no tiene funciones programadas.** `deploy:dev` y el job de dev de
-`deploy.yml` despliegan solo `api` y `reportsPdf`; los reportes, alertas,
-mantenimiento de promociones, backup nocturno y el chequeo de silencio de cajas
-(y sus jobs de Cloud Scheduler y políticas de alerta) se borraron de
-`farma-jyv-dev` el 2026-11-16 para no pagar por ellos. Para probar uno, usar el
-emulador o el disparo manual de `/v1/internal/reports/*`. Nunca correr
-`firebase deploy --only functions` contra dev: las recrea.
-
 ## Secretos: Secret Manager, no `.env` (SPEC 35)
 
 Las siete credenciales del backend viven en **Cloud Secret Manager** de cada
@@ -91,24 +74,22 @@ solo `RESEND_API_KEY`. Crear, rotar y dar acceso: RUNBOOK, sección «Secretos»
 Los `.env` quedan **solo** con configuración no secreta (`CORS_ORIGINS`,
 `RECEIPT_*`, `REPORTS_EMAIL_*`, `R2_ACCOUNT_ID`, `R2_BUCKET`, modelos de
 OpenRouter, `MERCADOPAGO_USER_ID`…). Firebase carga `functions/.env` en **todos**
-los proyectos y en el emulador, y después el específico (`.env.farma-jyv`,
-`.env.farma-jyv-dev` o `.env.local`).
+los proyectos y en el emulador, y después el específico (`.env.farma-jyv` o
+`.env.local`).
 
 | Archivo | Uso | ¿Se versiona? | ¿Se despliega? |
 |---|---|---|---|
 | `functions/.env` | valores comunes, sin secretos ni `MERCADOPAGO_*` | no | sí |
 | `functions/.env.farma-jyv` | config de producción, **sin secretos** | no | sí |
-| `functions/.env.farma-jyv-dev` | config de dev, **sin secretos** | no | sí |
 | `functions/.env.local` | emulador y `npm run dev` | no | no |
 | `functions/.secret.local` | valores de los secretos en emulador y `npm run dev` | no | no |
 | `functions/*.example` | plantillas | sí | — |
 
-`scripts/check-env-split.mjs` corre antes de `emulators`, `deploy:dev` y
-`deploy:prod`. Falla si alguno de los siete aparece (aunque sea vacío) en
+`scripts/check-env-split.mjs` corre antes de `emulators` y `deploy:prod`. Falla si alguno de los siete aparece (aunque sea vacío) en
 `functions/.env` o en un `functions/.env.<proyecto|alias>`, o si `functions/.env`
 trae alguna `MERCADOPAGO_*` con valor, y lista **solo los nombres**. Para migrar:
 borra esas líneas (y los valores viejos, que se rotan; RUNBOOK «Secretos»).
-`scripts/check-secrets.mjs <dev|prod>` corre en los `deploy:*` después de compilar
+`scripts/check-secrets.mjs prod` corre en los `deploy:*` después de compilar
 y antes de `firebase deploy`: si un secreto no existe en el proyecto destino, el
 deploy se detiene nombrándolo en lugar de pedir el valor a mano.
 

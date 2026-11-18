@@ -5,14 +5,12 @@
 # dueño de la cuenta, con `gcloud auth login` (RUNBOOK §10.1). Es idempotente:
 # lo que ya existe se reporta y se sigue.
 #
-#   scripts/ci/setup-wif.sh farma-jyv-dev
 #   scripts/ci/setup-wif.sh farma-jyv
 #
 # Crea, en el proyecto indicado:
 #   - Pool `github-actions` y proveedor OIDC `github`, que solo acepta tokens de
-#     dev-jyv/backend-farma-jyv y dev-jyv/farma-jyv-admin, y además:
-#       farma-jyv-dev → solo la rama main y el environment `dev`;
-#       farma-jyv     → solo tags v* y el environment `production`.
+#     dev-jyv/backend-farma-jyv y dev-jyv/farma-jyv-admin, solo tags v* y el
+#     environment `production` (`farma-jyv-dev` se borró el 2026-11-18).
 #   - `deploy-backend@`: Functions, reglas de Firestore y Storage, índices.
 #     Solo la puede suplantar el repo del backend.
 #   - `deploy-admin@`: solo Hosting. Solo la puede suplantar el repo del panel.
@@ -26,7 +24,7 @@
 # en el RUNBOOK, no `roles/owner` ni `roles/editor`.
 set -euo pipefail
 
-PROJECT_ID="${1:?Uso: setup-wif.sh <farma-jyv|farma-jyv-dev>}"
+PROJECT_ID="${1:?Uso: setup-wif.sh <farma-jyv>}"
 OWNER="dev-jyv"
 BACKEND_REPO="${OWNER}/backend-farma-jyv"
 ADMIN_REPO="${OWNER}/farma-jyv-admin"
@@ -34,9 +32,6 @@ POOL="github-actions"
 PROVIDER="github"
 
 case "${PROJECT_ID}" in
-    farma-jyv-dev)
-        CONDITION="assertion.repository_owner == '${OWNER}' && assertion.repository in ['${BACKEND_REPO}', '${ADMIN_REPO}'] && assertion.ref == 'refs/heads/main' && assertion.environment == 'dev'"
-        ;;
     farma-jyv)
         CONDITION="assertion.repository_owner == '${OWNER}' && assertion.repository in ['${BACKEND_REPO}', '${ADMIN_REPO}'] && assertion.ref.startsWith('refs/tags/v') && assertion.environment == 'production'"
         ;;
