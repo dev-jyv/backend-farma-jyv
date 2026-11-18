@@ -1,5 +1,5 @@
 import { Injectable, PipeTransform } from '@nestjs/common';
-import { ZodError, ZodErrorMap, ZodIssueCode, ZodSchema } from 'zod';
+import { z, ZodError } from 'zod';
 import { badRequest } from '../utils/errors';
 
 /**
@@ -19,57 +19,57 @@ export const formatZodError = (error: ZodError): string =>
  * (los `message` propios de cada esquema mandan sobre este mapa). Lo usa el lote
  * de ventas (SPEC 48), cuyo error por índice lo lee el cajero en la caja.
  */
-export const spanishZodErrorMap: ZodErrorMap = (issue, ctx) => {
+export const spanishZodErrorMap: z.core.$ZodErrorMap = (issue) => {
     switch (issue.code) {
-    case ZodIssueCode.invalid_type:
-        return {
-            message: issue.received === 'undefined'
-                ? 'Campo requerido'
-                : `Tipo inválido: se esperaba ${issue.expected} y llegó ${issue.received}`,
-        };
-    case ZodIssueCode.too_small:
-        return {
-            message: issue.type === 'array'
-                ? `Debe tener al menos ${issue.minimum} elemento(s)`
-                : issue.type === 'string'
-                    ? `Debe tener al menos ${issue.minimum} carácter(es)`
-                    : `Debe ser mayor${issue.inclusive ? ' o igual' : ''} a ${issue.minimum}`,
-        };
-    case ZodIssueCode.too_big:
-        return {
-            message: issue.type === 'array'
-                ? `Debe tener como máximo ${issue.maximum} elemento(s)`
-                : issue.type === 'string'
-                    ? `Debe tener como máximo ${issue.maximum} carácter(es)`
-                    : `Debe ser menor${issue.inclusive ? ' o igual' : ''} a ${issue.maximum}`,
-        };
-    case ZodIssueCode.invalid_enum_value:
-        return { message: `Valor inválido; se esperaba: ${issue.options.join(', ')}` };
-    case ZodIssueCode.invalid_literal:
-        return { message: `Valor inválido; se esperaba ${JSON.stringify(issue.expected)}` };
-    case ZodIssueCode.invalid_string:
-        return { message: 'Texto con formato inválido' };
-    case ZodIssueCode.invalid_date:
-        return { message: 'Fecha inválida' };
-    case ZodIssueCode.unrecognized_keys:
-        return { message: `Campos no permitidos: ${issue.keys.join(', ')}` };
-    case ZodIssueCode.invalid_union:
-    case ZodIssueCode.invalid_union_discriminator:
-        return { message: 'Valor inválido' };
-    case ZodIssueCode.not_multiple_of:
-        return { message: `Debe ser múltiplo de ${issue.multipleOf}` };
-    case ZodIssueCode.not_finite:
-        return { message: 'Debe ser un número finito' };
+    case 'invalid_type':
+        return issue.input === undefined
+            ? 'Campo requerido'
+            : `Tipo inválido: se esperaba ${issue.expected} y llegó ${describeInput(issue.input)}`;
+    case 'too_small':
+        return issue.origin === 'array' || issue.origin === 'set'
+            ? `Debe tener al menos ${issue.minimum} elemento(s)`
+            : issue.origin === 'string'
+                ? `Debe tener al menos ${issue.minimum} carácter(es)`
+                : `Debe ser mayor${issue.inclusive ? ' o igual' : ''} a ${issue.minimum}`;
+    case 'too_big':
+        return issue.origin === 'array' || issue.origin === 'set'
+            ? `Debe tener como máximo ${issue.maximum} elemento(s)`
+            : issue.origin === 'string'
+                ? `Debe tener como máximo ${issue.maximum} carácter(es)`
+                : `Debe ser menor${issue.inclusive ? ' o igual' : ''} a ${issue.maximum}`;
+    case 'invalid_value':
+        return issue.values.length === 1
+            ? `Valor inválido; se esperaba ${JSON.stringify(issue.values[0])}`
+            : `Valor inválido; se esperaba: ${issue.values.map(String).join(', ')}`;
+    case 'invalid_format':
+        return issue.format === 'datetime' || issue.format === 'date'
+            ? 'Fecha inválida'
+            : 'Texto con formato inválido';
+    case 'unrecognized_keys':
+        return `Campos no permitidos: ${issue.keys.join(', ')}`;
+    case 'invalid_union':
+        return 'Valor inválido';
+    case 'not_multiple_of':
+        return `Debe ser múltiplo de ${issue.divisor}`;
     default:
-        return { message: ctx.defaultError };
+        // Sin mensaje propio: Zod usa el suyo.
+        return undefined;
     }
 };
 
-@Injectable()
-export class ZodValidationPipe implements PipeTransform {
-    constructor(private readonly schema: ZodSchema) {}
+/** Nombre del tipo recibido, como lo decía Zod 3 (`null`, `array`, `nan`…). */
+const describeInput = (input: unknown): string => {
+    if (input === null) return 'null';
+    if (Array.isArray(input)) return 'array';
+    if (typeof input === 'number' && Number.isNaN(input)) return 'nan';
+    return typeof input;
+};
 
-    transform(value: unknown) {
+@Injectable()
+export class ZodValidationPipe<T extends z.ZodType = z.ZodType> implements PipeTransform {
+    constructor(private readonly schema: T) {}
+
+    transform(value: unknown): z.output<T> {
         try {
             return this.schema.parse(value);
         } catch (error) {

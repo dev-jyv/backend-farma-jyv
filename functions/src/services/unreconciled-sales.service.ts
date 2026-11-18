@@ -192,7 +192,7 @@ const registerFromPayload = async (
 ): Promise<Sale> => {
     const parsed = unreconciledSalePayloadSchema.safeParse(unreconciled.payload);
     if (!parsed.success) {
-        const detail = parsed.error.errors
+        const detail = parsed.error.issues
             .map((issue) => `${issue.path.join('.') || 'payload'}: ${issue.message}`)
             .join('; ');
         throw badRequest(`La venta guardada no se puede registrar tal cual: ${detail}`);

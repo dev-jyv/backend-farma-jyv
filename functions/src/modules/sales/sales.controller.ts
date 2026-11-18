@@ -160,7 +160,7 @@ export class SalesController {
             }
 
             const parsed = createSaleSchema.safeParse(rawItem, {
-                errorMap: spanishZodErrorMap,
+                error: spanishZodErrorMap,
             });
             if (!parsed.success) {
                 results.push({

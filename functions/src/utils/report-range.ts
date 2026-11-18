@@ -81,13 +81,15 @@ export const assertReportSpan = (
 };
 
 /** Agrega al esquema de query la validación del tope de rango (`from`/`to`). */
-export const withMaxSpan = <T extends z.ZodTypeAny & { _output: { from?: string; to?: string } }>(
+export const withMaxSpan = <T extends z.ZodType<{ from?: string; to?: string }>>(
     schema: T,
     kind: ReportSpanKind = 'detail',
-) =>
-    schema.superRefine((data: { from?: string; to?: string }, ctx) => {
+): T => {
+    // En Zod 4 un refinamiento no envuelve el esquema: devuelve el mismo tipo.
+    return schema.superRefine((data, ctx) => {
         const message = reportSpanError(data.from, data.to, getMaxReportSpanDays(kind));
         if (message) {
-            ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+            ctx.addIssue({ code: 'custom', message });
         }
-    }) as z.ZodEffects<T, T['_output'], T['_input']>;
+    });
+};
