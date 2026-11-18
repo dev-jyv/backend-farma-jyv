@@ -1,8 +1,12 @@
 import { z } from 'zod';
 import { isoDate, paginationFields, parseableDate, phoneMx } from './common';
 
+// `.optional()` al final: en Zod 4 una clave que termina en `.transform()` sale
+// obligatoria en `z.infer` aunque acepte `undefined`; así sigue opcional.
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
-    schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
+    schema.nullish()
+        .transform((value): z.infer<T> | undefined => value ?? undefined)
+        .optional();
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 

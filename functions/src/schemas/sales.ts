@@ -16,7 +16,11 @@ import { couponCodeSchema } from './coupons';
 import { posDeviceIdSchema } from './pos-health';
 
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
-    schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
+    // `.optional()`: en Zod 4 la clave seguiría obligatoria en `z.infer` y,
+    // si no llega, aparecería como `undefined` en la salida.
+    schema.nullish()
+        .transform((value): z.infer<T> | undefined => value ?? undefined)
+        .optional();
 
 export const salePrescriptionSchema = z.object({
     doctorName: z.string().trim().min(1).max(120),
@@ -69,7 +73,7 @@ const VOID_REASON_MESSAGE = 'El motivo de la anulación debe tener de 5 a 300 ca
 export const voidSaleSchema = z.preprocess(
     (value) => value ?? {},
     z.object({
-        reason: z.string({ invalid_type_error: VOID_REASON_MESSAGE })
+        reason: z.string({ error: VOID_REASON_MESSAGE })
             .trim()
             .min(5, VOID_REASON_MESSAGE)
             .max(300, VOID_REASON_MESSAGE)
@@ -701,8 +705,6 @@ export const reportExportQuerySchema = z.object({
  */
 export const reportPdfExportQuerySchema = reportExportQuerySchema.extend({
     format: z.literal('pdf', {
-        errorMap: () => ({
-            message: 'Esta función solo genera PDF; XLSX y CSV se descargan desde la API',
-        }),
+        error: 'Esta función solo genera PDF; XLSX y CSV se descargan desde la API',
     }).default('pdf'),
 });

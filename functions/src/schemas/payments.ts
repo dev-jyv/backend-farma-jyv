@@ -3,7 +3,11 @@ import { positiveMoney } from './common';
 import { idempotencyKeySchema } from './sales';
 
 const nullable = <T extends z.ZodTypeAny>(schema: T) =>
-    schema.nullish().transform((value): z.infer<T> | undefined => value ?? undefined);
+    // `.optional()`: en Zod 4 la clave seguiría obligatoria en `z.infer` y,
+    // si no llega, aparecería como `undefined` en la salida.
+    schema.nullish()
+        .transform((value): z.infer<T> | undefined => value ?? undefined)
+        .optional();
 
 export const listPointDevicesQuerySchema = z.object({
     storeId: z.string().min(1).optional(),

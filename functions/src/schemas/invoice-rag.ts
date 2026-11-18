@@ -83,7 +83,10 @@ const boundedArray = <T extends z.ZodTypeAny>(schema: T, max: number) => z
             const parsed = schema.safeParse(row);
             return parsed.success ? [parsed.data] : [];
         })
-        : []));
+        : []))
+    // Zod 4 rechaza la clave ausente en un `unknown().transform()` («nonoptional»);
+    // Zod 3 corría el transform con `undefined` y daba `[]`. Mismo resultado.
+    .default([]);
 
 export const invoiceRagDataSchema = z.object({
     documentType: z.enum(['invoice', 'receipt', 'other']).catch('other'),
