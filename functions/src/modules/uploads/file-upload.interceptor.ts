@@ -114,7 +114,8 @@ const parseMultipartFile = (req: Request): Promise<UploadedFile> => new Promise(
                 settled = true;
                 resolve({
                     fieldname: name,
-                    originalname: filename,
+                    // busboy no garantiza nombre (el multipart puede omitirlo).
+                    originalname: filename || 'archivo',
                     encoding,
                     // El tipo real por contenido, no el declarado por el cliente.
                     mimetype: realMimeType,
