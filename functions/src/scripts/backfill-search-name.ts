@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as admin from 'firebase-admin';
+import { FieldPath, getFirestore } from 'firebase-admin/firestore';
+import {
+    applicationDefault,
+    cert,
+    getApps,
+    initializeApp,
+    type ServiceAccount,
+} from 'firebase-admin/app';
 import { normalizeSearchName, SEARCH_NAME_FIELD } from '../utils/search-name';
 
 /**
@@ -70,14 +77,14 @@ const hasApplicationDefaultCredentials = (): boolean => {
 };
 
 export const initAdmin = (): void => {
-    if (admin.apps.length) {
+    if (getApps().length) {
         return;
     }
 
     const projectId = resolveProjectId();
 
     if (process.env.FIRESTORE_EMULATOR_HOST) {
-        admin.initializeApp({ projectId });
+        initializeApp({ projectId });
         return;
     }
 
@@ -85,8 +92,8 @@ export const initAdmin = (): void => {
     if (serviceAccountPath) {
         const serviceAccount = JSON.parse(
             fs.readFileSync(serviceAccountPath, 'utf8'),
-        ) as admin.ServiceAccount;
-        admin.initializeApp({ projectId, credential: admin.credential.cert(serviceAccount) });
+        ) as ServiceAccount;
+        initializeApp({ projectId, credential: cert(serviceAccount) });
         return;
     }
 
@@ -95,7 +102,7 @@ export const initAdmin = (): void => {
     // llave de servicio descargada es un secreto de vida larga que queda en el
     // equipo de quien corrió el script una vez, y que nadie rota después.
     if (hasApplicationDefaultCredentials()) {
-        admin.initializeApp({ projectId, credential: admin.credential.applicationDefault() });
+        initializeApp({ projectId, credential: applicationDefault() });
         return;
     }
 
@@ -131,14 +138,14 @@ export const backfillCollection = async (
     target: Target,
     dryRun: boolean,
 ): Promise<{ scanned: number; missing: number; written: number; noName: number }> => {
-    const firestore = admin.firestore();
+    const firestore = getFirestore();
     const result = { scanned: 0, missing: 0, written: 0, noName: 0 };
     let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
 
     for (;;) {
         let query = firestore
             .collection(target.collection)
-            .orderBy(admin.firestore.FieldPath.documentId())
+            .orderBy(FieldPath.documentId())
             .limit(PAGE_SIZE);
         if (last) {
             query = query.startAfter(last);

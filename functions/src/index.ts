@@ -1,10 +1,10 @@
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { onRequest } from 'firebase-functions/v2/https';
 import { createApp } from './app';
 import { API_SECRETS } from './config/secrets';
 
-if (!admin.apps.length) {
-    admin.initializeApp();
+if (!getApps().length) {
+    initializeApp();
 }
 
 export {

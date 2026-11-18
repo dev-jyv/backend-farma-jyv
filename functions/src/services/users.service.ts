@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { getAuth, type UpdateRequest } from 'firebase-admin/auth';
 import { RoleSummary, UserProfile, UserWithRole } from '../types';
 import { badRequest, notFound } from '../utils/errors';
 import { buildListMeta, ListMeta, parsePagination } from '../utils/pagination';
@@ -125,7 +125,7 @@ export const updateUser = async (
         await assertLastAdmin(id, existing);
     }
 
-    const authUpdate: admin.auth.UpdateRequest = {};
+    const authUpdate: UpdateRequest = {};
 
     if (input.displayName !== undefined) {
         authUpdate.displayName = input.displayName;
@@ -136,7 +136,7 @@ export const updateUser = async (
     }
 
     if (Object.keys(authUpdate).length > 0) {
-        await admin.auth().updateUser(id, authUpdate);
+        await getAuth().updateUser(id, authUpdate);
     }
 
     let roleToSync = existing.roleId;

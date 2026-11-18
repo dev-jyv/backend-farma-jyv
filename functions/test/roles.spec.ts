@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import * as adminAuth from 'firebase-admin/auth';
+import { type Auth } from 'firebase-admin/auth';
 
 import * as rolesRepo from '../src/repositories/roles.repository';
 import {
@@ -36,8 +37,8 @@ const ESCRITURA: RolePermission[] = [
 
 const mockearClaims = () => {
     const setCustomUserClaims = jest.fn().mockResolvedValue(undefined);
-    jest.spyOn(admin, 'auth').mockReturnValue(
-        { setCustomUserClaims } as unknown as admin.auth.Auth,
+    jest.spyOn(adminAuth, 'getAuth').mockReturnValue(
+        { setCustomUserClaims } as unknown as Auth,
     );
     return setCustomUserClaims;
 };

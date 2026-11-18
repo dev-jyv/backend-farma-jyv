@@ -1,7 +1,7 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
-import * as admin from 'firebase-admin';
+import { type DecodedIdToken, getAuth } from 'firebase-admin/auth';
 import { getUserProfile } from '../../../repositories/users.repository';
 import { resolveActiveUserRole } from '../../../services/roles.service';
 import { RolePermission, RoleSummary } from '../../../types';
@@ -29,7 +29,7 @@ const extractToken = (header?: string): string | null => {
  * resuelve contra Firestore, que ya tiene los permisos nuevos.
  */
 const roleFromClaims = (
-    claims: admin.auth.DecodedIdToken,
+    claims: DecodedIdToken,
     profile: { roleId: string; permissionsVersion?: number },
 ): { role: RoleSummary; permissions: RolePermission[] } | null => {
     const { roleId, roleSlug, roleName, permissions, permissionsVersion } = claims as {
@@ -79,7 +79,7 @@ export class AuthGuard implements CanActivate {
                 throw unauthorized();
             }
 
-            const decoded = await admin.auth().verifyIdToken(token);
+            const decoded = await getAuth().verifyIdToken(token);
             assertSessionNotExpired(decoded.auth_time);
             const profile = await getUserProfile(decoded.uid);
 

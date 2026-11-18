@@ -1,8 +1,8 @@
-import * as admin from 'firebase-admin';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { createApp } from './app';
 
-if (!admin.apps.length) {
-    admin.initializeApp();
+if (!getApps().length) {
+    initializeApp();
 }
 
 const port = Number(process.env.PORT ?? 3000);

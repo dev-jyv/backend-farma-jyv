@@ -1,6 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as admin from 'firebase-admin';
+import { getFirestore } from 'firebase-admin/firestore';
+import {
+    applicationDefault,
+    cert,
+    getApps,
+    initializeApp,
+    type ServiceAccount,
+} from 'firebase-admin/app';
 import { productNameKey } from '../utils/product-match';
 
 /**
@@ -103,14 +110,14 @@ const hasApplicationDefaultCredentials = (): boolean => {
 };
 
 const initAdmin = (): void => {
-    if (admin.apps.length) {
+    if (getApps().length) {
         return;
     }
 
     const projectId = resolveProjectId();
 
     if (process.env.FIRESTORE_EMULATOR_HOST) {
-        admin.initializeApp({ projectId });
+        initializeApp({ projectId });
         return;
     }
 
@@ -118,8 +125,8 @@ const initAdmin = (): void => {
     if (serviceAccountPath) {
         const serviceAccount = JSON.parse(
             fs.readFileSync(serviceAccountPath, 'utf8'),
-        ) as admin.ServiceAccount;
-        admin.initializeApp({ projectId, credential: admin.credential.cert(serviceAccount) });
+        ) as ServiceAccount;
+        initializeApp({ projectId, credential: cert(serviceAccount) });
         return;
     }
 
@@ -128,7 +135,7 @@ const initAdmin = (): void => {
     // llave de servicio descargada es un secreto de vida larga que queda en el
     // equipo de quien corrió el script una vez, y que nadie rota después.
     if (hasApplicationDefaultCredentials()) {
-        admin.initializeApp({ projectId, credential: admin.credential.applicationDefault() });
+        initializeApp({ projectId, credential: applicationDefault() });
         return;
     }
 
@@ -375,7 +382,7 @@ const backfillBatchSupplier = async (
 const run = async (): Promise<void> => {
     const options = parseOptions(process.argv.slice(2));
     initAdmin();
-    const firestore = admin.firestore();
+    const firestore = getFirestore();
 
     console.log(
         `Backfill ${options.dryRun ? '(dry-run) ' : ''}` +

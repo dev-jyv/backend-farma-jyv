@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { getAuth, type UserRecord } from 'firebase-admin/auth';
 import { AuthUser } from '../types';
 import { badRequest, conflict } from '../utils/errors';
 import { createUserProfile } from '../repositories/users.repository';
@@ -13,10 +13,10 @@ export const registerStaff = async (input: {
 }): Promise<AuthUser & { monthlyReportEmail?: boolean }> => {
     const role = await getActiveRoleById(input.roleId);
 
-    let userRecord: admin.auth.UserRecord;
+    let userRecord: UserRecord;
 
     try {
-        userRecord = await admin.auth().createUser({
+        userRecord = await getAuth().createUser({
             email: input.email,
             password: input.password,
             displayName: input.displayName,
@@ -42,7 +42,7 @@ export const registerStaff = async (input: {
         });
     } catch (error) {
         try {
-            await admin.auth().deleteUser(userRecord.uid);
+            await getAuth().deleteUser(userRecord.uid);
         } catch {
             // Best-effort cleanup; surface the original failure below.
         }

@@ -1,5 +1,4 @@
-import * as admin from 'firebase-admin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import * as categoriesRepo from '../src/repositories/categories.repository';
 import * as productsRepo from '../src/repositories/products.repository';
 import * as suppliersRepo from '../src/repositories/suppliers.repository';
@@ -221,7 +220,7 @@ describe('inventory.service - recordDirectEntry (bug (a) guard)', () => {
             }),
         ).rejects.toThrow();
 
-        const snapshot = await admin.firestore()
+        const snapshot = await getFirestore()
             .collection('products')
             .where('sku', '==', inlineSku)
             .limit(1)

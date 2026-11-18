@@ -7,6 +7,17 @@ process.env.TZ = 'UTC';
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
+    // firebase-admin 14 → jwks-rsa 4 → `jose` 6, que solo se publica como ESM.
+    // En producción Node 22 lo carga con `require` sin más; el runtime CJS de
+    // Jest no (hasta Node 24.9), así que se compila a CommonJS solo ese paquete.
+    transform: {
+        '^.+\\.tsx?$': 'ts-jest',
+        '/node_modules/jose/.+\\.js$': ['ts-jest', {
+            tsconfig: { allowJs: true, module: 'commonjs' },
+            isolatedModules: true,
+        }],
+    },
+    transformIgnorePatterns: ['/node_modules/(?!jose/)'],
     // `.tsx` también: las plantillas de correo son componentes y se prueban
     // renderizándolas, no simulando su salida.
     testMatch: ['<rootDir>/test/**/*.spec.ts', '<rootDir>/test/**/*.spec.tsx'],

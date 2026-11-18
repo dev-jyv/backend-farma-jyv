@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
 import { Timestamp } from 'firebase-admin/firestore';
 
 /**
@@ -76,7 +76,7 @@ const formatLocal = (value: Timestamp | null | undefined): string =>
 
 const run = async (): Promise<void> => {
     const options = parseOptions(process.argv.slice(2));
-    admin.initializeApp({ projectId: options.project });
+    initializeApp({ projectId: options.project });
 
     // Después de `initializeApp`: los módulos de la app asumen la app por omisión.
     const { db } = await import('../utils/firestore');

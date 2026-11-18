@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as admin from 'firebase-admin';
+import { cert, getApps, initializeApp, type ServiceAccount } from 'firebase-admin/app';
 import { RoleMigrationReport, runRoleMigration } from '../services/roles.service';
 
 const projectRoot = path.resolve(__dirname, '../../..');
@@ -93,12 +93,12 @@ const initLocalAdmin = (): void => {
 
     const serviceAccount = JSON.parse(
         fs.readFileSync(serviceAccountPath, 'utf8'),
-    ) as admin.ServiceAccount;
+    ) as ServiceAccount;
 
-    if (!admin.apps.length) {
-        admin.initializeApp({
+    if (!getApps().length) {
+        initializeApp({
             projectId: resolveProjectId(),
-            credential: admin.credential.cert(serviceAccount),
+            credential: cert(serviceAccount),
         });
     }
 };

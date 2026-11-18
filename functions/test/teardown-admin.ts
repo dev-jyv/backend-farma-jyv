@@ -1,4 +1,4 @@
-import * as admin from 'firebase-admin';
+import { getApps, deleteApp } from 'firebase-admin/app';
 
 /**
  * Aislamiento entre suites.
@@ -48,5 +48,5 @@ beforeAll(async () => {
  * closed" / "require after teardown" al tumbarse el entorno.
  */
 afterAll(async () => {
-    await Promise.all(admin.apps.map((app) => app?.delete()));
+    await Promise.all(getApps().map((app) => deleteApp(app)));
 });

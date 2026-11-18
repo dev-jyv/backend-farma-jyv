@@ -1,8 +1,9 @@
+import * as adminAuth from 'firebase-admin/auth';
 import 'reflect-metadata';
 import { AddressInfo } from 'net';
 import { Server } from 'http';
 import express from 'express';
-import * as admin from 'firebase-admin';
+import { type Auth } from 'firebase-admin/auth';
 import { Timestamp } from 'firebase-admin/firestore';
 import { AppModule } from '../src/app.module';
 import { createHttpApp } from '../src/common/http-pipeline';
@@ -179,7 +180,7 @@ describe('SPEC 63 — GET /v1/cash-sessions?needsReview=true por HTTP', () => {
             permissionsVersion: 1,
             isActive: true,
         });
-        jest.spyOn(admin, 'auth').mockReturnValue({
+        jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
             verifyIdToken: jest.fn(async (token: string) => {
                 if (token !== 'token-admin') {
                     throw Object.assign(new Error('Firebase ID token has expired.'), {
@@ -196,7 +197,7 @@ describe('SPEC 63 — GET /v1/cash-sessions?needsReview=true por HTTP', () => {
                     permissionsVersion: 1,
                 };
             }),
-        } as unknown as admin.auth.Auth);
+        } as unknown as Auth);
         const app: express.Application = await createHttpApp(AppModule);
         server = app.listen(0);
         await new Promise<void>((resolve) => server.once('listening', () => resolve()));

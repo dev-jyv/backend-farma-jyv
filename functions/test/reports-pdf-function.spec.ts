@@ -1,10 +1,11 @@
+import * as adminAuth from 'firebase-admin/auth';
 import 'reflect-metadata';
 import { readFileSync } from 'fs';
 import { AddressInfo } from 'net';
 import { join } from 'path';
 import { Server } from 'http';
 import express from 'express';
-import * as admin from 'firebase-admin';
+import { type Auth } from 'firebase-admin/auth';
 import { PATH_METADATA, METHOD_METADATA } from '@nestjs/common/constants';
 import { createUserProfile } from '../src/repositories/users.repository';
 import { AppModule } from '../src/app.module';
@@ -114,7 +115,7 @@ beforeAll(async () => {
         });
     }
 
-    jest.spyOn(admin, 'auth').mockReturnValue({
+    jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
         verifyIdToken: jest.fn(async (token: string) => {
             const claims = tokens.get(token);
             if (!claims) {
@@ -124,7 +125,7 @@ beforeAll(async () => {
             }
             return claims;
         }),
-    } as unknown as admin.auth.Auth);
+    } as unknown as Auth);
 
     // Mismo `createHttpApp` que `index.ts`, sin la caché de módulo de cada app.
     api = await servir(await createHttpApp(AppModule));

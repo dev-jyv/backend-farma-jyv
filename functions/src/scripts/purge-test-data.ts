@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { Timestamp } from 'firebase-admin/firestore';
+import { initializeApp } from 'firebase-admin/app';
 
 /**
  * Elimina de producción las ventas y cortes de PRUEBA hechos desde el POS en modo
@@ -56,7 +57,7 @@ const main = async (): Promise<void> => {
         process.exit(1);
     }
 
-    admin.initializeApp({ projectId: project });
+    initializeApp({ projectId: project });
     const { db } = await import('../utils/firestore');
     const firestore = db();
 
@@ -175,7 +176,7 @@ const main = async (): Promise<void> => {
         userId: ACTOR,
         summary: 'Borrado de ventas y cortes de prueba hechos por el POS dev contra producción',
         metadata: { saleIds: SALE_IDS, sessionIds: SESSION_IDS, voided: toVoid, counts },
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: Timestamp.now(),
     });
     console.log('Listo. Queda una entrada maintenance.test_data_purged en auditLogs.');
 };

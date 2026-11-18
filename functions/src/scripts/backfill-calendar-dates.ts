@@ -1,5 +1,4 @@
-import * as admin from 'firebase-admin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { isLegacyMidnight, shiftToNoon } from '../utils/calendar-date';
 import { initAdmin } from './backfill-search-name';
 
@@ -84,14 +83,14 @@ export const backfillCollection = async (
     target: Target,
     dryRun: boolean,
 ): Promise<{ scanned: number; documents: number; fields: number; written: number }> => {
-    const firestore = admin.firestore();
+    const firestore = getFirestore();
     const result = { scanned: 0, documents: 0, fields: 0, written: 0 };
     let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
 
     for (;;) {
         let query = firestore
             .collection(target.collection)
-            .orderBy(admin.firestore.FieldPath.documentId())
+            .orderBy(FieldPath.documentId())
             .limit(PAGE_SIZE);
         if (last) {
             query = query.startAfter(last);

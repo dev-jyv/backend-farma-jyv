@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { Role, RolePermission } from '../types';
 import {
     permissionsEqual,
@@ -38,7 +39,7 @@ export const rolePermissionsVersion = (
  * `roles` y aplica los permisos nuevos en el siguiente request.
  */
 export const syncUserClaims = async (uid: string, role: Role): Promise<void> => {
-    await admin.auth().setCustomUserClaims(uid, {
+    await getAuth().setCustomUserClaims(uid, {
         roleId: role.id,
         roleSlug: role.slug,
         roleName: role.name,
@@ -401,7 +402,7 @@ export const backfillPosPermission = async (): Promise<string[]> => {
 export const migrateUsersToRoleIds = async (
     roleIds: Record<SystemRoleSlug, string>,
 ): Promise<{ migrated: number; skipped: Array<{ uid: string; reason: string }> }> => {
-    const snapshot = await admin.firestore().collection('users').get();
+    const snapshot = await getFirestore().collection('users').get();
 
     // Se precargan todos los roles: leer el rol dentro del loop era una lectura
     // por usuario contra un catálogo de un puñado de documentos.
@@ -447,7 +448,7 @@ export const migrateUsersToRoleIds = async (
             permissionsVersion: rolePermissionsVersion(role),
         };
         if (legacyRole !== undefined) {
-            update.role = admin.firestore.FieldValue.delete();
+            update.role = FieldValue.delete();
         }
 
         await doc.ref.update(update);

@@ -1,6 +1,7 @@
+import * as adminAuth from 'firebase-admin/auth';
 import { ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import * as admin from 'firebase-admin';
+import { type Auth } from 'firebase-admin/auth';
 
 import { AuthGuard } from '../src/modules/identity/guards/auth.guard';
 import { IS_PUBLIC_KEY } from '../src/modules/identity/decorators/public.decorator';
@@ -37,13 +38,13 @@ const authTimeReciente = () => Math.floor(Date.now() / 1000);
 type Claims = Record<string, unknown>;
 
 const mockearToken = (uid: string, claims: Claims, authTime = authTimeReciente()) => {
-    jest.spyOn(admin, 'auth').mockReturnValue({
+    jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
         verifyIdToken: jest.fn().mockResolvedValue({
             uid,
             auth_time: authTime,
             ...claims,
         }),
-    } as unknown as admin.auth.Auth);
+    } as unknown as Auth);
 };
 
 const contexto = (): ExecutionContext => ({
@@ -213,9 +214,9 @@ describe('AuthGuard - rechazo de sesiones', () => {
     });
 
     it('convierte un fallo de verificación del token en 401, no en 500', async () => {
-        jest.spyOn(admin, 'auth').mockReturnValue({
+        jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
             verifyIdToken: jest.fn().mockRejectedValue(new Error('token corrupto')),
-        } as unknown as admin.auth.Auth);
+        } as unknown as Auth);
         request.headers.authorization = 'Bearer basura';
 
         await expect(ejecutar(construirGuard())).rejects.toMatchObject({ statusCode: 401 });
@@ -225,8 +226,8 @@ describe('AuthGuard - rechazo de sesiones', () => {
 describe('AuthGuard - rutas públicas', () => {
     it('deja pasar sin token ni lecturas', async () => {
         const verificar = jest.fn();
-        jest.spyOn(admin, 'auth').mockReturnValue(
-            { verifyIdToken: verificar } as unknown as admin.auth.Auth,
+        jest.spyOn(adminAuth, 'getAuth').mockReturnValue(
+            { verifyIdToken: verificar } as unknown as Auth,
         );
 
         await expect(ejecutar(construirGuard(true))).resolves.toBe(true);
