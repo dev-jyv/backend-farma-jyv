@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
+import { initializeApp } from 'firebase-admin/app';
 
 /**
  * Siembra datos ficticios en los EMULADORES locales para desarrollar sin tocar
@@ -56,7 +57,7 @@ const assertEmulatorOnly = (): void => {
 
 const main = async (): Promise<void> => {
     assertEmulatorOnly();
-    admin.initializeApp({ projectId: PROJECT_ID });
+    initializeApp({ projectId: PROJECT_ID });
 
     // Import diferido: los servicios leen `db()` y deben cargarse después de
     // initializeApp con las variables del emulador ya fijadas.
@@ -87,7 +88,7 @@ const main = async (): Promise<void> => {
             if (user.slug === 'admin') adminUid = created.uid;
             console.log(`Usuario ${user.email} (${user.slug}) creado.`);
         } catch {
-            const existing = await admin.auth().getUserByEmail(user.email);
+            const existing = await getAuth().getUserByEmail(user.email);
             if (user.slug === 'admin') adminUid = existing.uid;
             console.log(`Usuario ${user.email} ya existía; se reusa.`);
         }

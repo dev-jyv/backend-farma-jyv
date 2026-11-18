@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import * as adminAuth from 'firebase-admin/auth';
+import { type Auth } from 'firebase-admin/auth';
 
 import * as rolesRepo from '../src/repositories/roles.repository';
 import {
@@ -27,10 +28,10 @@ const LECTURA: RolePermission[] = [{ area: 'sales', level: 'read' }];
 const mockearAuth = () => {
     const updateUserRecord = jest.fn().mockResolvedValue(undefined);
     const setCustomUserClaims = jest.fn().mockResolvedValue(undefined);
-    jest.spyOn(admin, 'auth').mockReturnValue({
+    jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
         updateUser: updateUserRecord,
         setCustomUserClaims,
-    } as unknown as admin.auth.Auth);
+    } as unknown as Auth);
     return { updateUserRecord, setCustomUserClaims };
 };
 
@@ -298,10 +299,10 @@ describe('monthlyReportEmail (SPEC 45)', () => {
         const createUser = jest.fn()
             .mockResolvedValueOnce({ uid: unique('uid-con') })
             .mockResolvedValueOnce({ uid: unique('uid-sin') });
-        jest.spyOn(admin, 'auth').mockReturnValue({
+        jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
             createUser,
             setCustomUserClaims: jest.fn().mockResolvedValue(undefined),
-        } as unknown as admin.auth.Auth);
+        } as unknown as Auth);
         const role = await rolContador();
 
         const con = await registerStaff({

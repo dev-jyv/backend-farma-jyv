@@ -1,4 +1,5 @@
-import * as admin from 'firebase-admin';
+import { Timestamp } from 'firebase-admin/firestore';
+import { initializeApp } from 'firebase-admin/app';
 import { comparePitrVersions, parseDocPath, parsePitrReadTime } from '../utils/pitr';
 
 /**
@@ -45,14 +46,14 @@ const main = async (): Promise<void> => {
     const paths = argValues('--doc').map(parseDocPath);
     if (!paths.length) throw new Error('Pasa al menos un --doc colección/id');
 
-    admin.initializeApp({ projectId: project });
+    initializeApp({ projectId: project });
     const { db } = await import('../utils/firestore');
     const firestore = db();
     const refs = paths.map((path) => firestore.doc(path));
 
     const pastSnaps = await firestore.runTransaction(
         (transaction) => transaction.getAll(...refs),
-        { readOnly: true, readTime: admin.firestore.Timestamp.fromDate(readTime) },
+        { readOnly: true, readTime: Timestamp.fromDate(readTime) },
     );
     const currentSnaps = await firestore.getAll(...refs);
 
@@ -120,7 +121,7 @@ const main = async (): Promise<void> => {
             restored: writes.filter((write) => write.data).map((write) => write.path),
             deleted: writes.filter((write) => !write.data).map((write) => write.path),
         },
-        createdAt: admin.firestore.Timestamp.now(),
+        createdAt: Timestamp.now(),
     });
     await batch.commit();
     console.log(`\nListo: ${writes.length} documento(s) reescritos y una entrada en auditLogs.`);

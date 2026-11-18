@@ -1,8 +1,9 @@
+import * as adminAuth from 'firebase-admin/auth';
 import 'reflect-metadata';
 import { AddressInfo } from 'net';
 import { Server } from 'http';
 import express from 'express';
-import * as admin from 'firebase-admin';
+import { type Auth } from 'firebase-admin/auth';
 import { Timestamp } from 'firebase-admin/firestore';
 import ExcelJS from 'exceljs';
 import { createUserProfile } from '../src/repositories/users.repository';
@@ -98,7 +99,7 @@ beforeAll(async () => {
     await db().collection('invoices').add(factura('F-2', '2026-10-20T18:00:00Z', 250.2));
     await db().collection('invoices').add(factura('F-3', '2026-11-02T18:00:00Z', 999));
 
-    jest.spyOn(admin, 'auth').mockReturnValue({
+    jest.spyOn(adminAuth, 'getAuth').mockReturnValue({
         verifyIdToken: jest.fn(async (token: string) => {
             const claims = tokens.get(token);
             if (!claims) {
@@ -108,7 +109,7 @@ beforeAll(async () => {
             }
             return claims;
         }),
-    } as unknown as admin.auth.Auth);
+    } as unknown as Auth);
 
     api = await servir(await createHttpApp(AppModule));
     pdf = await servir(await createHttpApp(ReportsPdfModule));

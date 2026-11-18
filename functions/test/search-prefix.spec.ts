@@ -1,5 +1,4 @@
-import * as admin from 'firebase-admin';
-import { Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
 import * as customersRepo from '../src/repositories/customers.repository';
 import * as patientsRepo from '../src/repositories/patients.repository';
@@ -70,7 +69,7 @@ describe('Búsqueda por prefijo (SPEC 10)', () => {
         const nuevo = unique('nuevo');
         const c = await customersRepo.createCustomer({ name: viejo });
         await customersRepo.updateCustomer(c.id, { name: nuevo });
-        const doc = await admin.firestore().collection('customers').doc(c.id).get();
+        const doc = await getFirestore().collection('customers').doc(c.id).get();
         expect(doc.get('searchName')).toBe(normalizeSearchName(nuevo));
         expect((await customersRepo.listCustomers({ search: viejo })).items).toHaveLength(0);
         expect((await customersRepo.listCustomers({ search: nuevo })).items).toHaveLength(1);
@@ -94,7 +93,7 @@ describe('Búsqueda por prefijo (SPEC 10)', () => {
         expect(found.items[0]).not.toHaveProperty('searchName');
 
         await patientsRepo.updatePatient(created.id, { lastName: 'Ortíz' });
-        const doc = await admin.firestore().collection('patients').doc(created.id).get();
+        const doc = await getFirestore().collection('patients').doc(created.id).get();
         expect(doc.get('searchName')).toBe(normalizeSearchName(`${first} Ortíz`));
 
         await patientsRepo.updatePatient(created.id, { isActive: false });
@@ -121,7 +120,7 @@ describe('Búsqueda por prefijo (SPEC 10)', () => {
         expect(hit.items.map((u) => u.id)).toEqual([uid]);
 
         await usersRepo.updateUserProfile(uid, { displayName: `${base} Zeta` });
-        const doc = await admin.firestore().collection('users').doc(uid).get();
+        const doc = await getFirestore().collection('users').doc(uid).get();
         expect(doc.get('searchName')).toBe(normalizeSearchName(`${base} Zeta`));
         expect((await usersRepo.listUserProfiles({ search: `${base} alv` })).items).toHaveLength(0);
     });
@@ -138,7 +137,7 @@ describe('Búsqueda por prefijo (SPEC 10)', () => {
         const hit = await rolesRepo.listRoles({ search: base.toUpperCase(), activeOnly: true });
         expect(hit.items.map((r) => r.id)).toEqual([role.id]);
         await rolesRepo.updateRole(role.id, { name: `${base} Jefe` });
-        const doc = await admin.firestore().collection('roles').doc(role.id).get();
+        const doc = await getFirestore().collection('roles').doc(role.id).get();
         expect(doc.get('searchName')).toBe(normalizeSearchName(`${base} Jefe`));
     });
 });
@@ -146,8 +145,7 @@ describe('Búsqueda por prefijo (SPEC 10)', () => {
 describe('Backfill de searchName', () => {
     it('dry-run no escribe; la corrida real rellena y es idempotente', async () => {
         const name = unique('Legado');
-        const ref = await admin
-            .firestore()
+        const ref = await getFirestore()
             .collection('customers')
             .add({ name: `${name} Ñandú`, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
         const target = TARGETS.find((t) => t.collection === 'customers')!;
