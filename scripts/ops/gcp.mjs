@@ -40,7 +40,6 @@ export const EXISTING_PROD_POLICIES = ['15126880163367668267', '2062745691304710
 /** Destino de la API por proyecto: el uptime check pega a la URL pública. */
 export const API_TARGETS = {
     'farma-jyv': { host: 'api-vykfsskx3q-uc.a.run.app', path: '/v1/health' },
-    'farma-jyv-dev': { host: 'us-central1-farma-jyv-dev.cloudfunctions.net', path: '/api/v1/health' },
 };
 
 export const TRANSFER_DEFAULTS = {

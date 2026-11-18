@@ -9,7 +9,7 @@ typings/
 node_modules/
 *.local
 .env
-# Secretos por proyecto (.env.farma-jyv, .env.farma-jyv-dev); las plantillas sí se versionan
+# Secretos por proyecto (.env.farma-jyv); las plantillas sí se versionan
 .env.*
 !.env.example
 !.env.*.example

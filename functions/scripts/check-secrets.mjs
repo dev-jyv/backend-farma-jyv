@@ -7,7 +7,7 @@
 // (RUNBOOK «Secretos») y, si alguien solo pulsa Enter, despliega `api` con un valor
 // basura. Aquí el deploy se detiene antes de subir nada y nombra el que falta.
 //
-// Uso: node scripts/check-secrets.mjs <dev|prod|proyecto>
+// Uso: node scripts/check-secrets.mjs <prod|proyecto>
 // Solo consulta METADATOS (`functions:secrets:get` lista versiones y su estado);
 // nunca lee ni imprime valores.
 import { spawn } from 'node:child_process';
@@ -15,7 +15,7 @@ import { functionsDir, readSecretNames } from './secret-names.mjs';
 
 const project = process.argv[2];
 if (!project) {
-    console.error('Uso: node scripts/check-secrets.mjs <dev|prod|proyecto>');
+    console.error('Uso: node scripts/check-secrets.mjs <prod|proyecto>');
     process.exit(2);
 }
 
