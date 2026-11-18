@@ -191,8 +191,11 @@ describe('GET /doctor/inventory - caché', () => {
         const nowSpy = jest.spyOn(Date, 'now');
         try {
             await doctorInventory.getDoctorInventory();
-            nowSpy.mockReturnValue(Date.now() + 61_000);
+            // El producto se crea antes de adelantar el reloj: el cliente de
+            // Firestore calcula sus plazos con `Date.now`, y con el reloj fijo
+            // 61 s adelante la transacción nace vencida (ABORTED en el emulador).
             await crearProducto();
+            nowSpy.mockReturnValue(Date.now() + 61_000);
             const despues = await doctorInventory.getDoctorInventory();
             expect(spy).toHaveBeenCalledTimes(2);
             expect(despues.items).toHaveLength(2);
